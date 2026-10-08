@@ -60,7 +60,7 @@ jobs:
             -d deploy_target=${{ matrix.deploy }} \
             templates/angular-app "$RUNNER_TEMP/demo-web"
       - uses: actions/setup-node@v4
-        with: { node-version: "22" }
+        with: { node-version: "24" }
       - name: Install, lint, tests y build
         working-directory: ${{ runner.temp }}/demo-web
         run: |

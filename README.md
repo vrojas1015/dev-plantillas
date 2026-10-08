@@ -20,7 +20,7 @@ guías de cómo se organizan carpetas, repos y trabajo con agentes.
 ## Requisitos
 
 - Git, Python 3.10+ con `pip install copier`
-- Go (backend) y Node 22+ (frontend)
+- Go (backend) y Node 24+ (frontend)
 - `glab` y/o `gh`
 
 ## Uso rápido
