@@ -38,6 +38,8 @@ jobs:
           go vet ./...
           go test -count=1 ./...
           test -z "$(gofmt -l .)"
+      - name: verify.sh del plugin sobre el proyecto generado
+        run: bash plugins/dev-agentes/skills/verificar/scripts/verify.sh "$RUNNER_TEMP/demo-service"
 
   angular-app:
     runs-on: ubuntu-latest
@@ -68,3 +70,17 @@ jobs:
           npm run lint
           npm run test:unit
           npm run build
+
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: Validar marketplace y plugin
+        run: |
+          claude plugin validate --strict .
+          claude plugin validate --strict plugins/dev-agentes
+      - name: Sintaxis de scripts
+        run: find plugins scripts -name '*.sh' -print0 | xargs -0 -n1 bash -n
