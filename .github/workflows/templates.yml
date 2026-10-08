@@ -30,7 +30,8 @@ jobs:
       - name: Generar
         run: |
           copier copy --defaults --trust \
-            -d service_name=demo -d ci_provider=${{ matrix.ci_provider }} \
+            -d service_name=demo -d ci_provider=${{ matrix.ci }} \
+            -d deploy_target=${{ matrix.deploy }} \
             templates/go-grpc-service "$RUNNER_TEMP/demo-service"
       - uses: actions/setup-go@v5
         with:
