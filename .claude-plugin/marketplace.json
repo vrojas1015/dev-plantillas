@@ -1,0 +1,17 @@
+{
+  "name": "dev-plantillas",
+  "owner": {
+    "name": "Victor Rojas Barrera",
+    "url": "https://github.com/vrojas1015"
+  },
+  "metadata": {
+    "description": "Plugins de dev-plantillas para trabajar con agentes sobre proyectos generados con sus plantillas."
+  },
+  "plugins": [
+    {
+      "name": "dev-agentes",
+      "source": "./plugins/dev-agentes",
+      "description": "Verificación por stack, flujo por issue con worktrees y revisores especializados."
+    }
+  ]
+}
