@@ -101,6 +101,10 @@ jobs:
           claude plugin validate --strict plugins/dev-agentes
       - name: Sintaxis de scripts
         run: find plugins scripts -name '*.sh' -print0 | xargs -0 -n1 bash -n
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - name: Tests de hooks
+        run: bash plugins/dev-agentes/tests/hooks.test.sh
 
   # Proyecto en coolify que migra a cloud-run con copier update: sin conflictos
   # y sigue compilando. Copier necesita la plantilla en un repo git con tags.
