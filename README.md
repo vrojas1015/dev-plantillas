@@ -18,6 +18,7 @@ guías de cómo se organizan carpetas, repos y trabajo con agentes.
 | `docs/01-estructura-de-carpetas.md` | Layout local del equipo |
 | `docs/02-repositorios-gitlab-github.md` | Organización, nombres, protección y CI en GitLab/GitHub |
 | `docs/03-flujo-de-trabajo.md` | Issue → worktree → sesión → MR, con varios agentes en paralelo |
+| `docs/04-stack-y-despliegue.md` | Stack Google primero, destinos de deploy (Google o Coolify) y cómo migrar entre ellos |
 
 ## Requisitos
 

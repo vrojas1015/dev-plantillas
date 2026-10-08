@@ -28,6 +28,11 @@ import (
 )
 
 func main() {
+	// `<binario> healthcheck`: HEALTHCHECK de docker compose (ver healthcheck.go).
+	if len(os.Args) > 1 && os.Args[1] == healthcheckCmd {
+		os.Exit(runHealthcheck({{ grpc_port }}))
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -53,7 +58,7 @@ func main() {
 	)
 	examplev1.RegisterItemServiceServer(grpcServer, itemHandler)
 
-	// Health: lo usan los startup/liveness probes de Cloud Run (cloudrun.*.yaml).
+	// Health: lo usan los probes de Cloud Run y el healthcheck de docker compose.
 	healthSrv := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthSrv)
 	healthSrv.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
@@ -78,7 +83,7 @@ func main() {
 		}
 	}()
 
-	// 9. Esperar señal de shutdown (Cloud Run manda SIGTERM)
+	// 9. Esperar señal de shutdown (Cloud Run y docker mandan SIGTERM)
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit

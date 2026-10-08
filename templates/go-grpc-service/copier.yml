@@ -20,9 +20,16 @@ _message_after_copy: |
     2. go mod tidy && go build ./... && go vet ./... && go test ./...
     3. git init && git add . && git add --chmod=+x scripts/*.sh
        git commit -m "Scaffold inicial desde go-grpc-service"
-    4. cp .env.example .env.dev  (y completar DATABASE_URL)
+    4. cp .env.example .env.dev; make up  (Postgres + servicio con docker compose)
     5. Completá la sección "Qué es este servicio" de CLAUDE.md.
+  {%- if deploy_target == 'cloud-run' %}
     6. Infra de GCP y CI/CD (una sola vez): docs/ci-cd-setup.md
+  {%- elif deploy_target == 'coolify' %}
+    6. Recurso en Coolify y CI/CD (una sola vez): docs/deploy.md
+  {%- else %}
+    6. Sin destino de deploy: la CI solo corre tests. Para elegir uno más
+       adelante: copier update --data deploy_target=<cloud-run|coolify>
+  {%- endif %}
 
 # -----------------------------------------------------------------------------
 # Preguntas
@@ -65,7 +72,7 @@ module_path:
 
 grpc_port:
   type: int
-  help: "Puerto gRPC (GRPC_PORT y containerPort de Cloud Run; único por servicio)"
+  help: "Puerto gRPC (GRPC_PORT del contenedor; único por servicio)"
   default: 5000
   validator: >-
     {% if grpc_port < 1024 or grpc_port > 65535 %}El puerto debe estar entre 1024 y 65535.{% endif %}
@@ -99,10 +106,22 @@ protos_version:
   default: "latest"
   when: "{{ protos_module != '' }}"
 
+deploy_target:
+  type: str
+  help: >-
+    Dónde se despliega. Mismas variables de entorno en todos los destinos:
+    pasar de coolify a cloud-run es `copier update --data deploy_target=cloud-run`
+  choices:
+    "Google Cloud Run (Cloud Build + WIF, Cloud SQL)": cloud-run
+    "Coolify v4 en un VPS (imagen en el registry del CI + API de Coolify)": coolify
+    "Ninguno (CI solo con tests)": ninguno
+  default: cloud-run
+
 gcp_project:
   type: str
   help: "ID del proyecto GCP (no el número). Default de scripts/CI; CI puede sobreescribirlo con la variable GCP_PROJECT"
   default: "mi-proyecto-gcp"
+  when: "{{ deploy_target == 'cloud-run' }}"
   validator: >-
     {% if not (gcp_project | regex_search('^[a-z][a-z0-9-]{4,28}[a-z0-9]$')) %}
     ID de proyecto GCP inválido.
@@ -112,17 +131,21 @@ gcp_region:
   type: str
   help: "Región de GCP (Cloud Run + Artifact Registry)"
   default: us-central1
+  when: "{{ deploy_target == 'cloud-run' }}"
 
 artifact_repo:
   type: str
   help: "Repositorio de Artifact Registry para las imágenes"
   default: "{{ service_name }}-service"
+  when: "{{ deploy_target == 'cloud-run' }}"
 
 # -----------------------------------------------------------------------------
 # Valores derivados (no se preguntan; se guardan en las respuestas)
 # -----------------------------------------------------------------------------
 # Nota: Copier no tiene "computed values" puros; estos se exponen como
-# preguntas ocultas (when: false) con default derivado.
+# preguntas ocultas (when: false) con default derivado. Copier NO las guarda en
+# .copier-answers.yml: se recalculan en cada copy/update (por eso cambiar
+# deploy_target con `copier update --data ...` mueve también los flags).
 
 repo_name:
   type: str
@@ -132,4 +155,41 @@ repo_name:
 go_package_name:
   type: str
   default: "{{ service_name | replace('-', '') }}"
+  when: false
+
+# Repo de imágenes por defecto del destino coolify (registry del proveedor de
+# CI). Se puede pisar con IMAGE_REPO en el panel de Coolify.
+image_repo_default:
+  type: str
+  default: >-
+    {%- set host, path = module_path.split('/', 1) -%}
+    {%- if ci_provider == 'github' -%}ghcr.io/{{ path | lower }}
+    {%- else -%}registry.{{ host }}/{{ path | lower }}{%- endif -%}
+  when: false
+
+# Flags cortos para los nombres de archivo condicionales (rutas cortas: Windows
+# corta en 260 caracteres y los nombres con {% if ... %} son largos).
+is_cr:
+  type: bool
+  default: "{{ deploy_target == 'cloud-run' }}"
+  when: false
+
+is_cy:
+  type: bool
+  default: "{{ deploy_target == 'coolify' }}"
+  when: false
+
+has_cd:
+  type: bool
+  default: "{{ deploy_target != 'ninguno' }}"
+  when: false
+
+ci_gl:
+  type: bool
+  default: "{{ ci_provider == 'gitlab' }}"
+  when: false
+
+ci_gh:
+  type: bool
+  default: "{{ ci_provider == 'github' }}"
   when: false

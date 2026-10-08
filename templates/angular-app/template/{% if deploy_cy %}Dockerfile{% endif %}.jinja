@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+#
+# Imagen de {{ app_name }} para Coolify (o cualquier host de contenedores).
+#
+#   docker build --build-arg APP_ENV=qa   -t {{ app_name }}:qa   .
+#   docker build --build-arg APP_ENV=prod -t {{ app_name }}:prod .
+#
+# Angular hornea la configuración del ambiente (src/environments/environment.<x>.ts)
+# en el bundle al compilar: por eso hay UNA IMAGEN POR AMBIENTE y el ambiente se
+# elige en el build (APP_ENV), no con variables de entorno en runtime.
+
+# ---------------------------------------------------------------- build
+FROM node:24-alpine AS build
+WORKDIR /app
+
+# Primero sólo las dependencias: esta capa se reutiliza mientras no cambie el lock.
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY . .
+
+# qa → npm run build:qa · prod → npm run build:prod
+ARG APP_ENV=prod
+RUN case "$APP_ENV" in \
+      qa|prod) ;; \
+      *) echo "APP_ENV inválido: '$APP_ENV' (usar qa o prod)" >&2; exit 1 ;; \
+    esac \
+ && npm run "build:$APP_ENV"
+
+# ---------------------------------------------------------------- runtime
+FROM caddy:2-alpine
+ARG APP_ENV=prod
+LABEL org.opencontainers.image.title="{{ app_name }}" \
+      app.env="$APP_ENV"
+
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/dist/{{ app_name }}/browser /srv
+
+# Caddy escucha HTTP plano en :80. El TLS lo termina el proxy de Coolify (Traefik).
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -q --spider http://127.0.0.1/ || exit 1

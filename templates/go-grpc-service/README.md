@@ -1,9 +1,20 @@
 # Plantilla `go-grpc-service`
 
 Plantilla [Copier](https://copier.readthedocs.io/) para microservicios Go gRPC
-con arquitectura hexagonal, Postgres (GORM + pgx), deploy a Cloud Run por tag
-de git (Cloud Build + Workload Identity Federation, sin claves JSON) y CI en
-GitLab o GitHub.
+con arquitectura hexagonal, Postgres (GORM + pgx), `docker-compose.yml` para
+desarrollo local, CI en GitLab o GitHub y deploy por tag de git a uno de estos
+destinos (`deploy_target`):
+
+- **`cloud-run`** (default): Cloud Build + Cloud Run + Cloud SQL, auth keyless
+  (Workload Identity Federation, sin claves JSON).
+- **`coolify`**: Coolify v4 en un VPS. La CI construye la imagen, la sube al
+  registry del proveedor (GHCR / GitLab Container Registry) y dispara el deploy
+  por la API de Coolify; Postgres corre en el mismo compose.
+- **`ninguno`**: solo CI de tests.
+
+La configuración es 12-factor e **idéntica entre destinos** (mismas variables de
+entorno), así que un proyecto puede pasar de `coolify` a `cloud-run` con
+`copier update` (ver "Cambiar de destino").
 
 Este README y `copier.yml` son meta-archivos: **no** se copian al proyecto
 generado. El contenido del proyecto vive en `template/` (`_subdirectory`).
@@ -22,11 +33,20 @@ Los archivos que terminan en `.jinja` se renderizan; el resto se copia tal cual.
 ├── proto/example/v1/item.proto         # contrato de ejemplo (entidad Item: Create/Get/List paginado)
 ├── gen/go/example/v1/                  # código generado del ejemplo (pre-generado; `make proto` lo regenera)
 ├── migrations/000001_create_<schema>_schema.{up,down}.sql
-├── scripts/{rollback,setup_cloud_run_secrets,apply_migration}.sh
+├── scripts/apply_migration.sh          # aplica un .up.sql (DATABASE_URL; prueba en seco + confirmación en prod)
+├── scripts/migrate_db.sh               # copia el schema entre dos Postgres y verifica filas por tabla
+├── scripts/compose-initdb.sh           # init del Postgres del compose local (aplica migrations/*.up.sql)
+├── docker-compose.yml                  # local: app (Dockerfile) + postgres:16 con healthchecks
+├── Dockerfile, .dockerignore, .gitignore, .env.example
+├── .gitlab-ci.yml  |  .github/workflows/ci.yml (+ deploy.yml)   # según ci_provider
+│   # solo deploy_target = cloud-run:
+├── cloudbuild.yaml, cloudrun.qa.yaml, cloudrun.prod.yaml, .gcloudignore
+├── scripts/{rollback,setup_cloud_run_secrets}.sh
 ├── docs/ci-cd-setup.md                 # setup de una sola vez (WIF, SA, tags protegidos, variables)
-├── Dockerfile, .dockerignore, .gcloudignore, .gitignore, .env.example
-├── cloudbuild.yaml, cloudrun.qa.yaml, cloudrun.prod.yaml
-├── .gitlab-ci.yml  |  .github/workflows/{ci,deploy}.yml   # según ci_provider
+│   # solo deploy_target = coolify:
+├── docker-compose.coolify.yml          # build pack "Docker Compose" de Coolify (imagen del registry)
+├── docs/deploy.md                      # recurso, variables, dominio/gRPC, backups a S3 + restore
+├── docs/migrar-a-cloud-run.md          # paso a paso coolify -> cloud-run
 ├── Makefile, buf.yaml, buf.gen.yaml, go.mod, go.sum
 ├── CLAUDE.md, .claude/settings.json
 └── .copier-answers.yml                 # respuestas (lo usa `copier update`)
@@ -36,7 +56,9 @@ Los archivos que terminan en `.jinja` se renderizan; el resto se copia tal cual.
 
 - Python + `pip install copier` (>= 9.0; probado con 9.18.2)
 - Go (la versión de `go_version`; con `GOTOOLCHAIN=auto` Go la descarga solo)
-- Opcional: `buf` (solo para `make proto`), Docker (para `apply_migration.sh`), `gcloud`
+- Docker (compose local; `apply_migration.sh` / `migrate_db.sh` lo usan si no hay
+  `psql` / `pg_dump` locales)
+- Opcional: `buf` (solo para `make proto`), `gcloud` (cloud-run)
 
 ## Generar un proyecto
 
@@ -58,8 +80,9 @@ copier copy --defaults \
   --data service_name=agenda \
   --data module_path=gitlab.com/mi-org/agenda-service \
   --data grpc_port=5015 \
-  --data gcp_project=mi-proyecto \
   --data ci_provider=gitlab \
+  --data deploy_target=cloud-run \
+  --data gcp_project=mi-proyecto \
   <origen> ./agenda-service
 ```
 
@@ -69,6 +92,7 @@ Después:
 cd agenda-service
 go mod tidy && go build ./... && go vet ./... && go test ./...
 git init && git add . && git add --chmod=+x scripts/*.sh && git commit -m "Scaffold inicial"
+cp .env.example .env.dev && make up      # postgres:16 + servicio en Docker, espera healthy
 ```
 
 ## Preguntas (`copier.yml`)
@@ -79,20 +103,85 @@ git init && git add . && git add --chmod=+x scripts/*.sh && git commit -m "Scaff
 | `service_description` | `TODO…` | Primera sección de `CLAUDE.md` |
 | `ci_provider` | `gitlab` | `gitlab` → `.gitlab-ci.yml`; `github` → `.github/workflows/ci.yml` + `deploy.yml` |
 | `module_path` | `<gitlab.com\|github.com>/mi-org/<service>-service` | `module` de `go.mod` e imports |
-| `grpc_port` | `5000` | `GRPC_PORT`, `containerPort`, probes, Dockerfile |
+| `grpc_port` | `5000` | `GRPC_PORT`, Dockerfile, compose, probes de Cloud Run |
 | `db_schema` | `service_name` con `_` | Schema Postgres, `TableName()`, migraciones, usuario `<schema>_user` |
 | `go_version` | `1.25.8` | `go.mod`, imagen `golang:<v>` del Dockerfile y de CI |
 | `protos_module` | vacío | Módulo Go del repo de protos compartido (ver "Protos") |
 | `protos_version` | `latest` | Solo si hay `protos_module`; aparece en la doc/`go get` |
-| `gcp_project` | `mi-proyecto-gcp` | Default de scripts y CI (la variable `GCP_PROJECT` de CI lo pisa) |
-| `gcp_region` | `us-central1` | Cloud Run + Artifact Registry |
-| `artifact_repo` | `<service>-service` | Repo de Artifact Registry |
+| `deploy_target` | `cloud-run` | `cloud-run`, `coolify` o `ninguno` (ver "Destinos de deploy") |
+| `gcp_project` | `mi-proyecto-gcp` | Solo `cloud-run`. Default de scripts y CI (la variable `GCP_PROJECT` de CI lo pisa) |
+| `gcp_region` | `us-central1` | Solo `cloud-run`. Cloud Run + Artifact Registry |
+| `artifact_repo` | `<service>-service` | Solo `cloud-run`. Repo de Artifact Registry |
 
-Derivados (no se preguntan): `repo_name` = `<service_name>-service`.
+Derivados (no se preguntan ni se guardan en `.copier-answers.yml`; se recalculan
+en cada copy/update): `repo_name` = `<service_name>-service`,
+`image_repo_default` (registry del proveedor de CI, para `coolify`) y los flags
+de los nombres de archivo condicionales `is_cr`, `is_cy`, `has_cd`, `ci_gl`,
+`ci_gh` (nombres cortos: Windows corta las rutas en 260 caracteres).
 
 Lo que **no** es pregunta, a propósito: secretos, `DATABASE_URL`, audience/provider
-de WIF, project number, emails de SA deployer, instancia de Cloud SQL. Van como
-variables de CI o en Secret Manager (ver `docs/ci-cd-setup.md` del proyecto generado).
+de WIF, project number, emails de SA deployer, instancia de Cloud SQL, URL/token
+de Coolify y UUIDs de recursos. Van como variables de CI, en Secret Manager o en
+el panel de Coolify (ver `docs/ci-cd-setup.md` / `docs/deploy.md` del proyecto).
+
+## Destinos de deploy
+
+Configuración 12-factor: el código lee **todo** de variables de entorno
+(`app/infra/config`) y son las mismas en todos los destinos:
+
+| Variable | Local (`docker-compose.yml`) | Cloud Run (`cloudrun.<env>.yaml`) | Coolify (panel + `docker-compose.coolify.yml`) |
+|---|---|---|---|
+| `APP_ENV`, `SERVICE_ENV`, `DEBUG`, `LOG_LEVEL` | compose | yaml | panel (defaults = prod) |
+| `GRPC_PORT` | compose | yaml | fijo en el compose |
+| `DATABASE_URL` | compose (Postgres del compose) | Secret Manager (socket de Cloud SQL) | panel (Postgres del compose o externo) |
+| `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` | compose | yaml | compose |
+
+| | `cloud-run` | `coolify` | `ninguno` |
+|---|---|---|---|
+| CI en MR/PR | tests | tests | tests |
+| Tag `qa-v*` / `prod-v*` | Cloud Build → Artifact Registry → `gcloud run services replace` | `docker build` → GHCR / GitLab Registry (tag inmutable + `qa`/`prod`) → `curl $COOLIFY_URL/api/v1/deploy?uuid=...` | — |
+| Guarda de prod si el release toca `migrations/` | sí | sí | — |
+| Health | probes gRPC de Cloud Run | `healthcheck` del compose (`<binario> healthcheck`) | — |
+| Postgres | Cloud SQL | `postgres:16` en el compose, volumen persistente, backups a S3 (doc) | — |
+| Rollback | `scripts/rollback.sh` | `IMAGE_TAG=<tag viejo>` en el panel + Redeploy | — |
+| Setup | `docs/ci-cd-setup.md` | `docs/deploy.md` | — |
+
+Healthcheck en compose: la imagen runtime es distroless (sin shell ni curl), así
+que el binario tiene un subcomando `healthcheck` que consulta `grpc.health.v1`
+en `127.0.0.1:$GRPC_PORT` (`cli/healthcheck.go`).
+
+`docker-compose.yml` (siempre): app + `postgres:16`; las migraciones
+`migrations/*.up.sql` las aplica `scripts/compose-initdb.sh`, montado en
+`/docker-entrypoint-initdb.d`, **solo la primera vez que se inicializa el
+volumen** (no se monta `migrations/` directo porque correría también los
+`.down.sql`).
+
+## Cambiar de destino (`coolify` → `cloud-run`)
+
+Probado con Copier 9.18.2, en una rama y con el proyecto commiteado:
+
+```bash
+git switch -c migrar-cloud-run
+copier update --defaults --data deploy_target=cloud-run \
+  --data gcp_project=<id-proyecto> --data gcp_region=us-central1
+```
+
+En un proyecto sin modificaciones locales no hay conflictos: aparecen los
+archivos de Cloud Run (`cloudbuild.yaml`, `cloudrun.*.yaml`, `.gcloudignore`,
+`scripts/rollback.sh`, `scripts/setup_cloud_run_secrets.sh`,
+`docs/ci-cd-setup.md`), desaparecen `docker-compose.coolify.yml`,
+`docs/deploy.md` y `docs/migrar-a-cloud-run.md`, y cambian la CI, `CLAUDE.md`,
+`.env.example` y comentarios de `docker-compose.yml`. El código Go no cambia y
+el resultado es idéntico a generar el proyecto directamente con `cloud-run`.
+Ojo: Copier borra los archivos que dejan de generarse **aunque tengan cambios
+locales** (p. ej. variables propias en `docker-compose.coolify.yml`), sin
+conflicto ni aviso; quedan en el historial de git para recuperarlas.
+
+La migración de datos (`scripts/migrate_db.sh`), secretos, verificación en QA y
+corte de prod están en `docs/migrar-a-cloud-run.md` del proyecto generado con
+`coolify`.
+
+El mismo mecanismo sirve para `ninguno` → cualquier destino.
 
 ## Protos: cómo se resolvió
 
@@ -148,15 +237,26 @@ copier update --data grpc_port=5016       # cambiar una respuesta y re-renderiza
 Los conflictos quedan como marcadores `<<<<<<<` (o `.rej`). Revisar con `git diff`
 y correr `go build ./... && go test ./...` antes de commitear.
 
-## Checklist post-generación (infra GCP, manual)
-
-Detalle y comandos en `docs/ci-cd-setup.md` del proyecto generado.
+## Checklist post-generación
 
 - [ ] `go mod tidy && go build ./... && go vet ./... && go test ./...` en verde
-- [ ] Completar "Qué es este servicio" en `CLAUDE.md`; `cp .env.example .env.dev`
+- [ ] Completar "Qué es este servicio" en `CLAUDE.md`; `cp .env.example .env.dev`; `make up`
 - [ ] Crear el repo remoto (GitLab/GitHub) y push inicial; scripts con bit `+x`
+
+### `coolify` (detalle en `docs/deploy.md`)
+
+- [ ] `docker login` al registry en el VPS (token de solo lectura)
+- [ ] Un recurso "Docker Compose" por entorno con `docker-compose.coolify.yml`, sin auto-deploy por push
+- [ ] Variables del recurso: `IMAGE_TAG` (`qa`/`prod`), `POSTGRES_PASSWORD`, `DATABASE_URL`, `PG_LOCAL_PORT`, `APP_ENV`...
+- [ ] Variables de CI: `COOLIFY_URL`, `COOLIFY_TOKEN`, `COOLIFY_RESOURCE_UUID_QA`, `COOLIFY_RESOURCE_UUID_PROD`
+- [ ] Tags protegidos `prod-v*` / `qa-v*`
+- [ ] Migraciones por túnel SSH (`scripts/apply_migration.sh`)
+- [ ] Backups de Postgres a S3 **y una prueba de restore**
+
+### `cloud-run` (infra GCP, manual; detalle en `docs/ci-cd-setup.md`)
+
 - [ ] `scripts/setup_cloud_run_secrets.sh qa|prod`: SA runtime, roles, Artifact Registry, secreto `DATABASE_URL`
-- [ ] Postgres: crear `<schema>_user`, aplicar `000001` (`scripts/apply_migration.sh`), grants
+- [ ] Postgres: crear `<schema>_user`, aplicar `000001` (`DATABASE_URL=... scripts/apply_migration.sh`), grants
 - [ ] SA deployer + roles (`cloudbuild.builds.editor`, `run.admin`, `storage.admin`,
       `artifactregistry.reader` sobre el repo, `iam.serviceAccountUser` sobre el SA runtime)
 - [ ] WIF: sumar el repo al `attribute-condition` del provider (o crear pool/provider) y `workloadIdentityUser`
@@ -168,8 +268,12 @@ Detalle y comandos en `docs/ci-cd-setup.md` del proyecto generado.
 
 ## Mantener la plantilla
 
-- Probar cambios generando en un directorio temporal con ambos `ci_provider`,
-  con y sin `protos_module`, y correr `go build/vet/test` en el resultado.
+- Probar cambios generando en un directorio temporal con los 3 `deploy_target`
+  × ambos `ci_provider`, con y sin `protos_module`, y correr
+  `go build/vet/test` + `gofmt -l` en el resultado. Para el compose:
+  `docker compose config` y `make up` (espera healthy).
+- Archivos que dependen del destino: usar los flags cortos (`is_cr`, `is_cy`,
+  `has_cd`, `ci_gl`, `ci_gh`) en el nombre, no la condición completa.
 - `{{` en archivos `.jinja` que no deben renderizarse (p. ej. `${{ }}` de
   GitHub Actions, o literales Go anidados `[]T{{...}}`): envolver en
   `{% raw %}…{% endraw %}`. Ojo también con `{#` (comentario Jinja) en bash.

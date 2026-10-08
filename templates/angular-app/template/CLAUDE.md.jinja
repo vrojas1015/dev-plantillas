@@ -70,6 +70,17 @@ npx ng generate component features/<x>/pages/<nombre>
 - Tag `qa-vX.Y.Z` → **QA** (`{{ firebase_project_qa }}`).
 - **No desplegar a mano** (`npm run deploy:*` es sólo fallback de emergencia).
 - Setup y variables de CI: `docs/ci-cd-setup.md`.
+{%- elif deploy_target == 'coolify' %}
+
+- Coolify v4 en un VPS propio, desde CI ({{ 'GitLab CI' if ci_provider == 'gitlab' else 'GitHub Actions' }}): imagen Docker
+  (`Dockerfile`: build con Node 24 + Caddy sirviendo `dist/{{ app_name }}/browser`, config en `Caddyfile`)
+  → {{ 'GitLab Container Registry' if ci_provider == 'gitlab' else 'GHCR' }} → webhook de deploy de Coolify.
+- Tag `qa-vX.Y.Z` → **QA** (imagen `APP_ENV=qa`). Tag `prod-vX.Y.Z` → **producción** (`APP_ENV=prod`).
+  El merge a `main` no despliega.
+- Una imagen por ambiente: el environment de Angular se elige en el build, no en runtime.
+- Probar la imagen en local: `docker compose up --build` → http://localhost:8080.
+- **No desplegar a mano** ni llamar a la API de Coolify desde local.
+- Setup y variables de CI: `docs/ci-cd-setup.md`. Pasar a Firebase Hosting: `docs/migrar-a-firebase-hosting.md`.
 {%- else %}
 
 - Sin deploy automático: el CI sólo verifica (lint, unit tests, build). Ver `docs/ci-cd-setup.md`.

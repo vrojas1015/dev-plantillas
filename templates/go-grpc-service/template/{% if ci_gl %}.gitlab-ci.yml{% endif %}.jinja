@@ -1,3 +1,4 @@
+{%- if is_cr -%}
 # =============================================================================
 # CI/CD {{ repo_name }} — build (Cloud Build) + deploy (Cloud Run), disparado por tag
 # =============================================================================
@@ -43,18 +44,76 @@
 #        CLOUD_SQL_INSTANCE = <proyecto>:<región>:<instancia>
 #      Opcional: GCP_PROJECT (pisa el default de abajo).
 # =============================================================================
+{%- elif is_cy -%}
+# =============================================================================
+# CI/CD {{ repo_name }} — build + push (GitLab Container Registry) + deploy
+# en Coolify v4 (API), disparado por tag
+# =============================================================================
+#
+# Disparo:
+#   - Merge request  -> solo el stage `test` (sin deploy).
+#   - Tag qa-v*      -> build + push + deploy a QA, automático.
+#   - Tag prod-v*    -> build + push + deploy a prod automático, SALVO que el
+#                       release toque `migrations/`: ahí `guard:prod` falla, el
+#                       deploy no corre, y hay que aplicar el SQL a mano y lanzar
+#                       `release:prod:override`.
+#
+# Imagen: $CI_REGISTRY_IMAGE:<tag de git> (inmutable) + $CI_REGISTRY_IMAGE:<qa|prod>
+# (móvil). El recurso de Coolify usa el tag móvil (IMAGE_TAG=qa|prod) con
+# pull_policy: always; el job llama a la API de Coolify para redesplegar.
+#
+#   git tag qa-v0.1.0   && git push origin qa-v0.1.0     -> QA
+#   git tag prod-v0.1.0 && git push origin prod-v0.1.0   -> prod
+#
+# Rollback: en el panel de Coolify, IMAGE_TAG=<tag inmutable anterior> y
+# Redeploy (no reconstruye nada). Ver docs/deploy.md.
+#
+# -----------------------------------------------------------------------------
+# PRERREQUISITOS (setup de una sola vez — ver docs/deploy.md):
+#   1. Recursos de Coolify (QA y prod) creados desde docker-compose.coolify.yml.
+#   2. Token de API de Coolify con permiso de deploy.
+{%- if protos_module %}
+#   3. Allowlist del CI_JOB_TOKEN de este repo en el repo de protos
+#      ({{ protos_module }}) — Settings > CI/CD > Job token permissions.
+{%- endif %}
+#   4. Protected tags: prod-v* (Maintainers), qa-v* (Developers + Maintainers).
+#   5. Variables CI/CD (proyecto o grupo; NUNCA en este archivo):
+#        COOLIFY_URL                 = https://coolify.ejemplo.com (sin / final)
+#        COOLIFY_TOKEN               = token de API (Masked)
+#        COOLIFY_RESOURCE_UUID_QA    = UUID del recurso de QA
+#        COOLIFY_RESOURCE_UUID_PROD  = UUID del recurso de prod
+#   El push al registry usa CI_JOB_TOKEN (no hace falta configurar nada).
+# =============================================================================
+{%- else -%}
+# =============================================================================
+# CI {{ repo_name }} — solo tests (deploy_target = ninguno)
+# =============================================================================
+#
+# Corre en merge requests. No hay build de imagen ni deploy: para agregar un
+# destino, `copier update --data deploy_target=<cloud-run|coolify>`.
+{%- if protos_module %}
+#
+# Prerrequisito: allowlist del CI_JOB_TOKEN de este repo en el repo de protos
+# ({{ protos_module }}) — Settings > CI/CD > Job token permissions.
+{%- endif %}
+# =============================================================================
+{%- endif %}
 
 stages:
   - test
+{%- if has_cd %}
   - release
+{%- endif %}
 
 variables:
   # Defaults no secretos. Una variable CI/CD del mismo nombre (proyecto/grupo)
   # tiene precedencia sobre estos valores.
+{%- if is_cr %}
   GCP_PROJECT: {{ gcp_project }}
   REGION: {{ gcp_region }}
   REPO_NAME: {{ artifact_repo }}   # repositorio de Artifact Registry
   IMAGE_NAME: {{ repo_name }}
+{%- endif %}
   GO_IMAGE: golang:{{ go_version }}
   # go.work es una herramienta local (ver `make workspace`). GOWORK=off
   # garantiza que CI compile contra lo publicado y verificado por go.sum.
@@ -63,6 +122,7 @@ variables:
   GOPRIVATE: {{ protos_module }}
 {%- endif %}
 
+{% if has_cd -%}
 # Pipeline en merge requests (solo tests) y en tags de release.
 # Un push directo a una rama no dispara nada: lo que protege main es el MR.
 workflow:
@@ -70,23 +130,32 @@ workflow:
     - if: '$CI_COMMIT_TAG =~ /^(qa|prod)-v/'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - when: never
+{%- else -%}
+# Pipeline solo en merge requests: lo que protege main es el MR.
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - when: never
+{%- endif %}
 
 # -----------------------------------------------------------------------------
-# TEST + VENDOR
+# TEST{% if has_cd %} + VENDOR{% endif %}
 # -----------------------------------------------------------------------------
 # No mutamos go.mod acá: el -mod=readonly por defecto hace fallar el job si
 # go.mod/go.sum quedaron desincronizados, en vez de "arreglarlo" en silencio.
+{%- if has_cd %}
 #
 # vendor/ + go.mod + go.sum pasan como artifacts al stage de release para que el
-# contexto de Cloud Build sea consistente con vendor/modules.txt.
+# build de la imagen (Dockerfile con -mod=vendor) no necesite red ni credenciales.
+{%- endif %}
 test:
   stage: test
   image: $GO_IMAGE
 {%- if protos_module %}
   before_script:
     # Acceso al módulo privado de protos con el token del job (requiere la
-    # allowlist del paso 3). Si los protos viven en otro host, reemplazar por
-    # un token propio guardado como variable masked.
+    # allowlist del CI_JOB_TOKEN). Si los protos viven en otro host, reemplazar
+    # por un token propio guardado como variable masked.
     - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf "https://${CI_SERVER_HOST}/"
 {%- endif %}
   script:
@@ -94,6 +163,7 @@ test:
     - go mod verify
     - go vet ./...
     - go test ./... -count=1 -timeout=120s
+{%- if has_cd %}
     - go mod vendor
   artifacts:
     paths:
@@ -101,6 +171,8 @@ test:
       - go.mod
       - go.sum
     expire_in: 1 hour
+{%- endif %}
+{%- if is_cr %}
 
 # -----------------------------------------------------------------------------
 # TEMPLATE de release (build Cloud Build + deploy Cloud Run)
@@ -170,6 +242,59 @@ release:qa:
     - if: '$CI_COMMIT_TAG =~ /^qa-v/'
   environment:
     name: qa
+{%- elif is_cy %}
+
+# -----------------------------------------------------------------------------
+# TEMPLATE de release (build + push al registry de GitLab + deploy en Coolify)
+# -----------------------------------------------------------------------------
+.release:
+  stage: release
+  image: docker:27
+  services:
+    - docker:27-dind
+  needs:
+    - test
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_TLS_CERTDIR: "/certs"
+  script:
+    # --- 0. El tag tiene que corresponder al entorno del job ---
+    - |
+      case "$CI_COMMIT_TAG" in
+        "${TARGET_ENV}"-v*) ;;
+        *) echo "El tag '$CI_COMMIT_TAG' no corresponde al entorno '$TARGET_ENV'"; exit 1 ;;
+      esac
+    # --- 1. Build + push (tag inmutable + tag móvil del entorno) ---
+    - echo "$CI_JOB_TOKEN" | docker login -u gitlab-ci-token --password-stdin "$CI_REGISTRY"
+    - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG" -t "$CI_REGISTRY_IMAGE:$TARGET_ENV" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+    - docker push "$CI_REGISTRY_IMAGE:$TARGET_ENV"
+    # --- 2. Deploy: la API de Coolify redespliega el recurso (baja el tag móvil) ---
+    - apk add --no-cache curl >/dev/null
+    - |
+      : "${COOLIFY_URL:?Falta la variable COOLIFY_URL}"
+      : "${COOLIFY_TOKEN:?Falta la variable COOLIFY_TOKEN}"
+      : "${COOLIFY_RESOURCE_UUID:?Falta el UUID del recurso de Coolify de $TARGET_ENV}"
+      echo "Deploy ${TARGET_ENV} (${CI_COMMIT_TAG}) en Coolify"
+      curl -fsS "$COOLIFY_URL/api/v1/deploy?uuid=$COOLIFY_RESOURCE_UUID&force=false" \
+        -H "Authorization: Bearer $COOLIFY_TOKEN"
+      echo
+      echo "Deploy encolado en Coolify. Seguilo en el panel (Deployments) del recurso."
+
+# -----------------------------------------------------------------------------
+# JOBS por entorno
+# -----------------------------------------------------------------------------
+release:qa:
+  extends: .release
+  variables:
+    TARGET_ENV: qa
+    COOLIFY_RESOURCE_UUID: $COOLIFY_RESOURCE_UUID_QA
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^qa-v/'
+  environment:
+    name: qa
+{%- endif %}
+{%- if has_cd %}
 
 # Prod se despliega solo, SALVO que el release traiga migraciones.
 #
@@ -222,8 +347,13 @@ release:prod:
     - test
     - guard:prod
   variables:
+{%- if is_cr %}
     SERVICE_NAME: {{ repo_name }}
     CLOUDRUN_YAML: cloudrun.prod.yaml
+{%- else %}
+    TARGET_ENV: prod
+    COOLIFY_RESOURCE_UUID: $COOLIFY_RESOURCE_UUID_PROD
+{%- endif %}
   rules:
     - if: '$CI_COMMIT_TAG =~ /^prod-v/'
       when: on_success
@@ -235,11 +365,17 @@ release:prod:
 release:prod:override:
   extends: .release
   variables:
+{%- if is_cr %}
     SERVICE_NAME: {{ repo_name }}
     CLOUDRUN_YAML: cloudrun.prod.yaml
+{%- else %}
+    TARGET_ENV: prod
+    COOLIFY_RESOURCE_UUID: $COOLIFY_RESOURCE_UUID_PROD
+{%- endif %}
   rules:
     - if: '$CI_COMMIT_TAG =~ /^prod-v/'
       when: manual
       allow_failure: true
   environment:
     name: prod
+{%- endif %}

@@ -59,6 +59,7 @@ deploy_target:
   help: ¿Dónde se despliega?
   choices:
     Firebase Hosting (deploy keyless desde CI): firebase-hosting
+    Coolify v4 en un VPS propio (imagen Docker + Caddy): coolify
     Ninguno (sólo CI de verificación): ninguno
   default: firebase-hosting
 
@@ -114,6 +115,11 @@ default_lang:
 deploy_fb:
   type: bool
   default: "{{ deploy_target == 'firebase-hosting' }}"
+  when: false
+
+deploy_cy:
+  type: bool
+  default: "{{ deploy_target == 'coolify' }}"
   when: false
 
 ci_gitlab:

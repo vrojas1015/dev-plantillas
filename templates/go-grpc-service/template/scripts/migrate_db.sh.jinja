@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =============================================================================
+# Copiar los datos del servicio entre dos Postgres — {{ repo_name }}
+# =============================================================================
+#
+# Copia el schema `{{ db_schema }}` (estructura + datos) de SRC a DST y verifica
+# que el conteo de filas por tabla sea idéntico. Pensado para mudar el servicio
+# de destino (p. ej. el Postgres del compose de Coolify -> Cloud SQL), pero
+# sirve entre dos Postgres cualesquiera.
+#
+#   1. pg_dump -Fc -n {{ db_schema }} del origen (solo lectura).
+#   2. pg_restore --no-owner --no-privileges --single-transaction en destino:
+#      los objetos quedan a nombre del usuario de DST_DATABASE_URL y sin GRANTs
+#      (los grants del usuario de runtime se rehacen en destino).
+#   3. Conteo exacto de filas por tabla en origen y destino. Si difieren, sale
+#      con código 2 (y no se sigue con el corte).
+#
+# DRY-RUN POR DEFECTO: sin --apply solo se conecta, cuenta, genera el dump y
+# muestra qué haría. No escribe nada en destino.
+#
+# El destino NO debe tener el schema (el dump trae CREATE SCHEMA + tablas +
+# datos, es decir, el estado completo del origen con todas sus migraciones).
+# Si ya existe (p. ej. un ensayo anterior), --replace lo borra con
+# DROP SCHEMA ... CASCADE antes de restaurar. NO apliques las migraciones en
+# destino antes: vienen en el dump.
+#
+# Para que los conteos coincidan, nadie tiene que escribir en el origen
+# durante la copia (ventana de escritura congelada; ver docs).
+#
+# Uso:
+#   scripts/migrate_db.sh SRC_DATABASE_URL DST_DATABASE_URL                     # dry-run
+#   scripts/migrate_db.sh --apply SRC_DATABASE_URL DST_DATABASE_URL             # copia + verifica
+#   scripts/migrate_db.sh --apply --replace SRC_DATABASE_URL DST_DATABASE_URL   # re-copia (borra el schema en DST)
+#   scripts/migrate_db.sh --verify SRC_DATABASE_URL DST_DATABASE_URL            # solo compara conteos
+#
+# Las URLs también se pueden pasar por SRC_DATABASE_URL / DST_DATABASE_URL
+# (variables de entorno), para que no queden en el historial de la shell.
+#
+# Herramientas: pg_dump/pg_restore/psql locales si están (versión >= la del
+# servidor); si no, la imagen $PG_IMAGE con Docker. En modo Docker,
+# localhost/127.0.0.1 de las URLs se reescribe a host.docker.internal;
+# PG_DOCKER_NETWORK=<red> conecta los contenedores a esa red sin reescribir.
+#
+# Variables:
+#   DB_SCHEMA          (default {{ db_schema }}) schema a copiar
+#   PG_IMAGE           (default postgres:16) usar la versión mayor del servidor más nuevo
+#   PG_USE_DOCKER      1 = usar Docker aunque haya herramientas locales
+#   PG_DOCKER_NETWORK  red de Docker para los contenedores
+#   KEEP_DUMP          ruta donde dejar una copia del dump (default: se borra)
+# =============================================================================
+
+SCHEMA="${DB_SCHEMA:-{{ db_schema }}}"
+PG_IMAGE="${PG_IMAGE:-postgres:16}"
+
+usage() {
+  sed -n '/^# Uso:/,/^# Las URLs/p' "$0" | sed 's/^# \{0,1\}//' >&2
+  exit 1
+}
+
+APPLY=0
+REPLACE=0
+VERIFY_ONLY=0
+POSITIONAL=()
+for arg in "$@"; do
+  case "$arg" in
+    --apply)   APPLY=1 ;;
+    --replace) REPLACE=1 ;;
+    --verify)  VERIFY_ONLY=1 ;;
+    -h|--help) usage ;;
+    -*)        echo "Flag desconocido: $arg" >&2; usage ;;
+    *)         POSITIONAL+=("$arg") ;;
+  esac
+done
+
+SRC_URL="${POSITIONAL[0]:-${SRC_DATABASE_URL:-}}"
+DST_URL="${POSITIONAL[1]:-${DST_DATABASE_URL:-}}"
+[[ -n "$SRC_URL" && -n "$DST_URL" ]] || usage
+[[ "$SRC_URL" != "$DST_URL" ]] || { echo "Origen y destino son la misma URL" >&2; exit 1; }
+[[ "$SCHEMA" =~ ^[a-z_][a-z0-9_]*$ ]] || { echo "DB_SCHEMA inválido: $SCHEMA" >&2; exit 1; }
+if [[ $REPLACE -eq 1 && $APPLY -ne 1 ]]; then
+  echo "--replace solo tiene efecto con --apply (se ignora en dry-run)" >&2
+fi
+
+# URL sin credenciales, para mostrar.
+mask() { printf '%s' "$1" | sed -E 's#://[^@/]*@#://***@#'; }
+
+# --- Herramientas: locales o Docker -------------------------------------------
+USE_DOCKER=1
+if [[ "${PG_USE_DOCKER:-}" != "1" ]] && command -v pg_dump >/dev/null 2>&1 \
+   && command -v pg_restore >/dev/null 2>&1 && command -v psql >/dev/null 2>&1; then
+  USE_DOCKER=0
+fi
+
+DOCKER_ARGS=(--rm -i)
+if [[ $USE_DOCKER -eq 1 ]]; then
+  command -v docker >/dev/null 2>&1 || { echo "No hay pg_dump/pg_restore/psql locales ni docker" >&2; exit 1; }
+  if [[ -n "${PG_DOCKER_NETWORK:-}" ]]; then
+    DOCKER_ARGS+=(--network "$PG_DOCKER_NETWORK")
+  else
+    DOCKER_ARGS+=(--add-host=host.docker.internal:host-gateway)
+  fi
+fi
+
+docker_url() {
+  if [[ -n "${PG_DOCKER_NETWORK:-}" ]]; then
+    printf '%s' "$1"
+  else
+    printf '%s' "$1" | sed -E 's#@(localhost|127\.0\.0\.1)([:/])#@host.docker.internal\2#'
+  fi
+}
+
+# pg <url> <herramienta> [args...]: corre psql/pg_dump/pg_restore contra <url>.
+# La URL va por variable de entorno, nunca en la línea de comandos de docker.
+pg() {
+  local url="$1" tool="$2"
+  shift 2
+  if [[ $USE_DOCKER -eq 0 ]]; then
+    "$tool" --dbname="$url" "$@"
+  else
+    PGX_URL="$(docker_url "$url")" docker run "${DOCKER_ARGS[@]}" -e PGX_URL "$PG_IMAGE" \
+      sh -c 'exec "$0" --dbname="$PGX_URL" "$@"' "$tool" "$@"
+  fi
+}
+
+psql_q() { local url="$1"; shift; pg "$url" psql -X -q -A -t -F '|' -v ON_ERROR_STOP=1 "$@"; }
+
+schema_exists() {
+  [[ "$(psql_q "$1" -c "SELECT 1 FROM pg_namespace WHERE nspname = '$SCHEMA'")" == "1" ]]
+}
+
+# Conteo EXACTO (count(*), no estadísticas) de cada tabla del schema: "tabla|filas".
+count_rows() {
+  psql_q "$1" -c "
+    SELECT c.relname,
+           (xpath('/row/n/text()',
+                  query_to_xml(format('SELECT count(*) AS n FROM %I.%I', n.nspname, c.relname),
+                               false, true, '')))[1]::text
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = '$SCHEMA' AND c.relkind IN ('r', 'p')
+     ORDER BY 1"
+}
+
+# Compara conteos origen/destino. 0 = idénticos, 2 = difieren.
+verify() {
+  local src dst
+  src="$(count_rows "$SRC_URL")"
+  dst="$(count_rows "$DST_URL")"
+  echo
+  echo "Verificación de filas por tabla ($SCHEMA):"
+  printf '  %-40s %12s %12s\n' "tabla" "origen" "destino"
+  join -t '|' -a 1 -a 2 -e 'FALTA' -o 0,1.2,2.2 \
+    <(printf '%s\n' "$src" | sed '/^$/d' | sort) \
+    <(printf '%s\n' "$dst" | sed '/^$/d' | sort) \
+    | awk -F'|' '{ mark = ($2 == $3) ? "" : "  <-- DIFIERE"; printf "  %-40s %12s %12s%s\n", $1, $2, $3, mark }'
+  if [[ "$src" != "$dst" ]]; then
+    echo
+    echo "ERROR: los conteos difieren. ¿Hubo escrituras en el origen durante la copia?" >&2
+    echo "No sigas con el corte: congelá escrituras y repetí con --apply --replace." >&2
+    return 2
+  fi
+  echo "OK: mismos conteos en origen y destino."
+}
+
+echo "Schema : $SCHEMA"
+echo "Origen : $(mask "$SRC_URL")"
+echo "Destino: $(mask "$DST_URL")"
+echo "Tools  : $([[ $USE_DOCKER -eq 1 ]] && echo "docker ($PG_IMAGE)" || echo "locales")"
+
+if [[ $VERIFY_ONLY -eq 1 ]]; then
+  verify
+  exit $?
+fi
+
+# --- 1. Origen ----------------------------------------------------------------
+schema_exists "$SRC_URL" || { echo "El origen no tiene el schema $SCHEMA" >&2; exit 1; }
+echo
+echo "Origen: filas por tabla"
+count_rows "$SRC_URL" | sed 's/^/  /'
+
+# --- 2. Destino ---------------------------------------------------------------
+DST_HAS_SCHEMA=0
+if schema_exists "$DST_URL"; then
+  DST_HAS_SCHEMA=1
+  echo
+  echo "Destino: el schema $SCHEMA YA existe:"
+  count_rows "$DST_URL" | sed 's/^/  /'
+else
+  echo
+  echo "Destino: sin schema $SCHEMA (ok)"
+fi
+
+# --- 3. Dump ------------------------------------------------------------------
+DUMP="$(mktemp)"
+trap 'rm -f "$DUMP"' EXIT
+echo
+echo "pg_dump -Fc -n $SCHEMA del origen..."
+pg "$SRC_URL" pg_dump -Fc --no-owner --no-privileges -n "$SCHEMA" > "$DUMP"
+[[ -s "$DUMP" ]] || { echo "El dump quedó vacío" >&2; exit 1; }
+echo "  $(wc -c < "$DUMP" | tr -d ' ') bytes"
+if [[ -n "${KEEP_DUMP:-}" ]]; then
+  cp "$DUMP" "$KEEP_DUMP"
+  echo "  copia en $KEEP_DUMP"
+fi
+
+if [[ $APPLY -ne 1 ]]; then
+  echo
+  echo "DRY-RUN: no se escribió nada en destino."
+  if [[ $DST_HAS_SCHEMA -eq 1 ]]; then
+    echo "Con --apply abortaría porque el schema existe en destino; --apply --replace lo borra y restaura."
+  else
+    echo "Con --apply: pg_restore en destino + verificación de conteos."
+  fi
+  exit 0
+fi
+
+# --- 4. Restore ---------------------------------------------------------------
+if [[ $DST_HAS_SCHEMA -eq 1 ]]; then
+  if [[ $REPLACE -ne 1 ]]; then
+    echo "El schema $SCHEMA ya existe en destino. Usá --replace para borrarlo y restaurar." >&2
+    exit 1
+  fi
+  echo
+  echo "DROP SCHEMA $SCHEMA CASCADE en destino (--replace)"
+  psql_q "$DST_URL" -c "DROP SCHEMA $SCHEMA CASCADE"
+fi
+
+echo
+echo "pg_restore --no-owner --no-privileges en destino..."
+pg "$DST_URL" pg_restore --no-owner --no-privileges --exit-on-error --single-transaction < "$DUMP"
+echo "  ok"
+
+# --- 5. Verificación ----------------------------------------------------------
+verify
