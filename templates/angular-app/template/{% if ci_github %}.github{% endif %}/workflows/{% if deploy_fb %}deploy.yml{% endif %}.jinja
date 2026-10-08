@@ -1,0 +1,54 @@
+# Deploy a Firebase Hosting, KEYLESS vía Workload Identity Federation (OIDC).
+#
+#   push a main      → production
+#   tag qa-vX.Y.Z    → qa
+#
+# Variables requeridas en cada GitHub Environment (`production` y `qa`),
+# Settings › Environments › <env> › Variables (no son secretos):
+#   GCP_WIF_PROVIDER  projects/<NÚMERO>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+#   GCP_SA_EMAIL      <service-account>@<proyecto>.iam.gserviceaccount.com
+#
+# Setup de una vez: docs/ci-cd-setup.md
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ['qa-v*.*.*']
+
+permissions:
+  contents: read
+  id-token: write # necesario para pedir el token OIDC
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+{%- raw %}
+    environment:
+      name: ${{ github.ref_type == 'tag' && 'qa' || 'production' }}
+    # Nunca dos deploys al mismo ambiente a la vez, y sin cancelar el que corre.
+    concurrency:
+      group: deploy-${{ github.ref_type == 'tag' && 'qa' || 'production' }}
+      cancel-in-progress: false
+    env:
+      TARGET: ${{ github.ref_type == 'tag' && 'qa' || 'production' }}
+      BUILD_SCRIPT: ${{ github.ref_type == 'tag' && 'build:qa' || 'build:prod' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:unit
+      - run: npm run "$BUILD_SCRIPT"
+
+      - name: Autenticar en GCP (WIF, sin claves)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SA_EMAIL }}
+
+      - name: Deploy a Firebase Hosting
+        run: npx --yes firebase-tools@15 deploy --only hosting --project "$TARGET" --non-interactive
+{%- endraw %}

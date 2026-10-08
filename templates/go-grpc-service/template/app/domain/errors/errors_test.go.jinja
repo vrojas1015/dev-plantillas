@@ -1,0 +1,127 @@
+package errors_test
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	domainerrors "{{ module_path }}/app/domain/errors"
+)
+
+func TestConstructorsMapToExpectedCodes(t *testing.T) {
+	cases := map[codes.Code]error{
+		codes.NotFound:           domainerrors.NotFoundError("x", nil),
+		codes.AlreadyExists:      domainerrors.ConflictError("x", nil),
+		codes.InvalidArgument:    domainerrors.ValidationError("x", nil),
+		codes.Unauthenticated:    domainerrors.UnauthorizedError("x", nil),
+		codes.PermissionDenied:   domainerrors.PermissionDeniedError("x", nil),
+		codes.FailedPrecondition: domainerrors.FailedPreconditionError("x", nil),
+		codes.Internal:           domainerrors.InternalError("x", nil),
+		codes.Unavailable:        domainerrors.ServiceUnavailableError("x", nil),
+		codes.ResourceExhausted:  domainerrors.RateLimitExceededError("x", nil),
+	}
+	for want, err := range cases {
+		if got := status.Code(domainerrors.MapToGRPC(err, nil)); got != want {
+			t.Errorf("code: got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestMapToGRPC_AttachesErrorInfo(t *testing.T) {
+	err := domainerrors.ConflictError("item already exists", map[string]any{"name": "a", "count": 2}).
+		WithReason("ITEM_NAME_TAKEN")
+
+	st := status.Convert(domainerrors.MapToGRPC(err, nil))
+	if st.Message() != "item already exists" {
+		t.Errorf("message: got %q", st.Message())
+	}
+
+	info := errorInfoOf(st)
+	if info == nil {
+		t.Fatal("expected ErrorInfo detail")
+	}
+	if info.GetReason() != "ITEM_NAME_TAKEN" {
+		t.Errorf("reason: got %q", info.GetReason())
+	}
+	if info.GetDomain() != "{{ repo_name }}" {
+		t.Errorf("domain: got %q", info.GetDomain())
+	}
+	if info.GetMetadata()["name"] != "a" || info.GetMetadata()["count"] != "2" {
+		t.Errorf("metadata: got %v", info.GetMetadata())
+	}
+}
+
+func TestMapToGRPC_DefaultReasonFromCode(t *testing.T) {
+	st := status.Convert(domainerrors.MapToGRPC(domainerrors.FailedPreconditionError("x", nil), nil))
+	info := errorInfoOf(st)
+	if info == nil {
+		t.Fatal("expected ErrorInfo detail")
+	}
+	if info.GetReason() != "FAILED_PRECONDITION" {
+		t.Errorf("reason: got %q", info.GetReason())
+	}
+}
+
+func TestMapToGRPC_WrappedDomainError(t *testing.T) {
+	wrapped := fmt.Errorf("ctx: %w", domainerrors.NotFoundError("missing", nil))
+	if got := status.Code(domainerrors.MapToGRPC(wrapped, nil)); got != codes.NotFound {
+		t.Errorf("code: got %v", got)
+	}
+	if !domainerrors.IsNotFound(wrapped) {
+		t.Error("IsNotFound should see through wrapping")
+	}
+}
+
+func TestMapToGRPC_UnknownErrorDoesNotLeak(t *testing.T) {
+	st := status.Convert(domainerrors.MapToGRPC(errors.New("pq: password authentication failed"), nil))
+	if st.Code() != codes.Internal {
+		t.Errorf("code: got %v", st.Code())
+	}
+	if st.Message() != "internal server error" {
+		t.Errorf("message leaked internals: %q", st.Message())
+	}
+}
+
+func TestMapToGRPC_ContextErrors(t *testing.T) {
+	if got := status.Code(domainerrors.MapToGRPC(context.Canceled, nil)); got != codes.Canceled {
+		t.Errorf("canceled: got %v", got)
+	}
+	if got := status.Code(domainerrors.MapToGRPC(context.DeadlineExceeded, nil)); got != codes.DeadlineExceeded {
+		t.Errorf("deadline: got %v", got)
+	}
+	if domainerrors.MapToGRPC(nil, nil) != nil {
+		t.Error("nil error must map to nil")
+	}
+}
+
+func TestIsHelpers(t *testing.T) {
+	if !domainerrors.IsConflict(domainerrors.ConflictError("x", nil)) {
+		t.Error("IsConflict")
+	}
+	if !domainerrors.IsValidation(domainerrors.ValidationError("x", nil)) {
+		t.Error("IsValidation")
+	}
+	if !domainerrors.IsFailedPrecondition(domainerrors.FailedPreconditionError("x", nil)) {
+		t.Error("IsFailedPrecondition")
+	}
+	if !domainerrors.IsInternal(domainerrors.InternalError("x", nil)) {
+		t.Error("IsInternal")
+	}
+	if domainerrors.IsNotFound(errors.New("plain")) {
+		t.Error("plain error must not be NotFound")
+	}
+}
+
+func errorInfoOf(st *status.Status) *errdetails.ErrorInfo {
+	for _, d := range st.Details() {
+		if ei, ok := d.(*errdetails.ErrorInfo); ok {
+			return ei
+		}
+	}
+	return nil
+}

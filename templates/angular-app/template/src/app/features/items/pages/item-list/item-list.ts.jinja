@@ -1,0 +1,35 @@
+import { ChangeDetectionStrategy, Component, OnInit, inject } from '@angular/core';
+import { RouterLink } from '@angular/router';
+{%- if i18n %}
+import { TranslatePipe } from '@ngx-translate/core';
+{%- endif %}
+
+import { Button } from '@/app/ui/components/button/button';
+import { ItemsStore } from '../../data-access/items.store';
+{%- if not i18n %}
+import type { ItemStatus } from '../../data-access/items.contracts';
+
+const STATUS_LABEL: Record<ItemStatus, string> = {
+  active: 'Activo',
+  archived: 'Archivado',
+};
+{%- endif %}
+
+/** Página: lee del store y dispara acciones. No llama al API directo. */
+@Component({
+  selector: 'app-item-list',
+  imports: [RouterLink, Button{% if i18n %}, TranslatePipe{% endif %}],
+  templateUrl: './item-list.html',
+  styleUrl: './item-list.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+export class ItemList implements OnInit {
+  protected readonly store = inject(ItemsStore);
+{%- if not i18n %}
+  protected readonly statusLabel = STATUS_LABEL;
+{%- endif %}
+
+  ngOnInit(): void {
+    this.store.load();
+  }
+}

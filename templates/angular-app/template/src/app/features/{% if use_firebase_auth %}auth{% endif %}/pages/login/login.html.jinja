@@ -1,0 +1,61 @@
+{%- if i18n -%}
+{%- raw -%}
+<main class="login">
+  <form class="login__card" [formGroup]="form" (ngSubmit)="submit()">
+    <h1 class="login__title">{{ 'auth.login.title' | translate }}</h1>
+
+    <label class="login__field">
+      <span class="login__label">{{ 'auth.login.email' | translate }}</span>
+      <input class="login__input" type="email" formControlName="email" autocomplete="email" />
+    </label>
+
+    <label class="login__field">
+      <span class="login__label">{{ 'auth.login.password' | translate }}</span>
+      <input
+        class="login__input"
+        type="password"
+        formControlName="password"
+        autocomplete="current-password"
+      />
+    </label>
+
+    @if (failed()) {
+      <p class="login__error" role="alert">{{ 'auth.login.error' | translate }}</p>
+    }
+
+    <ui-button type="submit" [loading]="loading()" [disabled]="form.invalid" [fullWidth]="true">
+      {{ 'auth.login.submit' | translate }}
+    </ui-button>
+  </form>
+</main>
+{%- endraw -%}
+{%- else -%}
+<main class="login">
+  <form class="login__card" [formGroup]="form" (ngSubmit)="submit()">
+    <h1 class="login__title">Iniciar sesión</h1>
+
+    <label class="login__field">
+      <span class="login__label">Email</span>
+      <input class="login__input" type="email" formControlName="email" autocomplete="email" />
+    </label>
+
+    <label class="login__field">
+      <span class="login__label">Contraseña</span>
+      <input
+        class="login__input"
+        type="password"
+        formControlName="password"
+        autocomplete="current-password"
+      />
+    </label>
+
+    @if (failed()) {
+      <p class="login__error" role="alert">No pudimos iniciar sesión. Revisá tus datos.</p>
+    }
+
+    <ui-button type="submit" [loading]="loading()" [disabled]="form.invalid" [fullWidth]="true">
+      Entrar
+    </ui-button>
+  </form>
+</main>
+{%- endif %}

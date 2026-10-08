@@ -1,0 +1,36 @@
+{%- raw -%}
+<header class="shell__header">
+  <a class="shell__brand" routerLink="/">{{ title }}</a>
+
+  <nav class="shell__nav">
+    <a class="shell__nav-link" routerLink="/items" routerLinkActive="shell__nav-link--active">
+{%- endraw %}
+{%- if i18n %}
+      {% raw %}{{ 'shell.nav.items' | translate }}{% endraw %}
+{%- else %}
+      Ítems
+{%- endif %}
+    </a>
+  </nav>
+{%- if use_firebase_auth %}
+
+  <div class="shell__user">
+{%- raw %}
+    @if (session.user(); as user) {
+      <span class="shell__user-email">{{ user.email }}</span>
+    }
+{%- endraw %}
+{%- if i18n %}
+    <ui-button variant="ghost" size="sm" (pressed)="logout()">
+      {% raw %}{{ 'shell.logout' | translate }}{% endraw %}
+    </ui-button>
+{%- else %}
+    <ui-button variant="ghost" size="sm" (pressed)="logout()">Cerrar sesión</ui-button>
+{%- endif %}
+  </div>
+{%- endif %}
+</header>
+
+<main class="shell__main">
+  <router-outlet />
+</main>

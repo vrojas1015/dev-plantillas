@@ -1,0 +1,52 @@
+package telemetry
+
+import (
+	"sync"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
+	"{{ module_path }}/app/infra/config"
+)
+
+var (
+	once   sync.Once
+	global *zap.Logger
+)
+
+// Init inicializa el logger global Zap. Debe llamarse una sola vez en bootstrap.
+// En production usa JSON (lo que Cloud Logging parsea); en el resto, consola con colores.
+func Init(cfg *config.Config) {
+	once.Do(func() {
+		var zapCfg zap.Config
+		if cfg.AppEnv == "production" {
+			zapCfg = zap.NewProductionConfig()
+		} else {
+			zapCfg = zap.NewDevelopmentConfig()
+			zapCfg.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+		}
+
+		if lvl, err := zapcore.ParseLevel(cfg.LogLevel); err == nil {
+			zapCfg.Level = zap.NewAtomicLevelAt(lvl)
+		}
+
+		l, err := zapCfg.Build()
+		if err != nil {
+			panic("failed to initialize logger: " + err.Error())
+		}
+
+		global = l.With(
+			zap.String("service", cfg.OtelServiceName),
+			zap.String("env", cfg.AppEnv),
+		)
+	})
+}
+
+// L retorna el logger global. Si no fue inicializado, devuelve uno de desarrollo.
+func L() *zap.Logger {
+	if global == nil {
+		l, _ := zap.NewDevelopment()
+		return l
+	}
+	return global
+}

@@ -1,0 +1,6 @@
+# Fuerza LF: los scripts bash y el Makefile se rompen con CRLF.
+* text=auto eol=lf
+*.go text eol=lf
+*.sh text eol=lf
+Makefile text eol=lf
+go.sum text eol=lf

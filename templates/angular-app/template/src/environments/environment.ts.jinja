@@ -1,0 +1,18 @@
+import type { AppEnvironment } from './environment.model';
+
+// Desarrollo local (`npm start`): apunta al backend de QA.
+export const environment: AppEnvironment = {
+  production: false,
+  env: 'dev',
+  appName: '{{ app_name }}',
+  apiBaseUrl: '{{ api_base_url_qa }}',
+{%- if use_firebase_auth %}
+  // TODO: completar con la config web del proyecto Firebase de QA.
+  firebase: {
+    apiKey: 'REEMPLAZAR',
+    authDomain: '{{ firebase_project_qa }}.firebaseapp.com',
+    projectId: '{{ firebase_project_qa }}',
+    appId: 'REEMPLAZAR',
+  },
+{%- endif %}
+};

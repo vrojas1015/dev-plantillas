@@ -1,0 +1,69 @@
+{%- if i18n -%}
+{%- raw -%}
+<section class="item-list">
+  <header class="item-list__header">
+    <h1 class="item-list__title">{{ 'items.list.title' | translate }}</h1>
+  </header>
+
+  @if (store.loading()) {
+    <p class="item-list__status">{{ 'common.loading' | translate }}</p>
+  } @else if (store.error(); as error) {
+    <div class="item-list__status item-list__status--error" role="alert">
+      <p>{{ error }}</p>
+      <ui-button variant="secondary" size="sm" (pressed)="store.load()">
+        {{ 'common.retry' | translate }}
+      </ui-button>
+    </div>
+  } @else if (store.isEmpty()) {
+    <p class="item-list__status">{{ 'items.list.empty' | translate }}</p>
+  } @else {
+    <ul class="item-list__rows">
+      @for (item of store.items(); track item.id) {
+        <li class="item-list__row">
+          <a class="item-list__link" [routerLink]="[item.id]">{{ item.name }}</a>
+          <span
+            class="item-list__badge"
+            [class.item-list__badge--archived]="item.status === 'archived'"
+          >
+            {{ 'items.status.' + item.status | translate }}
+          </span>
+        </li>
+      }
+    </ul>
+  }
+</section>
+{%- endraw -%}
+{%- else -%}
+{%- raw -%}
+<section class="item-list">
+  <header class="item-list__header">
+    <h1 class="item-list__title">Ítems</h1>
+  </header>
+
+  @if (store.loading()) {
+    <p class="item-list__status">Cargando…</p>
+  } @else if (store.error(); as error) {
+    <div class="item-list__status item-list__status--error" role="alert">
+      <p>{{ error }}</p>
+      <ui-button variant="secondary" size="sm" (pressed)="store.load()">Reintentar</ui-button>
+    </div>
+  } @else if (store.isEmpty()) {
+    <p class="item-list__status">No hay ítems todavía.</p>
+  } @else {
+    <ul class="item-list__rows">
+      @for (item of store.items(); track item.id) {
+        <li class="item-list__row">
+          <a class="item-list__link" [routerLink]="[item.id]">{{ item.name }}</a>
+          <span
+            class="item-list__badge"
+            [class.item-list__badge--archived]="item.status === 'archived'"
+          >
+            {{ statusLabel[item.status] }}
+          </span>
+        </li>
+      }
+    </ul>
+  }
+</section>
+{%- endraw -%}
+{%- endif %}

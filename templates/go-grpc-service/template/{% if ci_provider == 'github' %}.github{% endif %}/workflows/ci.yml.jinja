@@ -1,0 +1,191 @@
+# =============================================================================
+# CI/CD {{ repo_name }} — build (Cloud Build) + deploy (Cloud Run), disparado por tag
+# =============================================================================
+#
+# Equivalente GitHub Actions del modelo GitLab de la plantilla:
+#
+#   - Pull request   -> solo `test` (sin deploy).
+#   - Tag qa-v*      -> test + build + deploy a QA.
+#   - Tag prod-v*    -> test + guard + build + deploy a prod, SALVO que el
+#                       release toque `migrations/`: `guard-prod` falla y el
+#                       deploy no corre. Aplicás el SQL a mano y lanzás el
+#                       override (Actions > ci > Run workflow, con el tag).
+#   - workflow_dispatch (override) -> deploy a prod del tag indicado, sin guarda.
+#
+# Auth KEYLESS: Workload Identity Federation (OIDC de GitHub), sin claves JSON.
+# El tag ES la versión: el tag de la imagen en Artifact Registry es idéntico.
+#
+# Setup de una sola vez: docs/ci-cd-setup.md. Variables de repo (Settings >
+# Secrets and variables > Actions > Variables), NUNCA en este archivo:
+#   GCP_DEPLOYER_SA     email del SA deployer
+#   GCP_WIF_PROVIDER    projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+#   CLOUD_SQL_INSTANCE  <proyecto>:<región>:<instancia>
+#   GCP_PROJECT         (opcional) pisa el default de abajo
+{%- if protos_module %}
+# Secret (Settings > Secrets):
+#   PROTOS_TOKEN        token de solo lectura al repo de protos ({{ protos_module }})
+{%- endif %}
+# =============================================================================
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    tags:
+      - "qa-v*"
+      - "prod-v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag prod-v* a desplegar SIN la guarda de migraciones (aplicá el SQL antes)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "{{ go_version }}"
+  GOWORK: "off"
+{%- if protos_module %}
+  GOPRIVATE: "{{ protos_module }}"
+{%- endif %}
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # TEST + VENDOR (vendor/ viaja como artifact al deploy: Cloud Build no tiene
+  # credenciales para módulos privados)
+  # ---------------------------------------------------------------------------
+  test:
+    runs-on: ubuntu-latest
+    steps:
+{%- raw %}
+      - name: Validar input del override
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          case "$TAG" in
+            prod-v*) ;;
+            *) echo "El override solo acepta tags prod-v* (recibido: '$TAG')"; exit 1 ;;
+          esac
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+{%- endraw %}
+{%- if protos_module %}
+{%- raw %}
+
+      - name: Acceso al módulo privado de protos
+        env:
+          PROTOS_TOKEN: ${{ secrets.PROTOS_TOKEN }}
+{%- endraw %}
+        run: git config --global url."https://x-access-token:${PROTOS_TOKEN}@{{ protos_module.split('/')[0] }}/".insteadOf "https://{{ protos_module.split('/')[0] }}/"
+{%- endif %}
+
+      - name: Test
+        run: |
+          go mod download
+          go mod verify
+          go vet ./...
+          go test ./... -count=1 -timeout=120s
+
+      - name: Vendor
+        if: github.event_name != 'pull_request'
+        run: go mod vendor
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: vendor
+          path: |
+            vendor/
+            go.mod
+            go.sum
+          retention-days: 1
+{%- raw %}
+
+  # ---------------------------------------------------------------------------
+  # Guarda de prod: falla si el rango desde el tag prod-v* anterior toca
+  # migrations/ (las migraciones se aplican a mano ANTES del deploy).
+  # ---------------------------------------------------------------------------
+  guard-prod:
+    if: github.event_name == 'push' && startsWith(github.ref_name, 'prod-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # git describe necesita historia y tags
+
+      - name: Revisar migrations/ en el rango
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --tags --quiet --force
+          PREV="$(git describe --tags --abbrev=0 --match 'prod-v*' HEAD^ 2>/dev/null || true)"
+          if [ -z "$PREV" ]; then
+            echo "No hay un tag prod-v* anterior: no se puede calcular el rango."
+            echo "Primer release a prod: aplicá migrations/ a mano y corré el override."
+            exit 1
+          fi
+          echo "Rango a desplegar: ${PREV}..${TAG}"
+          CHANGED="$(git diff --name-only "$PREV..$TAG" -- migrations/)"
+          if [ -n "$CHANGED" ]; then
+            echo "Este release trae migraciones:"
+            echo "$CHANGED" | sed 's/^/    /'
+            echo "Aplicá el SQL en prod (scripts/apply_migration.sh prod ... --apply)"
+            echo "y después corré el override (Actions > ci > Run workflow)."
+            exit 1
+          fi
+          echo "Sin cambios en migrations/: el deploy automático es seguro."
+
+  # ---------------------------------------------------------------------------
+  # Deploys (la lógica vive en el workflow reutilizable deploy.yml)
+  # ---------------------------------------------------------------------------
+  release-qa:
+    if: github.event_name == 'push' && startsWith(github.ref_name, 'qa-v')
+    needs: test
+    permissions:
+      contents: read
+      id-token: write   # WIF
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: qa
+      cloudrun_yaml: cloudrun.qa.yaml
+      image_tag: ${{ github.ref_name }}
+    secrets: inherit
+
+  release-prod:
+    if: github.event_name == 'push' && startsWith(github.ref_name, 'prod-v')
+    needs: [test, guard-prod]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: prod
+      cloudrun_yaml: cloudrun.prod.yaml
+      image_tag: ${{ github.ref_name }}
+    secrets: inherit
+
+  # Escape hatch: mismo deploy, sin guarda. Protegelo con reviewers en el
+  # environment `prod` (Settings > Environments).
+  release-prod-override:
+    if: github.event_name == 'workflow_dispatch'
+    needs: test
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/deploy.yml
+    with:
+      environment: prod
+      cloudrun_yaml: cloudrun.prod.yaml
+      image_tag: ${{ inputs.tag }}
+    secrets: inherit
+{%- endraw %}

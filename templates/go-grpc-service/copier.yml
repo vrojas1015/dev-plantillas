@@ -1,0 +1,135 @@
+# =============================================================================
+# Plantilla Copier: microservicio Go gRPC (arquitectura hexagonal)
+# =============================================================================
+# Ver README.md (al lado de este archivo) para generar/actualizar proyectos.
+# Todo lo que vive en template/ es el contenido del proyecto generado; lo que
+# está acá afuera (este archivo, README.md) no se copia.
+# =============================================================================
+
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_answers_file: .copier-answers.yml
+_templates_suffix: .jinja
+
+# Mensaje al terminar `copier copy`.
+_message_after_copy: |
+  Proyecto {{ service_name }}-service generado.
+
+  Siguientes pasos:
+    1. cd {{ _copier_conf.dst_path }}
+    2. go mod tidy && go build ./... && go vet ./... && go test ./...
+    3. git init && git add . && git add --chmod=+x scripts/*.sh
+       git commit -m "Scaffold inicial desde go-grpc-service"
+    4. cp .env.example .env.dev  (y completar DATABASE_URL)
+    5. Completá la sección "Qué es este servicio" de CLAUDE.md.
+    6. Infra de GCP y CI/CD (una sola vez): docs/ci-cd-setup.md
+
+# -----------------------------------------------------------------------------
+# Preguntas
+# -----------------------------------------------------------------------------
+
+service_name:
+  type: str
+  help: "Nombre corto del servicio, sin el sufijo -service (ej. agenda -> repo agenda-service)"
+  validator: >-
+    {% if not (service_name | regex_search('^[a-z][a-z0-9-]*[a-z0-9]$')) %}
+    Solo minúsculas, dígitos y guiones; debe empezar con letra y no terminar en guion.
+    {% elif service_name.endswith('-service') %}
+    No incluyas el sufijo -service: se agrega solo.
+    {% elif service_name | length > 19 %}
+    Máximo 19 caracteres: el service account "<nombre>-service-sa" no puede pasar de 30.
+    {% endif %}
+
+service_description:
+  type: str
+  help: "Descripción de una línea (va a CLAUDE.md; se puede completar después)"
+  default: "TODO: describir qué hace {{ service_name }}-service."
+
+ci_provider:
+  type: str
+  help: "Proveedor de CI/CD"
+  choices:
+    GitLab CI: gitlab
+    GitHub Actions: github
+  default: gitlab
+
+module_path:
+  type: str
+  help: "Module path de Go (ej. gitlab.com/mi-org/agenda-service)"
+  default: >-
+    {% if ci_provider == 'github' %}github.com{% else %}gitlab.com{% endif %}/mi-org/{{ service_name }}-service
+  validator: >-
+    {% if not (module_path | regex_search('^[a-z0-9.-]+\.[a-z]+(/[A-Za-z0-9._~-]+)+$')) %}
+    Module path inválido (esperado host/ruta, ej. gitlab.com/mi-org/{{ service_name }}-service).
+    {% endif %}
+
+grpc_port:
+  type: int
+  help: "Puerto gRPC (GRPC_PORT y containerPort de Cloud Run; único por servicio)"
+  default: 5000
+  validator: >-
+    {% if grpc_port < 1024 or grpc_port > 65535 %}El puerto debe estar entre 1024 y 65535.{% endif %}
+
+db_schema:
+  type: str
+  help: "Schema de Postgres del servicio (sin sufijo -service)"
+  default: "{{ service_name | replace('-', '_') }}"
+  validator: >-
+    {% if not (db_schema | regex_search('^[a-z_][a-z0-9_]*$')) %}
+    Identificador SQL inválido: solo minúsculas, dígitos y guion bajo.
+    {% endif %}
+
+go_version:
+  type: str
+  help: "Versión de Go (go.mod, imagen de build y CI)"
+  default: "1.25.8"
+  validator: >-
+    {% if not (go_version | regex_search('^1\.[0-9]+\.[0-9]+$')) %}Formato esperado: 1.X.Y{% endif %}
+
+protos_module:
+  type: str
+  help: >-
+    Módulo Go del repo de protos compartido (ej. gitlab.com/mi-org/protos).
+    Vacío = el servicio usa solo el proto de ejemplo local (proto/example/v1).
+  default: ""
+
+protos_version:
+  type: str
+  help: "Versión del módulo de protos (ej. v0.1.0); se usa en la doc y en el comando go get"
+  default: "latest"
+  when: "{{ protos_module != '' }}"
+
+gcp_project:
+  type: str
+  help: "ID del proyecto GCP (no el número). Default de scripts/CI; CI puede sobreescribirlo con la variable GCP_PROJECT"
+  default: "mi-proyecto-gcp"
+  validator: >-
+    {% if not (gcp_project | regex_search('^[a-z][a-z0-9-]{4,28}[a-z0-9]$')) %}
+    ID de proyecto GCP inválido.
+    {% endif %}
+
+gcp_region:
+  type: str
+  help: "Región de GCP (Cloud Run + Artifact Registry)"
+  default: us-central1
+
+artifact_repo:
+  type: str
+  help: "Repositorio de Artifact Registry para las imágenes"
+  default: "{{ service_name }}-service"
+
+# -----------------------------------------------------------------------------
+# Valores derivados (no se preguntan; se guardan en las respuestas)
+# -----------------------------------------------------------------------------
+# Nota: Copier no tiene "computed values" puros; estos se exponen como
+# preguntas ocultas (when: false) con default derivado.
+
+repo_name:
+  type: str
+  default: "{{ service_name }}-service"
+  when: false
+
+go_package_name:
+  type: str
+  default: "{{ service_name | replace('-', '') }}"
+  when: false

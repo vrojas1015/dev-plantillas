@@ -1,0 +1,144 @@
+# CI/CD de {{ app_name }}.
+#
+#   MR                  → verify (lint + unit tests) + build:prod
+#   push a main         → verify + build:prod{% if deploy_target == 'firebase-hosting' %} + deploy:prod (Firebase Hosting){% endif %}
+{%- if deploy_target == 'firebase-hosting' %}
+#   tag qa-vX.Y.Z       → build:qa + deploy:qa
+#
+# Deploy KEYLESS vía Workload Identity Federation (OIDC): GitLab emite un token
+# de corta duración, GCP lo verifica y deja impersonar al service account de
+# deploy SOLO desde este repo. No hay claves JSON en GitLab.
+#
+# Variables CI/CD requeridas (Settings › CI/CD › Variables), con scope por
+# environment (`production` y `qa`). No son secretas, pero son propias de cada
+# ambiente y no van en el repo:
+#   GCP_WIF_PROVIDER  projects/<NÚMERO>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+#   GCP_SA_EMAIL      <service-account>@<proyecto>.iam.gserviceaccount.com
+#
+# Setup de una vez: docs/ci-cd-setup.md
+{%- endif %}
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Evita pipelines duplicados (rama + MR) cuando la rama tiene un MR abierto.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+{%- if deploy_target == 'firebase-hosting' %}
+    - if: $CI_COMMIT_TAG =~ /^qa-v\d+\.\d+\.\d+$/
+{%- endif %}
+
+stages:
+  - verify
+  - build
+{%- if deploy_target == 'firebase-hosting' %}
+  - deploy
+{%- endif %}
+
+default:
+  image: node:24
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  before_script:
+    - npm ci --cache .npm --prefer-offline
+
+verify:
+  stage: verify
+  script:
+    - npm run lint
+    - npm run test:unit
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+build:prod:
+  stage: build
+  script:
+    - npm run build:prod
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 hour
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+{%- if deploy_target == 'firebase-hosting' %}
+
+build:qa:
+  stage: build
+  script:
+    - npm run build:qa
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 hour
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^qa-v\d+\.\d+\.\d+$/
+
+# Plantilla común de deploy. `resource_group` evita dos deploys a la vez y
+# `environment` habilita "Prevent outdated deployment jobs" (activarlo en
+# Settings › CI/CD › General pipelines): sin las dos cosas, un pipeline de un
+# commit más viejo puede terminar después y pisar producción con código viejo.
+.firebase-deploy:
+  stage: deploy
+  before_script: []
+  cache: []
+  id_tokens:
+    GCP_ID_TOKEN:
+      aud: https://iam.googleapis.com/$GCP_WIF_PROVIDER
+  script:
+    - test -n "$GCP_WIF_PROVIDER" || (echo "Falta la variable GCP_WIF_PROVIDER para este environment" && exit 1)
+    - test -n "$GCP_SA_EMAIL" || (echo "Falta la variable GCP_SA_EMAIL para este environment" && exit 1)
+    - npm install -g firebase-tools@15
+    # 1. Token OIDC de GitLab a un archivo.
+    - echo "$GCP_ID_TOKEN" > /tmp/gitlab_oidc_token
+    # 2. Credenciales "external_account" (WIF) que apuntan a ese token.
+    - |
+      cat > /tmp/gcp_creds.json <<JSON
+      {
+        "type": "external_account",
+        "audience": "//iam.googleapis.com/${GCP_WIF_PROVIDER}",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+        "token_url": "https://sts.googleapis.com/v1/token",
+        "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${GCP_SA_EMAIL}:generateAccessToken",
+        "credential_source": {
+          "file": "/tmp/gitlab_oidc_token",
+          "format": { "type": "text" }
+        }
+      }
+      JSON
+    # 3. firebase-tools toma las credenciales vía ADC.
+    - export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_creds.json
+    - firebase deploy --only hosting --project "$FIREBASE_ALIAS" --non-interactive
+
+deploy:prod:
+  extends: .firebase-deploy
+  needs:
+    - build:prod
+  variables:
+    FIREBASE_ALIAS: production
+  resource_group: production
+  environment:
+    name: production
+    url: https://{{ firebase_project_prod }}.web.app
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+deploy:qa:
+  extends: .firebase-deploy
+  needs:
+    - build:qa
+  variables:
+    FIREBASE_ALIAS: qa
+  resource_group: qa
+  environment:
+    name: qa
+    url: https://{{ firebase_project_qa }}.web.app
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^qa-v\d+\.\d+\.\d+$/
+{%- endif %}

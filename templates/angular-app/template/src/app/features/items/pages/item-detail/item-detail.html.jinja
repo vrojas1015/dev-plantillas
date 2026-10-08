@@ -1,0 +1,35 @@
+{%- if i18n -%}
+{%- raw -%}
+<article class="item-detail">
+  <a class="item-detail__back" routerLink="..">← {{ 'items.detail.back' | translate }}</a>
+
+  @if (store.selected(); as item) {
+    <h1 class="item-detail__title">{{ item.name }}</h1>
+    <p class="item-detail__description">{{ item.description }}</p>
+    <p class="item-detail__meta">
+      {{ 'items.status.' + item.status | translate }} · {{ item.updatedAt | date: 'medium' }}
+    </p>
+  } @else if (store.selectedLoading()) {
+    <p class="item-detail__meta">{{ 'common.loading' | translate }}</p>
+  } @else if (store.selectedError()) {
+    <p class="item-detail__error" role="alert">{{ 'items.detail.notFound' | translate }}</p>
+  }
+</article>
+{%- endraw -%}
+{%- else -%}
+{%- raw -%}
+<article class="item-detail">
+  <a class="item-detail__back" routerLink="..">← Volver al listado</a>
+
+  @if (store.selected(); as item) {
+    <h1 class="item-detail__title">{{ item.name }}</h1>
+    <p class="item-detail__description">{{ item.description }}</p>
+    <p class="item-detail__meta">Actualizado: {{ item.updatedAt | date: 'medium' }}</p>
+  } @else if (store.selectedLoading()) {
+    <p class="item-detail__meta">Cargando…</p>
+  } @else if (store.selectedError()) {
+    <p class="item-detail__error" role="alert">No encontramos este ítem.</p>
+  }
+</article>
+{%- endraw -%}
+{%- endif %}

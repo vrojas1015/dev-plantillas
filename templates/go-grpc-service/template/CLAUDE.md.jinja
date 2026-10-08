@@ -1,0 +1,138 @@
+# {{ repo_name }} — contexto para Claude
+
+## Qué es este servicio
+
+{{ service_description }}
+
+<!-- TODO: completar. Qué dominio cubre, quién lo llama (gateway, otros micros),
+     qué contrato gRPC implementa y reglas de negocio no obvias. -->
+
+Microservicio Go gRPC, interno (Cloud Run sin acceso público), Postgres en el
+schema `{{ db_schema }}`, puerto `{{ grpc_port }}`. Generado desde la plantilla
+Copier `go-grpc-service` (`.copier-answers.yml`; actualizar con `copier update`).
+
+## Arquitectura (hexagonal)
+
+```
+adapters → application → domain ← infra
+                         (ports)
+```
+
+| Capa | Path | Regla |
+|---|---|---|
+| Modelos | `app/domain/model/` | Go puro: sin tags GORM ni tipos proto |
+| Ports | `app/domain/port/` | Interfaces de repositorio/clientes |
+| Errores | `app/domain/errors/` | `package errors`, importar como `domainerrors` |
+| Use cases | `app/application/` | Solo dependen de ports |
+| Handlers | `app/adapters/grpc/handler/` | Embeben `Unimplemented…Server`; finos |
+| Mappers | `app/adapters/grpc/mapper/` | Única frontera proto ↔ dominio |
+| Interceptor | `app/adapters/grpc/interceptor/` | Logging gRPC |
+| Repos | `app/infra/postgres/` | Rows unexported + `TableName()` con schema |
+| Wiring | `app/infra/bootstrap/`, `app/infra/config/` | Config (env) + logger + DB |
+| Telemetría | `app/infra/telemetry/` | Zap + banner |
+| Entry point | `cli/main.go` | Solo wiring + ciclo de vida |
+
+Contrato gRPC: {% if protos_module %}repo de protos `{{ protos_module }}` (ver
+"Protos"). Mientras no se enchufe, el servicio expone el ejemplo local
+`proto/example/v1/item.proto`.{% else %}proto local `proto/example/v1/item.proto`
+(código en `gen/go/`, regenerar con `make proto`).{% endif %} Además registra
+`grpc.health.v1` (lo usan los probes de Cloud Run) y reflection fuera de prod.
+
+## Errores
+
+- Toda capa devuelve `*domainerrors.DomainError` vía los 9 constructores
+  (`NotFoundError`, `ConflictError`, `ValidationError`, `UnauthorizedError`,
+  `PermissionDeniedError`, `FailedPreconditionError`, `InternalError`,
+  `ServiceUnavailableError`, `RateLimitExceededError`), firma `(msg, details)`.
+- Error de Go inesperado: `domainerrors.InternalError("failed to X", map[string]any{"cause": err.Error()})`.
+- Nada de `fmt.Errorf("…%w", sentinel)` para errores de negocio.
+- Handlers: `return nil, domainerrors.MapToGRPC(err, h.logger)`. Adjunta
+  `google.rpc.ErrorInfo` (Reason/Domain/Metadata); errores no-dominio salen como
+  `Internal` sin filtrar detalles.
+- Si el cliente necesita distinguir dos errores con el mismo código: `.WithReason("UPPER_SNAKE")`.
+- Repos: `translateError` (`app/infra/postgres/errors.go`) mapea
+  `gorm.ErrRecordNotFound` → NotFound, PG `23505` → Conflict, resto → Internal.
+- Tests: `domainerrors.IsNotFound/IsConflict/IsValidation/IsFailedPrecondition/IsInternal`.
+
+## Tests
+
+- Solo stdlib `testing`. **Nada** de testify, gomock ni mockery.
+- Mocks = structs con campos `func` opcionales (`app/application/mocks_test.go`);
+  método sin setear → zero values.
+- Un `<servicio>_test.go` por service: caso feliz + validaciones + propagación
+  de errores del repo.
+- Handlers: un test de punta a punta con `bufconn` alcanza (ver `item_handler_test.go`).
+
+## Datos
+
+- PK **UUID** por default, generada en el service (`uuid.NewString()`). PK de
+  texto solo si el proto la expone como identificador estable del cliente (y
+  entonces upsert con `clause.OnConflict`).
+- Paginación keyset `(created_at, id) DESC` con cursor opaco (`cursor.go`):
+  pedir `limit+1` para `has_next`. Default/máximo de `limit` en el service.
+- JSONB: DTOs unexported separados del dominio + `encoding/json`.
+- Migraciones en `migrations/NNNNNN_desc.{up,down}.sql`, aplicadas a mano
+  (`scripts/apply_migration.sh`). Si nada está desplegado, reescribir `000001`.
+
+## Comandos
+
+```bash
+cp .env.example .env.dev      # una vez; completar DATABASE_URL
+make run                      # levanta el servicio (lee .env.dev)
+make test                     # go test ./... -count=1
+make lint                     # gofmt + go vet (+ golangci-lint si está)
+make build                    # bin/{{ repo_name }}
+make proto                    # regenera gen/go desde proto/ (buf)
+go mod tidy                   # después de tocar imports
+{%- if protos_module %}
+make workspace / workspace-off  # co-desarrollar con un checkout local de los protos
+{%- endif %}
+grpcurl -plaintext localhost:{{ grpc_port }} list   # con reflection (no prod)
+```
+
+## Deploy
+
+Por tag de git vía {% if ci_provider == 'gitlab' %}GitLab CI (`.gitlab-ci.yml`){% else %}GitHub Actions (`.github/workflows/`){% endif %}
++ Cloud Build + Cloud Run, auth keyless (WIF):
+
+```bash
+git tag qa-v0.1.0   && git push origin qa-v0.1.0     # QA, automático
+git tag prod-v0.1.0 && git push origin prod-v0.1.0   # prod, automático salvo migraciones
+```
+
+- Release con cambios en `migrations/`: la guarda de prod bloquea. Aplicar el
+  SQL (`scripts/apply_migration.sh prod <migración> --apply`) y lanzar el override.
+- Rollback: `scripts/rollback.sh <qa|prod> [tag]` (no construye; redespliega).
+- Setup de una vez (WIF, SA, tags protegidos, variables): `docs/ci-cd-setup.md`.
+- `.gcloudignore` es crítico: sin él Cloud Build hereda `.gitignore` y pierde `vendor/`.
+- Los comandos que piden credenciales o confirmación (`gcloud auth login`,
+  `setup_cloud_run_secrets.sh`, `apply_migration.sh prod --apply`) los corre una persona.
+
+## Protos
+
+{% if protos_module -%}
+Repo de protos: `{{ protos_module }}` (versión inicial `{{ protos_version }}`). Para enchufarlo:
+{%- else -%}
+Sin repo de protos compartido. Para enchufar uno más adelante:
+{%- endif %}
+
+1. `go get <módulo-de-protos>@<versión>` (ej. `{{ protos_module or 'gitlab.com/mi-org/protos' }}@{{ protos_version if protos_module else 'v0.1.0' }}`).
+2. Handler nuevo que implemente `<paquete>.<X>ServiceServer`, mapper y registro en `cli/main.go`.
+3. Borrar el ejemplo (abajo), `buf.yaml`, `buf.gen.yaml`, `proto/` y `gen/`.
+4. Módulo privado: `GOPRIVATE`, token en CI y `make workspace`
+   (`copier update` con `protos_module` los genera; ver `docs/ci-cd-setup.md`).
+
+## Borrar el ejemplo (entidad `Item`)
+
+`app/domain/model/item.go`, `app/domain/port/item_repository.go`,
+`app/application/item_service*.go` (+ mocks en `mocks_test.go`),
+`app/infra/postgres/item_repo.go`, `app/adapters/grpc/{handler,mapper}/item_*`,
+el wiring en `cli/main.go` y la tabla `items` en `migrations/000001_*`.
+`go build ./... && go test ./...` tiene que quedar verde.
+
+## Reglas duras
+
+1. El dominio nunca importa proto ni GORM. La frontera la cruzan los mappers/repos.
+2. Nada de librerías de mocking.
+3. Proto-first: antes de implementar, leer el `.proto` y reportar el delta con el código.
+4. Release con cambio de contrato: protos → clientes (gateway) → este micro.

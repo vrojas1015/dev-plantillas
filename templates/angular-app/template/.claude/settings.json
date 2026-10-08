@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm run build)",
+      "Bash(npm run build:*)",
+      "Bash(npm run test:unit)",
+      "Bash(npm run test:unit:*)",
+      "Bash(npm run lint)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run format)",
+      "Bash(npm run format:check)",
+      "Bash(npx ng generate:*)",
+      "Bash(ng generate:*)",
+      "Bash(npx prettier --check:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git blame:*)",
+      "Bash(git branch --list:*)",
+      "Bash(git branch --show-current)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Bash(firebase deploy:*)",
+      "Bash(npx firebase-tools deploy:*)",
+      "Bash(npm run deploy:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}

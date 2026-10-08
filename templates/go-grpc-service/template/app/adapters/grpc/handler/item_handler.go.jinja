@@ -1,0 +1,62 @@
+package handler
+
+import (
+	"context"
+
+	"go.uber.org/zap"
+
+	examplev1 "{{ module_path }}/gen/go/example/v1"
+
+	"{{ module_path }}/app/adapters/grpc/mapper"
+	"{{ module_path }}/app/application"
+	domainerrors "{{ module_path }}/app/domain/errors"
+)
+
+// ItemHandler implementa examplev1.ItemServiceServer (EJEMPLO).
+//
+// Los handlers son finos: request -> service -> mapper -> response. Nada de
+// lógica de negocio acá. Todo error sale por domainerrors.MapToGRPC.
+type ItemHandler struct {
+	// Embed obligatorio: forward-compat con RPCs nuevos del proto.
+	examplev1.UnimplementedItemServiceServer
+
+	logger  *zap.Logger
+	itemSvc *application.ItemService
+}
+
+var _ examplev1.ItemServiceServer = (*ItemHandler)(nil)
+
+// NewItemHandler construye el handler.
+func NewItemHandler(logger *zap.Logger, itemSvc *application.ItemService) *ItemHandler {
+	return &ItemHandler{logger: logger, itemSvc: itemSvc}
+}
+
+func (h *ItemHandler) CreateItem(ctx context.Context, req *examplev1.CreateItemRequest) (*examplev1.CreateItemResponse, error) {
+	item, err := h.itemSvc.CreateItem(ctx, application.CreateItemInput{
+		Name:        req.GetName(),
+		Description: req.GetDescription(),
+	})
+	if err != nil {
+		return nil, domainerrors.MapToGRPC(err, h.logger)
+	}
+	return &examplev1.CreateItemResponse{Item: mapper.ItemToProto(item)}, nil
+}
+
+func (h *ItemHandler) GetItem(ctx context.Context, req *examplev1.GetItemRequest) (*examplev1.GetItemResponse, error) {
+	item, err := h.itemSvc.GetItem(ctx, req.GetId())
+	if err != nil {
+		return nil, domainerrors.MapToGRPC(err, h.logger)
+	}
+	return &examplev1.GetItemResponse{Item: mapper.ItemToProto(item)}, nil
+}
+
+func (h *ItemHandler) ListItems(ctx context.Context, req *examplev1.ListItemsRequest) (*examplev1.ListItemsResponse, error) {
+	page, err := h.itemSvc.ListItems(ctx, mapper.ItemFilterFromProto(req.GetPage()))
+	if err != nil {
+		return nil, domainerrors.MapToGRPC(err, h.logger)
+	}
+	return &examplev1.ListItemsResponse{
+		Items: mapper.ItemsToProto(page.Items),
+		Page:  mapper.PageResponseToProto(page.NextCursor, page.HasNext),
+	}, nil
+}

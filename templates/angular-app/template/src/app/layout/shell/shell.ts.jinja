@@ -1,0 +1,35 @@
+import { ChangeDetectionStrategy, Component{% if use_firebase_auth %}, inject{% endif %} } from '@angular/core';
+import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+{%- if i18n %}
+import { TranslatePipe } from '@ngx-translate/core';
+{%- endif %}
+{%- if use_firebase_auth %}
+
+import { AuthService } from '@/app/core/auth/auth.service';
+import { SessionStore } from '@/app/core/auth/session.store';
+import { Button } from '@/app/ui/components/button/button';
+{%- endif %}
+
+/**
+ * Layout principal: header + navegación + <router-outlet>. Las páginas de las
+ * features se renderizan adentro. Lo que es "marco" de la app vive en layout/,
+ * no en las features.
+ */
+@Component({
+  selector: 'app-shell',
+  imports: [RouterOutlet, RouterLink, RouterLinkActive{% if use_firebase_auth %}, Button{% endif %}{% if i18n %}, TranslatePipe{% endif %}],
+  templateUrl: './shell.html',
+  styleUrl: './shell.scss',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+})
+export class Shell {
+  protected readonly title = '{{ app_title }}';
+{%- if use_firebase_auth %}
+  protected readonly session = inject(SessionStore);
+  private readonly auth = inject(AuthService);
+
+  protected logout(): void {
+    void this.auth.logout();
+  }
+{%- endif %}
+}

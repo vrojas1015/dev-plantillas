@@ -1,0 +1,12 @@
+# Generados / dependencias
+dist/
+node_modules/
+.angular/
+coverage/
+playwright-report/
+test-results/
+package-lock.json
+.copier-answers.yml
+
+# Docs: tablas con contenido generado por la plantilla; se formatean a mano.
+*.md

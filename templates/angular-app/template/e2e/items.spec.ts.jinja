@@ -1,0 +1,74 @@
+import { expect, test } from '@playwright/test';
+
+/**
+ * E2E de la feature de ejemplo. El API se mockea con `page.route`: el test no
+ * depende de que el backend de QA esté arriba ni de datos reales.
+ */
+const ITEMS = [
+  {
+    id: '1',
+    name: 'Primer ítem',
+    description: 'Descripción del primero',
+    status: 'active',
+    updatedAt: '2026-01-01T10:00:00Z',
+  },
+  {
+    id: '2',
+    name: 'Segundo ítem',
+    description: 'Descripción del segundo',
+    status: 'archived',
+    updatedAt: '2026-01-02T10:00:00Z',
+  },
+];
+
+test.beforeEach(async ({ page }) => {
+{%- if use_firebase_auth %}
+  // Simula una sesión previa (post-F5): hay refresh token en localStorage y el
+  // interceptor pide un access token antes de la primera request.
+  await page.addInitScript(() => localStorage.setItem('{{ app_name }}:rt', 'e2e-refresh-token'));
+  await page.route(/\/v1\/auth\/refresh$/, (route) =>
+    route.fulfill({
+      json: {
+        session: {
+          accessToken: 'e2e-access-token',
+          refreshToken: 'e2e-refresh-token',
+          expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        },
+      },
+    }),
+  );
+{%- endif %}
+  await page.route(/\/v1\/items(\?.*)?$/, (route) =>
+    route.fulfill({ json: { items: ITEMS, nextPageToken: '' } }),
+  );
+  await page.route(/\/v1\/items\/[^/?]+$/, (route) => {
+    const id = new URL(route.request().url()).pathname.split('/').pop();
+    const item = ITEMS.find((i) => i.id === id);
+    return item
+      ? route.fulfill({ json: item })
+      : route.fulfill({ status: 404, json: { message: 'not found' } });
+  });
+});
+
+test('lista los ítems y navega al detalle', async ({ page }) => {
+  await page.goto('/');
+
+  await expect(page).toHaveURL(/\/items$/);
+  const rows = page.locator('.item-list__row');
+  await expect(rows).toHaveCount(2);
+
+  await rows.first().getByRole('link').click();
+
+  await expect(page).toHaveURL(/\/items\/1$/);
+  await expect(page.getByRole('heading', { name: 'Primer ítem' })).toBeVisible();
+});
+{%- if use_firebase_auth %}
+
+test('sin sesión redirige al login', async ({ browser }) => {
+  // Contexto nuevo, sin el init script del beforeEach.
+  const page = await browser.newPage();
+  await page.goto('/items');
+  await expect(page).toHaveURL(/\/login\?returnUrl=%2Fitems/);
+  await page.close();
+});
+{%- endif %}

@@ -1,0 +1,46 @@
+# {{ app_title }}
+
+App frontend Angular (`{{ app_name }}`). Generada desde la plantilla
+`dev-plantillas/templates/angular-app` (ver `.copier-answers.yml`).
+
+## Arrancar
+
+```bash
+npm install
+npm start            # http://localhost:4200 contra el backend de QA
+```
+
+## Scripts
+
+| Script | Qué hace |
+|---|---|
+| `npm start` | Dev server |
+| `npm run build` / `build:prod` | Build de producción → `dist/{{ app_name }}/browser` |
+| `npm run build:qa` | Build con `environment.qa.ts` |
+| `npm run test:unit` | Unit tests (vitest) |
+| `npm run test:e2e` | E2E (Playwright; 1ra vez `npx playwright install chromium`) |
+| `npm run lint` | `prettier --check` + typecheck |
+| `npm run format` | `prettier --write` |
+
+## Ambientes
+
+| Ambiente | Archivo | API |
+|---|---|---|
+| dev (`npm start`) | `src/environments/environment.ts` | {{ api_base_url_qa }} |
+| qa | `src/environments/environment.qa.ts` | {{ api_base_url_qa }} |
+| production | `src/environments/environment.prod.ts` | {{ api_base_url_prod }} |
+
+## Deploy
+
+{% if deploy_target == 'firebase-hosting' -%}
+Firebase Hosting desde CI, sin claves: merge a `main` → producción, tag `qa-vX.Y.Z` → QA.
+Setup en [docs/ci-cd-setup.md](docs/ci-cd-setup.md).
+{%- else -%}
+Sin deploy automático (sólo CI de verificación). Ver [docs/ci-cd-setup.md](docs/ci-cd-setup.md).
+{%- endif %}
+
+## Más
+
+- Convenciones y estructura: [CLAUDE.md](CLAUDE.md)
+- Estilos: [docs/estilos-bem.md](docs/estilos-bem.md)
+- Actualizar desde la plantilla: `copier update` (requiere el repo limpio).

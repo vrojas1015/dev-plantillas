@@ -1,0 +1,91 @@
+@use 'mixins' as m;
+
+:host {
+  display: inline-block;
+}
+
+:host:has(.ui-button--full) {
+  display: block;
+}
+
+// Bloque BEM: .ui-button (prefijo ui- en todo lo de src/app/ui)
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-sm) ease,
+    opacity var(--duration-sm) ease;
+  @include m.focus-visible;
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  // Modificadores de tamaño
+  &--sm {
+    padding: var(--space-1) var(--space-3);
+    font-size: var(--text-small);
+  }
+
+  &--md {
+    padding: var(--space-2) var(--space-4);
+    font-size: var(--text-body);
+  }
+
+  // Modificadores de variante
+  &--primary {
+    background: var(--color-primary);
+    color: var(--text-on-primary);
+
+    &:hover:not(:disabled) {
+      background: var(--color-primary-dark);
+    }
+  }
+
+  &--secondary {
+    background: var(--surface-canvas);
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+
+    &:hover:not(:disabled) {
+      background: var(--color-primary-soft);
+    }
+  }
+
+  &--ghost {
+    background: transparent;
+    color: var(--text-primary);
+
+    &:hover:not(:disabled) {
+      background: var(--surface-muted);
+    }
+  }
+
+  &--full {
+    width: 100%;
+  }
+
+  // Elementos
+  &__spinner {
+    width: 1em;
+    height: 1em;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 50%;
+    animation: ui-button-spin 0.7s linear infinite;
+  }
+}
+
+@keyframes ui-button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

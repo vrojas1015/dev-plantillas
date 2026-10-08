@@ -1,0 +1,45 @@
+@use 'mixins' as m;
+
+// Bloque BEM: .login
+.login {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: var(--space-4);
+
+  &__card {
+    @include m.card;
+    display: grid;
+    gap: var(--space-4);
+    width: 100%;
+    max-width: 360px;
+    padding: var(--space-6);
+  }
+
+  &__title {
+    margin: 0;
+  }
+
+  &__field {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  &__label {
+    font-size: var(--text-small);
+    color: var(--text-muted);
+  }
+
+  &__input {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    @include m.focus-visible;
+  }
+
+  &__error {
+    margin: 0;
+    color: var(--system-error);
+    font-size: var(--text-small);
+  }
+}

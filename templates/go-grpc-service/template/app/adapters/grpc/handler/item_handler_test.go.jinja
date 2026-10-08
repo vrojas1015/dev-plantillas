@@ -1,0 +1,135 @@
+package handler_test
+
+import (
+	"context"
+	"net"
+	"testing"
+	"time"
+
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
+
+	examplev1 "{{ module_path }}/gen/go/example/v1"
+
+	"{{ module_path }}/app/adapters/grpc/handler"
+	"{{ module_path }}/app/application"
+	domainerrors "{{ module_path }}/app/domain/errors"
+	"{{ module_path }}/app/domain/model"
+	"{{ module_path }}/app/domain/port"
+)
+
+// Test de punta a punta del adapter gRPC (sin DB): cliente real -> bufconn ->
+// handler -> service -> repo mockeado. Verifica el wiring y que los errores de
+// dominio lleguen al cliente con el código gRPC correcto.
+//
+// Los handlers son finos: con un test así por handler alcanza. La lógica se
+// testea en app/application.
+
+type stubItemRepo struct {
+	createFn  func(ctx context.Context, item *model.Item) (*model.Item, error)
+	getByIDFn func(ctx context.Context, id string) (*model.Item, error)
+	listFn    func(ctx context.Context, f port.ItemFilter) (*port.ItemPage, error)
+}
+
+func (s *stubItemRepo) Create(ctx context.Context, item *model.Item) (*model.Item, error) {
+	if s.createFn == nil {
+		return item, nil
+	}
+	return s.createFn(ctx, item)
+}
+
+func (s *stubItemRepo) GetByID(ctx context.Context, id string) (*model.Item, error) {
+	if s.getByIDFn == nil {
+		return nil, domainerrors.NotFoundError("item not found", nil)
+	}
+	return s.getByIDFn(ctx, id)
+}
+
+func (s *stubItemRepo) List(ctx context.Context, f port.ItemFilter) (*port.ItemPage, error) {
+	if s.listFn == nil {
+		return &port.ItemPage{}, nil
+	}
+	return s.listFn(ctx, f)
+}
+
+func newClient(t *testing.T, repo port.ItemRepository) examplev1.ItemServiceClient {
+	t.Helper()
+
+	lis := bufconn.Listen(1 << 20)
+	srv := grpc.NewServer()
+	examplev1.RegisterItemServiceServer(srv, handler.NewItemHandler(zap.NewNop(), application.NewItemService(repo)))
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	conn, err := grpc.NewClient("passthrough:///bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return examplev1.NewItemServiceClient(conn)
+}
+
+func testCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func TestItemHandler_CreateAndList(t *testing.T) {
+	now := time.Now().UTC()
+	repo := &stubItemRepo{
+		createFn: func(_ context.Context, item *model.Item) (*model.Item, error) {
+			item.CreatedAt, item.UpdatedAt = now, now
+			return item, nil
+		},
+		listFn: func(_ context.Context, f port.ItemFilter) (*port.ItemPage, error) {
+			return &port.ItemPage{
+				Items:      []*model.Item{% raw %}{{ID: "a", Name: "uno"}}{% endraw %},
+				NextCursor: "next",
+				HasNext:    true,
+			}, nil
+		},
+	}
+	client := newClient(t, repo)
+
+	created, err := client.CreateItem(testCtx(t), &examplev1.CreateItemRequest{Name: "uno"})
+	if err != nil {
+		t.Fatalf("CreateItem: %v", err)
+	}
+	if created.GetItem().GetId() == "" || created.GetItem().GetName() != "uno" {
+		t.Errorf("CreateItem: got %+v", created.GetItem())
+	}
+	if created.GetItem().GetCreatedAt() == nil {
+		t.Error("CreateItem: created_at should be set")
+	}
+
+	list, err := client.ListItems(testCtx(t), &examplev1.ListItemsRequest{Page: &examplev1.PageRequest{Limit: 1}})
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(list.GetItems()) != 1 || !list.GetPage().GetHasNext() || list.GetPage().GetNextCursor() != "next" {
+		t.Errorf("ListItems: got %+v", list)
+	}
+}
+
+func TestItemHandler_ErrorCodes(t *testing.T) {
+	client := newClient(t, &stubItemRepo{})
+
+	_, err := client.CreateItem(testCtx(t), &examplev1.CreateItemRequest{Name: ""})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Errorf("empty name: got %v, want InvalidArgument", status.Code(err))
+	}
+
+	_, err = client.GetItem(testCtx(t), &examplev1.GetItemRequest{Id: "0b7e6a8e-6c1f-4c8e-9a51-2f3c4d5e6f70"})
+	if status.Code(err) != codes.NotFound {
+		t.Errorf("missing item: got %v, want NotFound", status.Code(err))
+	}
+}

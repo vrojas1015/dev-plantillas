@@ -1,0 +1,18 @@
+import type { AppEnvironment } from './environment.model';
+
+// Build de QA (`npm run build:qa`).
+export const environment: AppEnvironment = {
+  production: true,
+  env: 'qa',
+  appName: '{{ app_name }}',
+  apiBaseUrl: '{{ api_base_url_qa }}',
+{%- if use_firebase_auth %}
+  // TODO: completar con la config web del proyecto Firebase de QA.
+  firebase: {
+    apiKey: 'REEMPLAZAR',
+    authDomain: '{{ firebase_project_qa }}.firebaseapp.com',
+    projectId: '{{ firebase_project_qa }}',
+    appId: 'REEMPLAZAR',
+  },
+{%- endif %}
+};

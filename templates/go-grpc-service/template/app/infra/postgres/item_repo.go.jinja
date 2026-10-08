@@ -1,0 +1,112 @@
+package postgres
+
+import (
+	"context"
+	"time"
+
+	"gorm.io/gorm"
+
+	domainerrors "{{ module_path }}/app/domain/errors"
+	"{{ module_path }}/app/domain/model"
+	"{{ module_path }}/app/domain/port"
+)
+
+// itemRow es la fila de {{ db_schema }}.items (EJEMPLO).
+//
+// Convenciones de repo:
+//   - Row struct unexported con tags GORM; el dominio no conoce GORM.
+//   - TableName() schema-qualified.
+//   - Mappers privados toItemRow / fromItemRow.
+//   - PK UUID generada en el service (no en la DB ni en el repo).
+type itemRow struct {
+	ID          string    `gorm:"primaryKey;column:id;type:uuid"`
+	Name        string    `gorm:"column:name;not null"`
+	Description string    `gorm:"column:description;not null;default:''"`
+	CreatedAt   time.Time `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt   time.Time `gorm:"column:updated_at;autoUpdateTime"`
+}
+
+func (itemRow) TableName() string { return "{{ db_schema }}.items" }
+
+// ItemRepository implementa port.ItemRepository sobre Postgres.
+type ItemRepository struct{ db *gorm.DB }
+
+var _ port.ItemRepository = (*ItemRepository)(nil)
+
+// NewItemRepository construye el repo.
+func NewItemRepository(db *gorm.DB) *ItemRepository {
+	return &ItemRepository{db: db}
+}
+
+// Create inserta el Item. El ID ya viene seteado por el service.
+func (r *ItemRepository) Create(ctx context.Context, item *model.Item) (*model.Item, error) {
+	row := toItemRow(item)
+	if err := r.db.WithContext(ctx).Create(row).Error; err != nil {
+		return nil, translateError(err, "item", "create", map[string]any{"name": item.Name})
+	}
+	return fromItemRow(row), nil
+}
+
+// GetByID busca un Item por PK.
+func (r *ItemRepository) GetByID(ctx context.Context, id string) (*model.Item, error) {
+	var row itemRow
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&row).Error; err != nil {
+		return nil, translateError(err, "item", "get", map[string]any{"id": id})
+	}
+	return fromItemRow(&row), nil
+}
+
+// List pagina por keyset (created_at DESC, id DESC): pide limit+1 filas para
+// saber si hay página siguiente sin un COUNT.
+func (r *ItemRepository) List(ctx context.Context, filter port.ItemFilter) (*port.ItemPage, error) {
+	limit := int(filter.Limit)
+
+	query := r.db.WithContext(ctx).Model(&itemRow{})
+	if filter.Cursor != "" {
+		c, err := decodeCursor(filter.Cursor)
+		if err != nil {
+			return nil, domainerrors.ValidationError("invalid cursor", map[string]any{"field": "cursor"})
+		}
+		// Orden DESC => el keyset usa "menor que".
+		query = query.Where("(created_at, id) < (?, ?)", c.CreatedAt, c.ID)
+	}
+
+	var rows []itemRow
+	if err := query.Order("created_at DESC, id DESC").Limit(limit + 1).Find(&rows).Error; err != nil {
+		return nil, translateError(err, "items", "list", nil)
+	}
+
+	hasNext := len(rows) > limit
+	if hasNext {
+		rows = rows[:limit]
+	}
+	page := &port.ItemPage{Items: make([]*model.Item, len(rows)), HasNext: hasNext}
+	for i := range rows {
+		page.Items[i] = fromItemRow(&rows[i])
+	}
+	if hasNext && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		page.NextCursor = encodeCursor(cursorData{CreatedAt: last.CreatedAt, ID: last.ID})
+	}
+	return page, nil
+}
+
+func toItemRow(m *model.Item) *itemRow {
+	return &itemRow{
+		ID:          m.ID,
+		Name:        m.Name,
+		Description: m.Description,
+		CreatedAt:   m.CreatedAt,
+		UpdatedAt:   m.UpdatedAt,
+	}
+}
+
+func fromItemRow(r *itemRow) *model.Item {
+	return &model.Item{
+		ID:          r.ID,
+		Name:        r.Name,
+		Description: r.Description,
+		CreatedAt:   r.CreatedAt,
+		UpdatedAt:   r.UpdatedAt,
+	}
+}

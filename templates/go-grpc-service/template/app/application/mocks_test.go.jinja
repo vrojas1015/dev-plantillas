@@ -1,0 +1,43 @@
+package application_test
+
+import (
+	"context"
+
+	"{{ module_path }}/app/domain/model"
+	"{{ module_path }}/app/domain/port"
+)
+
+// Mocks compartidos por los tests del paquete application.
+//
+// Patrón: struct con campos func opcionales. Si un campo no está seteado, el
+// método devuelve zero values. Nada de testify/gomock/mockery: solo stdlib.
+
+// mockItemRepo satisface port.ItemRepository.
+type mockItemRepo struct {
+	createFn  func(ctx context.Context, item *model.Item) (*model.Item, error)
+	getByIDFn func(ctx context.Context, id string) (*model.Item, error)
+	listFn    func(ctx context.Context, filter port.ItemFilter) (*port.ItemPage, error)
+}
+
+var _ port.ItemRepository = (*mockItemRepo)(nil)
+
+func (m *mockItemRepo) Create(ctx context.Context, item *model.Item) (*model.Item, error) {
+	if m.createFn == nil {
+		return nil, nil
+	}
+	return m.createFn(ctx, item)
+}
+
+func (m *mockItemRepo) GetByID(ctx context.Context, id string) (*model.Item, error) {
+	if m.getByIDFn == nil {
+		return nil, nil
+	}
+	return m.getByIDFn(ctx, id)
+}
+
+func (m *mockItemRepo) List(ctx context.Context, filter port.ItemFilter) (*port.ItemPage, error) {
+	if m.listFn == nil {
+		return nil, nil
+	}
+	return m.listFn(ctx, filter)
+}

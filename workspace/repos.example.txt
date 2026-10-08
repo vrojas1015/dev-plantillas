@@ -1,0 +1,7 @@
+# Repos que bootstrap clona. Formato: <carpeta-destino> <url-git>
+# Copiar a repos.txt y completar. Líneas con # se ignoran.
+backend/protos            https://gitlab.com/<org>/backend/protos.git
+backend/api-gateway       https://gitlab.com/<org>/backend/api-gateway.git
+# backend/agenda-service  https://gitlab.com/<org>/backend/agenda-service.git
+# frontend/admin-web      https://gitlab.com/<org>/frontend/admin-web.git
+docs                      https://gitlab.com/<org>/docs.git

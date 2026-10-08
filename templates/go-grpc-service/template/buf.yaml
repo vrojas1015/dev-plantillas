@@ -1,0 +1,11 @@
+# Módulo buf del proto LOCAL de ejemplo (proto/). Si el servicio pasa a usar
+# el repo de protos compartido, borrá este archivo, buf.gen.yaml, proto/ y gen/.
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

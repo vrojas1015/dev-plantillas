@@ -1,0 +1,63 @@
+@use 'mixins' as m;
+
+// Bloque BEM: .item-list
+.item-list {
+  display: grid;
+  gap: var(--space-4);
+
+  &__title {
+    margin: 0;
+  }
+
+  &__status {
+    color: var(--text-muted);
+
+    &--error {
+      display: grid;
+      justify-items: start;
+      gap: var(--space-2);
+      color: var(--system-error);
+    }
+  }
+
+  &__rows {
+    @include m.card;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-4);
+
+    & + & {
+      border-top: 1px solid var(--border-subtle);
+    }
+  }
+
+  &__link {
+    font-weight: 500;
+    text-decoration: none;
+    @include m.focus-visible;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  &__badge {
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--color-primary-soft);
+    color: var(--color-primary-dark);
+    font-size: var(--text-small);
+
+    &--archived {
+      background: var(--surface-muted);
+      color: var(--text-muted);
+    }
+  }
+}

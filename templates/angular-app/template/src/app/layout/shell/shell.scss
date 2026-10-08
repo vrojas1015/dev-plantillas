@@ -1,0 +1,50 @@
+// Bloque BEM: .shell
+.shell {
+  &__header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-6);
+    height: var(--header-h);
+    padding: 0 var(--space-6);
+    background: var(--surface-canvas);
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  &__brand {
+    font-weight: 600;
+    text-decoration: none;
+  }
+
+  &__nav {
+    display: flex;
+    gap: var(--space-4);
+  }
+
+  &__nav-link {
+    color: var(--text-muted);
+    text-decoration: none;
+
+    &--active {
+      color: var(--color-primary);
+      font-weight: 500;
+    }
+  }
+
+  &__user {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-left: auto;
+  }
+
+  &__user-email {
+    font-size: var(--text-small);
+    color: var(--text-muted);
+  }
+
+  &__main {
+    max-width: var(--container-max);
+    margin: 0 auto;
+    padding: var(--space-6);
+  }
+}

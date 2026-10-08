@@ -1,0 +1,70 @@
+# Genera cada plantilla con varias combinaciones de respuestas y verifica que el
+# proyecto resultante compile y pase sus tests. Una plantilla rota no se mergea.
+name: templates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  go-grpc-service:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ci_provider: [gitlab, github]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install copier
+      - name: Generar
+        run: |
+          copier copy --defaults --trust \
+            -d service_name=demo -d ci_provider=${{ matrix.ci_provider }} \
+            templates/go-grpc-service "$RUNNER_TEMP/demo-service"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ runner.temp }}/demo-service/go.mod
+      - name: Build, vet y tests
+        working-directory: ${{ runner.temp }}/demo-service
+        run: |
+          go mod tidy
+          go build ./...
+          go vet ./...
+          go test -count=1 ./...
+          test -z "$(gofmt -l .)"
+
+  angular-app:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { auth: true,  i18n: true,  ci: gitlab, deploy: firebase-hosting }
+          - { auth: false, i18n: false, ci: github, deploy: ninguno }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install copier
+      - name: Generar
+        run: |
+          copier copy --defaults --trust \
+            -d app_name=demo-web -d use_firebase_auth=${{ matrix.auth }} \
+            -d i18n=${{ matrix.i18n }} -d ci_provider=${{ matrix.ci }} \
+            -d deploy_target=${{ matrix.deploy }} \
+            templates/angular-app "$RUNNER_TEMP/demo-web"
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: Install, lint, tests y build
+        working-directory: ${{ runner.temp }}/demo-web
+        run: |
+          npm install --no-audit --no-fund
+          npm run lint
+          npm run test:unit
+          npm run build

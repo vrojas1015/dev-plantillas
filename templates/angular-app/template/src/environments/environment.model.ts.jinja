@@ -1,0 +1,25 @@
+/**
+ * Forma de la configuración por ambiente. Los tres `environment*.ts` la cumplen;
+ * Angular reemplaza `environment.ts` por el de qa/prod según `--configuration`
+ * (ver `fileReplacements` en angular.json).
+ *
+ * Acá NO van secretos: todo lo que esté en estos archivos termina en el bundle
+ * público del navegador.
+ */
+export interface AppEnvironment {
+  production: boolean;
+  env: 'dev' | 'qa' | 'production';
+  /** Prefijo para claves de localStorage (aísla apps que comparten dominio). */
+  appName: string;
+  /** URL base del API Gateway, sin barra final. */
+  apiBaseUrl: string;
+{%- if use_firebase_auth %}
+  /** Config web de Firebase (Consola › Configuración del proyecto › Tus apps). */
+  firebase: {
+    apiKey: string;
+    authDomain: string;
+    projectId: string;
+    appId: string;
+  };
+{%- endif %}
+}

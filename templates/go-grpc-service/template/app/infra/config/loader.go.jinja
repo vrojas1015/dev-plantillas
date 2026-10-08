@@ -1,0 +1,119 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/joho/godotenv"
+)
+
+// Config representa la configuración de {{ repo_name }}.
+// Todo sale de variables de entorno; en desarrollo se cargan de .env.dev.
+type Config struct {
+	// Entorno
+	AppEnv     string
+	ServiceEnv string
+	Debug      bool
+	Testing    bool
+
+	// gRPC
+	GRPCPort int
+
+	// Base de datos
+	DatabaseURL string
+	DBSchema    string
+
+	// Logging
+	LogLevel string
+
+	// OpenTelemetry (se exponen para el banner/logs; el exporter se cablea
+	// cuando el servicio lo necesite)
+	OtelExporterEndpoint string
+	OtelServiceName      string
+	OtelResourceAttrs    string
+}
+
+// Load carga la configuración desde variables de entorno.
+//
+// ENV_FILE permite indicar la ruta del archivo de entorno (útil si el binario
+// corre desde un directorio temporal, ej. el IDE). Si no está y APP_ENV es
+// development (o vacío), se busca .env.dev subiendo desde el CWD.
+func Load() *Config {
+	if envFile := os.Getenv("ENV_FILE"); envFile != "" {
+		_ = godotenv.Overload(envFile)
+	} else if os.Getenv("APP_ENV") == "" || os.Getenv("APP_ENV") == "development" {
+		if f := findEnvFile(".env.dev"); f != "" {
+			_ = godotenv.Overload(f)
+		}
+	}
+
+	return &Config{
+		AppEnv:     getEnv("APP_ENV", "development"),
+		ServiceEnv: getEnv("SERVICE_ENV", "dev"),
+		Debug:      getEnvAsBool("DEBUG", true),
+		Testing:    getEnvAsBool("TESTING", false),
+
+		GRPCPort: getEnvAsInt("GRPC_PORT", {{ grpc_port }}),
+
+		DatabaseURL: getEnv("DATABASE_URL", ""),
+		DBSchema:    "{{ db_schema }}",
+
+		LogLevel: getEnv("LOG_LEVEL", "info"),
+
+		OtelExporterEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+		OtelServiceName:      getEnv("OTEL_SERVICE_NAME", "{{ repo_name }}"),
+		OtelResourceAttrs: getEnv(
+			"OTEL_RESOURCE_ATTRIBUTES",
+			"service.version=dev,deployment.environment=dev",
+		),
+	}
+}
+
+// findEnvFile busca name subiendo directorios desde el CWD. "" si no existe.
+func findEnvFile(name string) string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		candidate := filepath.Join(dir, name)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
+}
+
+func getEnvAsInt(key string, fallback int) int {
+	if value, ok := os.LookupEnv(key); ok {
+		if i, err := strconv.Atoi(value); err == nil {
+			return i
+		}
+	}
+	return fallback
+}
+
+func getEnvAsBool(key string, fallback bool) bool {
+	if value, ok := os.LookupEnv(key); ok {
+		switch strings.ToLower(value) {
+		case "true", "1", "yes", "y":
+			return true
+		case "false", "0", "no", "n":
+			return false
+		}
+	}
+	return fallback
+}

@@ -1,0 +1,50 @@
+// Design tokens: única fuente de colores, tipografía, espaciado y radios.
+// Los componentes usan SIEMPRE var(--token); nunca hex/px sueltos.
+// Reemplazar los valores por los del sistema de diseño del producto.
+:root {
+  // Color · marca
+  --color-primary: #2f5d8a;
+  --color-primary-dark: #1d3d5c;
+  --color-primary-soft: #dbe7f3;
+
+  // Color · superficies y texto
+  --surface-canvas: #ffffff;
+  --surface-muted: #f4f5f7;
+  --border-subtle: #dfe1e6;
+  --text-primary: #1f2328;
+  --text-muted: #5f6670;
+  --text-on-primary: #ffffff;
+
+  // Color · sistema
+  --system-error: #b3261e;
+  --system-success: #2e7d32;
+
+  // Tipografía
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  --text-h1: 1.75rem;
+  --text-h2: 1.375rem;
+  --text-body: 1rem;
+  --text-small: 0.875rem;
+
+  // Espaciado (escala de 4px)
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  // Radios, sombras, foco
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-pill: 999px;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --focus-ring: 0 0 0 3px rgba(47, 93, 138, 0.3);
+
+  // Layout
+  --header-h: 56px;
+  --container-max: 1200px;
+
+  // Animación
+  --duration-sm: 160ms;
+}

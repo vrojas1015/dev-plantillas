@@ -1,0 +1,18 @@
+import type { AppEnvironment } from './environment.model';
+
+// Build de producción (`npm run build` / `npm run build:prod`).
+export const environment: AppEnvironment = {
+  production: true,
+  env: 'production',
+  appName: '{{ app_name }}',
+  apiBaseUrl: '{{ api_base_url_prod }}',
+{%- if use_firebase_auth %}
+  // TODO: completar con la config web del proyecto Firebase de producción.
+  firebase: {
+    apiKey: 'REEMPLAZAR',
+    authDomain: '{{ firebase_project_prod }}.firebaseapp.com',
+    projectId: '{{ firebase_project_prod }}',
+    appId: 'REEMPLAZAR',
+  },
+{%- endif %}
+};

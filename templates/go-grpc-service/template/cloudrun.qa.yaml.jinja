@@ -1,0 +1,78 @@
+# Cloud Run (qa) — {{ repo_name }}
+#
+# Los placeholders __X__ los reemplaza la pipeline de CI (y scripts/rollback.sh)
+# con sed antes de `gcloud run services replace`:
+#   __PROJECT_ID__ __REGION__ __IMAGE_TAG__ __CLOUD_SQL_INSTANCE__ __DEPLOY_TIME__
+#
+# Servicio INTERNO: la pipeline no toca IAM. `services replace` no modifica la
+# policy, así que el invoker que configures (ej. el SA del gateway) sobrevive
+# entre deploys. Ver docs/ci-cd-setup.md.
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: {{ repo_name }}-qa
+  namespace: __PROJECT_ID__
+  labels:
+    app: {{ repo_name }}
+    env: qa
+  annotations:
+    run.googleapis.com/launch-stage: GA
+spec:
+  template:
+    metadata:
+      annotations:
+        run.googleapis.com/cloudsql-instances: __CLOUD_SQL_INSTANCE__
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "5"
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      serviceAccountName: {{ repo_name }}-sa@__PROJECT_ID__.iam.gserviceaccount.com
+      containers:
+        - image: __REGION__-docker.pkg.dev/__PROJECT_ID__/{{ artifact_repo }}/{{ repo_name }}:__IMAGE_TAG__
+          ports:
+            # h2c: gRPC sin TLS dentro del contenedor (Cloud Run termina TLS).
+            - name: h2c
+              containerPort: {{ grpc_port }}
+          env:
+            - name: APP_ENV
+              value: "development"
+            - name: SERVICE_ENV
+              value: "qa"
+            - name: DEBUG
+              value: "true"
+            - name: GRPC_PORT
+              value: "{{ grpc_port }}"
+            - name: LOG_LEVEL
+              value: "debug"
+            - name: OTEL_SERVICE_NAME
+              value: "{{ repo_name }}"
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "service.version=__IMAGE_TAG__,deployment.environment=qa"
+            - name: DEPLOY_TIME
+              value: "__DEPLOY_TIME__"
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ service_name }}-database-url-qa
+                  key: latest
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          startupProbe:
+            grpc:
+              port: {{ grpc_port }}
+              service: ""
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 10
+          livenessProbe:
+            grpc:
+              port: {{ grpc_port }}
+              service: ""
+            initialDelaySeconds: 0
+            periodSeconds: 30
+            failureThreshold: 3
+  traffic:
+    - percent: 100
+      latestRevision: true

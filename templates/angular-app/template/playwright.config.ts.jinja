@@ -1,0 +1,33 @@
+import { defineConfig, devices } from '@playwright/test';
+
+// E2E con Playwright. Los tests mockean el API con `page.route`, así que no
+// dependen de un backend levantado. Primera vez: `npx playwright install chromium`.
+export default defineConfig({
+  testDir: './e2e',
+  fullyParallel: true,
+  forbidOnly: !!process.env['CI'],
+  retries: process.env['CI'] ? 2 : 0,
+  workers: process.env['CI'] ? 1 : undefined,
+  reporter: [['html', { open: 'never' }], ['list']],
+
+  use: {
+    baseURL: process.env['BASE_URL'] ?? 'http://localhost:4200',
+    trace: 'retain-on-failure',
+    screenshot: 'only-on-failure',
+    locale: '{{ default_lang }}',
+  },
+
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'] },
+    },
+  ],
+
+  webServer: {
+    command: 'npm run start',
+    url: 'http://localhost:4200',
+    reuseExistingServer: !process.env['CI'],
+    timeout: 120_000,
+  },
+});

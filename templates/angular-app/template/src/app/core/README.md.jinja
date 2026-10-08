@@ -1,0 +1,14 @@
+# src/app/core
+
+Servicios **singleton** de infraestructura que usa toda la app y que no son de
+ninguna feature en particular.
+{%- if use_firebase_auth %}
+
+- `auth/` — sesión (SessionStore), login/refresh/logout (AuthService), guard.
+{%- endif %}
+{%- if i18n %}
+- `i18n/` — loader de traducciones e idioma por defecto.
+{%- endif %}
+
+Qué NO va acá: componentes visuales (→ `ui/` o `layout/`), clientes HTTP de un
+recurso (→ `features/<x>/data-access/`), el cliente HTTP base (→ `api/`).

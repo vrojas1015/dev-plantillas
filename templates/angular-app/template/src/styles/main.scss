@@ -1,0 +1,5 @@
+// Punto de entrada de la base global. El orden importa: reset → tokens → tipografía.
+@use 'reset';
+@use 'tokens';
+@use 'typography';
+@use 'utilities';

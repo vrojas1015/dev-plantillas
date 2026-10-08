@@ -1,0 +1,34 @@
+package port
+
+import (
+	"context"
+
+	"{{ module_path }}/app/domain/model"
+)
+
+// ItemFilter parametriza la lista paginada de Items.
+// Cursor es opaco (lo genera el repo); Limit ya llega normalizado por el service.
+type ItemFilter struct {
+	Cursor string
+	Limit  int32
+}
+
+// ItemPage es una página de resultados con cursor keyset.
+type ItemPage struct {
+	Items      []*model.Item
+	NextCursor string
+	HasNext    bool
+}
+
+// ItemRepository define la persistencia de Item.
+//
+// Contrato de errores (todas las implementaciones):
+//   - no existe          -> domainerrors.NotFoundError
+//   - unique violation    -> domainerrors.ConflictError
+//   - cursor inválido     -> domainerrors.ValidationError
+//   - cualquier otra cosa -> domainerrors.InternalError
+type ItemRepository interface {
+	Create(ctx context.Context, item *model.Item) (*model.Item, error)
+	GetByID(ctx context.Context, id string) (*model.Item, error)
+	List(ctx context.Context, filter ItemFilter) (*ItemPage, error)
+}

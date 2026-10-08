@@ -1,0 +1,103 @@
+// Entry point de {{ repo_name }}: solo wiring + ciclo de vida.
+// Nada de lógica acá.
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"go.uber.org/zap"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/reflection"
+
+	examplev1 "{{ module_path }}/gen/go/example/v1"
+
+	"{{ module_path }}/app/adapters/grpc/handler"
+	"{{ module_path }}/app/adapters/grpc/interceptor"
+	"{{ module_path }}/app/application"
+	"{{ module_path }}/app/infra/bootstrap"
+	"{{ module_path }}/app/infra/postgres"
+	"{{ module_path }}/app/infra/telemetry"
+)
+
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 1. Infraestructura
+	infra := bootstrap.Init(ctx)
+	defer infra.Shutdown()
+
+	// 2. Banner
+	telemetry.PrintBanner(infra.Config, infra.Logger)
+
+	// 3. Repositorios
+	itemRepo := postgres.NewItemRepository(infra.DB)
+
+	// 4. Servicios de aplicación
+	itemSvc := application.NewItemService(itemRepo)
+
+	// 5. Handlers gRPC
+	itemHandler := handler.NewItemHandler(infra.Logger, itemSvc)
+
+	// 6. Servidor gRPC
+	grpcServer := grpc.NewServer(
+		grpc.UnaryInterceptor(interceptor.UnaryLogger(infra.Logger, infra.Config.Debug)),
+	)
+	examplev1.RegisterItemServiceServer(grpcServer, itemHandler)
+
+	// Health: lo usan los startup/liveness probes de Cloud Run (cloudrun.*.yaml).
+	healthSrv := health.NewServer()
+	grpc_health_v1.RegisterHealthServer(grpcServer, healthSrv)
+	healthSrv.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+
+	// Reflection solo fuera de production (grpcurl en local/QA).
+	if infra.Config.AppEnv != "production" {
+		reflection.Register(grpcServer)
+	}
+
+	// 7. Listener
+	addr := fmt.Sprintf(":%d", infra.Config.GRPCPort)
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		infra.Logger.Fatal("failed to listen", zap.String("addr", addr), zap.Error(err))
+	}
+
+	// 8. Servir en goroutine
+	go func() {
+		infra.Logger.Info("gRPC server listening", zap.String("addr", addr))
+		if err := grpcServer.Serve(lis); err != nil {
+			infra.Logger.Error("gRPC server stopped", zap.Error(err))
+		}
+	}()
+
+	// 9. Esperar señal de shutdown (Cloud Run manda SIGTERM)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	infra.Logger.Info("shutdown signal received, draining...")
+	healthSrv.SetServingStatus("", grpc_health_v1.HealthCheckResponse_NOT_SERVING)
+
+	// 10. Graceful shutdown con timeout de 10s
+	stopDone := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(stopDone)
+	}()
+
+	select {
+	case <-stopDone:
+		infra.Logger.Info("gRPC server stopped gracefully")
+	case <-time.After(10 * time.Second):
+		infra.Logger.Warn("shutdown timeout, forcing stop")
+		grpcServer.Stop()
+	}
+}

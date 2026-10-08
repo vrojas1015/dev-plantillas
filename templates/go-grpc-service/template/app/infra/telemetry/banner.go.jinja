@@ -1,0 +1,48 @@
+package telemetry
+
+import (
+	"fmt"
+
+	"github.com/common-nighthawk/go-figure"
+	"github.com/fatih/color"
+	"go.uber.org/zap"
+
+	"{{ module_path }}/app/infra/config"
+)
+
+// PrintBanner imprime un banner ASCII con la configuración clave del servicio.
+// Se omite con TESTING=true y en production (los logs JSON no lo necesitan).
+func PrintBanner(cfg *config.Config, logger *zap.Logger) {
+	if cfg.Testing || cfg.AppEnv == "production" {
+		logger.Info("configuration loaded",
+			zap.String("service", cfg.OtelServiceName),
+			zap.String("env", cfg.AppEnv),
+			zap.Int("grpc_port", cfg.GRPCPort),
+		)
+		return
+	}
+
+	defer fmt.Println("")
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("\n=== %s ===\n", cfg.OtelServiceName)
+			logger.Warn("no se pudo renderizar el banner ASCII", zap.Any("error", r))
+		}
+	}()
+
+	figure.NewColorFigure(cfg.OtelServiceName, "slant", "cyan", true).Print()
+
+	cyan := color.New(color.FgCyan).SprintFunc()
+	gray := color.New(color.FgHiBlack).SprintFunc()
+	green := color.New(color.FgGreen).SprintFunc()
+
+	fmt.Println(gray("=============================================="))
+	fmt.Printf(" Entorno:        %s\n", cyan(cfg.AppEnv))
+	fmt.Printf(" Servicio:       %s\n", cyan(cfg.OtelServiceName))
+	fmt.Printf(" Debug:          %v\n", green(cfg.Debug))
+	fmt.Printf(" gRPC Port:      :%d\n", cfg.GRPCPort)
+	fmt.Println(gray("----------------------------------------------"))
+	fmt.Printf(" DB schema:      %s\n", cyan(cfg.DBSchema))
+	fmt.Printf(" Log level:      %s\n", cyan(cfg.LogLevel))
+	fmt.Println(gray("=============================================="))
+}

@@ -1,0 +1,197 @@
+package application_test
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"{{ module_path }}/app/application"
+	domainerrors "{{ module_path }}/app/domain/errors"
+	"{{ module_path }}/app/domain/model"
+	"{{ module_path }}/app/domain/port"
+)
+
+const validID = "0b7e6a8e-6c1f-4c8e-9a51-2f3c4d5e6f70"
+
+// ================================================================
+// CreateItem
+// ================================================================
+
+func TestCreateItem_Success(t *testing.T) {
+	var captured *model.Item
+	repo := &mockItemRepo{
+		createFn: func(_ context.Context, item *model.Item) (*model.Item, error) {
+			captured = item
+			return item, nil
+		},
+	}
+
+	got, err := application.NewItemService(repo).CreateItem(context.Background(), application.CreateItemInput{
+		Name:        "  primer item  ",
+		Description: " desc ",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if captured == nil {
+		t.Fatal("repo.Create was not called")
+	}
+	if _, err := uuid.Parse(got.ID); err != nil {
+		t.Errorf("ID should be a generated UUID, got %q", got.ID)
+	}
+	if got.Name != "primer item" {
+		t.Errorf("Name should be trimmed, got %q", got.Name)
+	}
+	if got.Description != "desc" {
+		t.Errorf("Description should be trimmed, got %q", got.Description)
+	}
+}
+
+func TestCreateItem_EmptyName(t *testing.T) {
+	repo := &mockItemRepo{
+		createFn: func(context.Context, *model.Item) (*model.Item, error) {
+			t.Fatal("repo.Create must not be called on invalid input")
+			return nil, nil
+		},
+	}
+
+	_, err := application.NewItemService(repo).CreateItem(context.Background(), application.CreateItemInput{Name: "   "})
+	if !domainerrors.IsValidation(err) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+}
+
+func TestCreateItem_NameTooLong(t *testing.T) {
+	name := strings.Repeat("a", application.ItemNameMaxLen+1)
+
+	_, err := application.NewItemService(&mockItemRepo{}).CreateItem(context.Background(), application.CreateItemInput{Name: name})
+	if !domainerrors.IsValidation(err) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+}
+
+func TestCreateItem_PropagatesConflict(t *testing.T) {
+	repo := &mockItemRepo{
+		createFn: func(context.Context, *model.Item) (*model.Item, error) {
+			return nil, domainerrors.ConflictError("item already exists", nil)
+		},
+	}
+
+	_, err := application.NewItemService(repo).CreateItem(context.Background(), application.CreateItemInput{Name: "dup"})
+	if !domainerrors.IsConflict(err) {
+		t.Fatalf("expected ConflictError, got %v", err)
+	}
+}
+
+// ================================================================
+// GetItem
+// ================================================================
+
+func TestGetItem_Success(t *testing.T) {
+	repo := &mockItemRepo{
+		getByIDFn: func(_ context.Context, id string) (*model.Item, error) {
+			return &model.Item{ID: id, Name: "x"}, nil
+		},
+	}
+
+	got, err := application.NewItemService(repo).GetItem(context.Background(), validID)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != validID {
+		t.Errorf("ID: got %q, want %q", got.ID, validID)
+	}
+}
+
+func TestGetItem_EmptyID(t *testing.T) {
+	_, err := application.NewItemService(&mockItemRepo{}).GetItem(context.Background(), "")
+	if !domainerrors.IsValidation(err) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+}
+
+func TestGetItem_InvalidUUID(t *testing.T) {
+	_, err := application.NewItemService(&mockItemRepo{}).GetItem(context.Background(), "not-a-uuid")
+	if !domainerrors.IsValidation(err) {
+		t.Fatalf("expected ValidationError, got %v", err)
+	}
+}
+
+func TestGetItem_PropagatesNotFound(t *testing.T) {
+	repo := &mockItemRepo{
+		getByIDFn: func(context.Context, string) (*model.Item, error) {
+			return nil, domainerrors.NotFoundError("item not found", nil)
+		},
+	}
+
+	_, err := application.NewItemService(repo).GetItem(context.Background(), validID)
+	if !domainerrors.IsNotFound(err) {
+		t.Fatalf("expected NotFoundError, got %v", err)
+	}
+}
+
+// ================================================================
+// ListItems
+// ================================================================
+
+func TestListItems_DefaultLimit(t *testing.T) {
+	assertListLimit(t, 0, application.DefaultPageLimit)
+	assertListLimit(t, -5, application.DefaultPageLimit)
+}
+
+func TestListItems_ClampsLimit(t *testing.T) {
+	assertListLimit(t, application.MaxPageLimit+1, application.MaxPageLimit)
+}
+
+func TestListItems_KeepsValidLimitAndCursor(t *testing.T) {
+	var got port.ItemFilter
+	repo := &mockItemRepo{
+		listFn: func(_ context.Context, f port.ItemFilter) (*port.ItemPage, error) {
+			got = f
+			return &port.ItemPage{NextCursor: "next", HasNext: true}, nil
+		},
+	}
+
+	page, err := application.NewItemService(repo).ListItems(context.Background(), port.ItemFilter{Cursor: "abc", Limit: 10})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Limit != 10 || got.Cursor != "abc" {
+		t.Errorf("filter: got %+v", got)
+	}
+	if !page.HasNext || page.NextCursor != "next" {
+		t.Errorf("page: got %+v", page)
+	}
+}
+
+func TestListItems_PropagatesRepoError(t *testing.T) {
+	repo := &mockItemRepo{
+		listFn: func(context.Context, port.ItemFilter) (*port.ItemPage, error) {
+			return nil, domainerrors.InternalError("failed to list items", map[string]any{"cause": "boom"})
+		},
+	}
+
+	_, err := application.NewItemService(repo).ListItems(context.Background(), port.ItemFilter{})
+	if !domainerrors.IsInternal(err) {
+		t.Fatalf("expected InternalError, got %v", err)
+	}
+}
+
+func assertListLimit(t *testing.T, in, want int32) {
+	t.Helper()
+	var got int32
+	repo := &mockItemRepo{
+		listFn: func(_ context.Context, f port.ItemFilter) (*port.ItemPage, error) {
+			got = f.Limit
+			return &port.ItemPage{}, nil
+		},
+	}
+	if _, err := application.NewItemService(repo).ListItems(context.Background(), port.ItemFilter{Limit: in}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != want {
+		t.Errorf("limit %d: got %d, want %d", in, got, want)
+	}
+}

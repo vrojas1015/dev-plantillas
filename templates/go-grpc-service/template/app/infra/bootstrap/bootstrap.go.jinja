@@ -1,0 +1,57 @@
+package bootstrap
+
+import (
+	"context"
+
+	"go.uber.org/zap"
+	"gorm.io/gorm"
+
+	"{{ module_path }}/app/infra/config"
+	"{{ module_path }}/app/infra/postgres"
+	"{{ module_path }}/app/infra/telemetry"
+)
+
+// Infra agrupa los recursos de infraestructura del servicio.
+// Clientes de otros micros (gRPC) se agregan acá y se cierran en Shutdown.
+type Infra struct {
+	Config *config.Config
+	Logger *zap.Logger
+	DB     *gorm.DB
+}
+
+// Init inicializa config, logger y base de datos.
+// Llama a Fatal si algún recurso crítico falla.
+func Init(_ context.Context) *Infra {
+	cfg := config.Load()
+
+	telemetry.Init(cfg)
+	logger := telemetry.L()
+
+	if cfg.DatabaseURL == "" {
+		logger.Fatal("DATABASE_URL is required")
+	}
+
+	db, err := postgres.NewDB(cfg.DatabaseURL, cfg.Debug)
+	if err != nil {
+		logger.Fatal("failed to connect to database", zap.Error(err))
+	}
+
+	logger.Info("infrastructure initialized",
+		zap.String("env", cfg.AppEnv),
+		zap.Int("grpc_port", cfg.GRPCPort),
+	)
+
+	return &Infra{
+		Config: cfg,
+		Logger: logger,
+		DB:     db,
+	}
+}
+
+// Shutdown libera los recursos de infraestructura de forma ordenada.
+func (i *Infra) Shutdown() {
+	if sqlDB, err := i.DB.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
+	_ = i.Logger.Sync()
+}

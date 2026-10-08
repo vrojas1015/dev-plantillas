@@ -1,0 +1,97 @@
+# Workflow reutilizable: build en Cloud Build + deploy a Cloud Run.
+# Lo invoca ci.yml (no se dispara solo). Ver docs/ci-cd-setup.md.
+
+name: deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "qa | prod"
+        required: true
+        type: string
+      cloudrun_yaml:
+        required: true
+        type: string
+      image_tag:
+        description: "Tag de git = tag de la imagen (qa-v* / prod-v*)"
+        required: true
+        type: string
+
+env:
+  GCP_PROJECT_DEFAULT: "{{ gcp_project }}"
+  REGION: "{{ gcp_region }}"
+  REPO_NAME: "{{ artifact_repo }}"
+  IMAGE_NAME: "{{ repo_name }}"
+  SERVICE_BASE: "{{ repo_name }}"
+{% raw %}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GCP_PROJECT_VAR: ${{ vars.GCP_PROJECT }}
+      CLOUD_SQL_INSTANCE: ${{ vars.CLOUD_SQL_INSTANCE }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      CLOUDRUN_YAML: ${{ inputs.cloudrun_yaml }}
+      TARGET_ENV: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.image_tag }}
+
+      # vendor/ + go.mod + go.sum generados por el job `test` del mismo run.
+      - uses: actions/download-artifact@v4
+        with:
+          name: vendor
+          path: .
+
+      - name: Resolver variables
+        run: |
+          echo "GCP_PROJECT=${GCP_PROJECT_VAR:-$GCP_PROJECT_DEFAULT}" >> "$GITHUB_ENV"
+          if [ "$TARGET_ENV" = "qa" ]; then
+            echo "SERVICE_NAME=${SERVICE_BASE}-qa" >> "$GITHUB_ENV"
+          else
+            echo "SERVICE_NAME=${SERVICE_BASE}" >> "$GITHUB_ENV"
+          fi
+          case "$IMAGE_TAG" in
+            "${TARGET_ENV}"-v*) ;;
+            *) echo "El tag '$IMAGE_TAG' no corresponde al entorno '$TARGET_ENV'"; exit 1 ;;
+          esac
+
+      # Auth keyless (WIF). Sin claves JSON.
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build + push (Cloud Build)
+        run: |
+          REMOTE_IMAGE="${REGION}-docker.pkg.dev/${GCP_PROJECT}/${REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}"
+          echo "Cloud Build -> ${REMOTE_IMAGE}"
+          gcloud builds submit --config=cloudbuild.yaml \
+            --substitutions=_IMAGE="$REMOTE_IMAGE" \
+            --project="$GCP_PROJECT" .
+
+      - name: Deploy (Cloud Run)
+        run: |
+          DEPLOY_TIME="$(date -u +%Y%m%dT%H%M%SZ)"
+          sed \
+            -e "s|__PROJECT_ID__|${GCP_PROJECT}|g" \
+            -e "s|__REGION__|${REGION}|g" \
+            -e "s|__IMAGE_TAG__|${IMAGE_TAG}|g" \
+            -e "s|__CLOUD_SQL_INSTANCE__|${CLOUD_SQL_INSTANCE}|g" \
+            -e "s|__DEPLOY_TIME__|${DEPLOY_TIME}|g" \
+            "$CLOUDRUN_YAML" > "$RUNNER_TEMP/cloudrun.yaml"
+          echo "Deploy ${SERVICE_NAME}:${IMAGE_TAG}"
+          # El servicio es interno: no tocamos IAM (replace conserva la policy).
+          gcloud run services replace "$RUNNER_TEMP/cloudrun.yaml" \
+            --region="$REGION" --project="$GCP_PROJECT"
+          gcloud run services describe "$SERVICE_NAME" --region="$REGION" \
+            --project="$GCP_PROJECT" --format="value(status.url)"
+{% endraw %}

@@ -1,0 +1,309 @@
+# CI/CD setup — {{ repo_name }}
+
+Guía de setup **de una sola vez** para que la pipeline
+({% if ci_provider == 'gitlab' %}`.gitlab-ci.yml`{% else %}`.github/workflows/ci.yml` + `deploy.yml`{% endif %})
+construya con Cloud Build y despliegue a Cloud Run **sin claves JSON**, usando
+Workload Identity Federation (WIF).
+
+Ningún secreto, URL de DB, audience de WIF, project number ni email vive en el
+repo: todo va como variable de CI (sección 8) o en Secret Manager.
+
+```bash
+git tag qa-v0.1.0   && git push origin qa-v0.1.0     # build + deploy a QA
+git tag prod-v0.1.0 && git push origin prod-v0.1.0   # build + deploy a prod (auto salvo migraciones)
+```
+
+El tag **es** la versión: el tag de la imagen en Artifact Registry es idéntico al
+tag de git. Los {% if ci_provider == 'gitlab' %}merge requests{% else %}pull requests{% endif %} corren solo `test`.
+
+> QA y prod viven en el mismo proyecto GCP (`{{ gcp_project }}`); cambia el
+> servicio de Cloud Run (`{{ repo_name }}-qa` / `{{ repo_name }}`) y el
+> `cloudrun.<env>.yaml`.
+
+---
+
+## 1. Variables de trabajo
+
+```bash
+export PROJECT_ID={{ gcp_project }}
+export REGION={{ gcp_region }}
+export REPO_NAME={{ artifact_repo }}              # Artifact Registry
+export DEPLOYER_SA=ci-deployer                    # SA que usa la pipeline (puede ser compartido entre micros)
+export RUNTIME_SA={{ repo_name }}-sa              # SA con el que corre Cloud Run
+export POOL_ID=ci-pool
+{%- if ci_provider == 'gitlab' %}
+export PROVIDER_ID=gitlab-provider
+export REPO_PATH=<grupo>/{{ repo_name }}          # project_path en GitLab
+{%- else %}
+export PROVIDER_ID=github-provider
+export REPO_PATH=<owner>/{{ repo_name }}          # owner/repo en GitHub
+{%- endif %}
+
+export PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+export DEPLOYER_SA_EMAIL="${DEPLOYER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
+```
+
+## 2. Runtime: SA, roles, Artifact Registry y secreto de DB
+
+Interactivo (pide user/password de la DB). Correlo en tu terminal, una vez por entorno:
+
+```bash
+CLOUD_SQL_INSTANCE=<proyecto>:<región>:<instancia> ./scripts/setup_cloud_run_secrets.sh qa
+CLOUD_SQL_INSTANCE=<proyecto>:<región>:<instancia> ./scripts/setup_cloud_run_secrets.sh prod
+```
+
+Crea `{{ repo_name }}-sa`, le da `cloudsql.client`, `secretmanager.secretAccessor`
+y `run.invoker`, crea el repo `{{ artifact_repo }}` y los secretos
+`{{ service_name }}-database-url-qa` / `{{ service_name }}-database-url`.
+
+## 3. Base de datos (una vez por entorno, como superusuario)
+
+```sql
+-- Usuario de runtime (si no existe; el password va al secreto del paso 2)
+CREATE USER {{ db_schema }}_user WITH LOGIN PASSWORD '<password>';
+```
+
+Aplicar el schema (`scripts/apply_migration.sh`, psql en Docker):
+
+```bash
+QA_DB_NAME=<db_qa> ./scripts/apply_migration.sh qa 000001_create_{{ db_schema }}_schema
+```
+
+Grants al usuario de runtime:
+
+```sql
+GRANT USAGE ON SCHEMA {{ db_schema }} TO {{ db_schema }}_user;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {{ db_schema }} TO {{ db_schema }}_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA {{ db_schema }}
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO {{ db_schema }}_user;
+ALTER DEFAULT PRIVILEGES IN SCHEMA {{ db_schema }}
+  GRANT USAGE, SELECT ON SEQUENCES TO {{ db_schema }}_user;
+```
+
+> `ALTER DEFAULT PRIVILEGES` aplica a objetos que cree **el usuario que corre el
+> comando**: corré los grants con el mismo usuario que aplica las migraciones.
+
+## 4. Service account deployer y sus roles
+
+```bash
+gcloud iam service-accounts create "$DEPLOYER_SA" \
+  --display-name="CI deployer" --project "$PROJECT_ID" || echo "Ya existe, ok."
+
+for ROLE in roles/cloudbuild.builds.editor roles/storage.admin roles/run.admin; do
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${DEPLOYER_SA_EMAIL}" --role="$ROLE"
+done
+
+# Desplegar un servicio que corre COMO el runtime SA (específico de este micro)
+gcloud iam service-accounts add-iam-policy-binding \
+  "${RUNTIME_SA}@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --member="serviceAccount:${DEPLOYER_SA_EMAIL}" \
+  --role="roles/iam.serviceAccountUser" --project "$PROJECT_ID"
+
+# Sin esto `gcloud run services replace` falla con
+# PERMISSION_DENIED: artifactregistry.repositories.downloadArtifacts
+gcloud artifacts repositories add-iam-policy-binding "$REPO_NAME" \
+  --location="$REGION" --project "$PROJECT_ID" \
+  --member="serviceAccount:${DEPLOYER_SA_EMAIL}" \
+  --role="roles/artifactregistry.reader"
+```
+
+> El `docker build` dentro de Cloud Build corre como el SA de Cloud Build, que
+> ya puede pushear a Artifact Registry de su proyecto.
+
+## 5. Workload Identity Federation
+
+Si ya existe un pool/provider para otros micros, **no crees otro**: sumá este
+repo al `attribute-condition` del provider existente (es la única puerta del
+provider: si no incluye este repo, el token se rechaza aunque el pool sea el mismo).
+
+```bash
+gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" \
+  --location=global --workload-identity-pool="$POOL_ID" \
+  --project="$PROJECT_ID" --format="value(attributeCondition)"
+```
+
+Crear desde cero:
+
+```bash
+gcloud iam workload-identity-pools create "$POOL_ID" \
+  --location=global --project "$PROJECT_ID" --display-name="CI pool" || echo "Ya existe, ok."
+{%- if ci_provider == 'gitlab' %}
+
+gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
+  --location=global --project "$PROJECT_ID" \
+  --workload-identity-pool="$POOL_ID" \
+  --display-name="GitLab provider" \
+  --issuer-uri="https://gitlab.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.project_path=assertion.project_path,attribute.ref=assertion.ref" \
+  --attribute-condition="assertion.project_path in ['${REPO_PATH}']"
+```
+
+Permitir que el repo impersone al deployer:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding "$DEPLOYER_SA_EMAIL" \
+  --project "$PROJECT_ID" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.project_path/${REPO_PATH}"
+```
+{%- else %}
+
+gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
+  --location=global --project "$PROJECT_ID" \
+  --workload-identity-pool="$POOL_ID" \
+  --display-name="GitHub provider" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
+  --attribute-condition="assertion.repository in ['${REPO_PATH}']"
+```
+
+Permitir que el repo impersone al deployer:
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding "$DEPLOYER_SA_EMAIL" \
+  --project "$PROJECT_ID" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${REPO_PATH}"
+```
+{%- endif %}
+
+## 6. Valores para la CI
+
+```bash
+echo "GCP_DEPLOYER_SA    = $DEPLOYER_SA_EMAIL"
+{%- if ci_provider == 'gitlab' %}
+echo "GCP_WIF_AUD        = https://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
+{%- else %}
+echo "GCP_WIF_PROVIDER   = projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
+{%- endif %}
+gcloud sql instances describe <instancia> --project "$PROJECT_ID" --format='value(connectionName)'   # CLOUD_SQL_INSTANCE
+```
+{%- if ci_provider == 'gitlab' %}
+
+## 7. Protected tags (el candado de producción)
+
+Settings > Repository > **Protected tags**:
+
+| Patrón | Allowed to create |
+|---|---|
+| `prod-v*` | Maintainers |
+| `qa-v*`   | Developers + Maintainers |
+
+## 8. Variables CI/CD en GitLab
+
+Settings > CI/CD > Variables (o a nivel de **grupo**, para compartirlas entre micros):
+
+| Variable | Valor | Notas |
+|---|---|---|
+| `GCP_DEPLOYER_SA`    | email del deployer (paso 6) | |
+| `GCP_WIF_AUD`        | `https://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>` | |
+| `CLOUD_SQL_INSTANCE` | `<proyecto>:<región>:<instancia>` | Masked = OFF (el `:` rompe el masking; no es secreta) |
+| `GCP_PROJECT`        | opcional | pisa el default `{{ gcp_project }}` de `.gitlab-ci.yml` |
+
+> Si marcás variables como **Protected**, hacelo **después** de proteger los
+> tags: una variable protegida solo llega a refs protegidas, y el job de release
+> fallaría en `gcloud config set project ""` sin mencionar variables.
+{%- if protos_module %}
+
+## 9. Acceso al repo de protos (`{{ protos_module }}`)
+
+El job `test` resuelve el módulo privado con el `CI_JOB_TOKEN`. En el proyecto
+de protos: Settings > CI/CD > **Job token permissions** → agregar este proyecto
+a la allowlist. Si los protos viven en otro host, reemplazá el `insteadOf` del
+job `test` por un token propio (variable masked).
+{%- endif %}
+{%- else %}
+
+## 7. Protección de tags y environments (el candado de producción)
+
+- Settings > Rules > **Rulesets** → nuevo *tag ruleset* sobre `prod-v*`
+  restringiendo creación/actualización/borrado (bypass solo para maintainers/admins).
+  Opcional: otro sobre `qa-v*` para quien pueda desplegar a QA.
+- Settings > **Environments**: crear `qa` y `prod`. En `prod`: *Deployment
+  branches and tags* → solo tags `prod-v*`; recomendado *Required reviewers*
+  (protege también el override manual).
+
+## 8. Variables en GitHub
+
+Settings > Secrets and variables > Actions > **Variables** (de repo, de
+organización, o por environment si QA y prod usan instancias distintas):
+
+| Variable | Valor |
+|---|---|
+| `GCP_DEPLOYER_SA`    | email del deployer (paso 6) |
+| `GCP_WIF_PROVIDER`   | `projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>` |
+| `CLOUD_SQL_INSTANCE` | `<proyecto>:<región>:<instancia>` |
+| `GCP_PROJECT`        | opcional; pisa el default `{{ gcp_project }}` |
+{%- if protos_module %}
+
+## 9. Acceso al repo de protos (`{{ protos_module }}`)
+
+Secret `PROTOS_TOKEN` (Settings > Secrets): fine-grained token de **solo
+lectura** sobre el repo de protos. El `GITHUB_TOKEN` del workflow no alcanza
+para leer otro repo privado.
+{%- endif %}
+
+### Override de prod (release con migraciones)
+
+Actions > **ci** > *Run workflow* → `tag = prod-vX.Y.Z`. Corre test + deploy a
+prod sin la guarda. Usalo solo después de aplicar el SQL.
+{%- endif %}
+
+---
+
+## Release
+
+1. `test`: `go mod download`, `go mod verify`, `go vet`, `go test`, `go mod vendor`
+   (vendor/ viaja como artifact: Cloud Build compila offline).
+2. Release: auth WIF → Cloud Build construye y pushea → `gcloud run services replace`.
+3. Prod: `guard` compara contra el tag `prod-v*` anterior. Si el rango toca
+   `migrations/`, el deploy no corre: aplicá el SQL
+   (`PROD_DB_NAME=... ./scripts/apply_migration.sh prod <migración> --apply`) y
+   lanzá el override. El **primer** release a prod siempre va por override (no
+   hay tag anterior contra el que comparar).
+
+## El servicio es interno
+
+La pipeline no toca IAM. Dale `roles/run.invoker` sobre el servicio a quien lo
+llame (ej. el SA del gateway), una vez:
+
+```bash
+gcloud run services add-iam-policy-binding {{ repo_name }}-qa \
+  --region={{ gcp_region }} --project={{ gcp_project }} \
+  --member="serviceAccount:<sa-del-cliente>" --role="roles/run.invoker"
+```
+
+`gcloud run services replace` conserva esa policy entre deploys.
+
+## Rollback / deploy de emergencia
+
+`scripts/rollback.sh` redespliega una imagen **que ya existe**. No construye nada.
+
+```bash
+./scripts/rollback.sh qa                                          # imágenes y revisiones
+CLOUD_SQL_INSTANCE=<proj:region:inst> ./scripts/rollback.sh qa qa-v0.1.0
+CLOUD_SQL_INSTANCE=<proj:region:inst> ./scripts/rollback.sh prod prod-v0.1.0   # pide confirmación
+```
+
+Solo mover tráfico a una revisión existente:
+
+```bash
+gcloud run services update-traffic {{ repo_name }} \
+  --region={{ gcp_region }} --to-revisions=<revisión>=100
+```
+{%- if protos_module %}
+
+## Desarrollo local con el repo de protos (`go.work`)
+
+`go.mod` **no** lleva `replace` al checkout local: el módulo se resuelve del
+remoto y `go.sum` verifica el hash (igual que en CI). Para co-desarrollar:
+
+```bash
+make workspace       # go.work apuntando a $(PROTOS_DIR)
+make workspace-off   # vuelve al módulo publicado
+```
+
+Al publicar una versión nueva de los protos: `make workspace-off`, subir el
+`require` (`go get {{ protos_module }}@<versión>`) y `go mod tidy`.
+{%- endif %}

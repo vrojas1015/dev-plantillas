@@ -1,0 +1,58 @@
+# syntax=docker/dockerfile:1.7
+###############################################################################
+# {{ repo_name }} — MULTI-STAGE DOCKERFILE (vendor)
+###############################################################################
+# vendor/ lo genera el stage `test` de la pipeline (`go mod vendor`, que es
+# donde hay credenciales para módulos privados) y viaja como artifact al stage
+# de release. Este build NO toca la red para resolver dependencias.
+#
+# Para un build local: `go mod vendor && docker build .` (y borrar vendor/ después).
+
+# ──────────────────────────────────────────────
+# STAGE 1: BUILD
+# ──────────────────────────────────────────────
+FROM golang:{{ go_version }} AS builder
+
+# CGO_ENABLED=0: pgx/v5 es pure-Go, no hace falta cgo.
+# GOWORK=off: `-mod=vendor` es incompatible con go.work. El .dockerignore ya lo
+# excluye, pero un build con el workspace activo heredaría GOWORK del entorno.
+ENV CGO_ENABLED=0 \
+    GOOS=linux \
+    GOARCH=amd64 \
+    GOWORK=off
+
+WORKDIR /app
+
+# Dependencias desde vendor (sin red ni credenciales)
+COPY go.mod go.sum ./
+COPY vendor ./vendor
+
+# Código fuente
+COPY . .
+
+# Build con vendor + BuildKit cache mounts
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    go build -trimpath -ldflags="-s -w" -mod=vendor -o /bin/{{ repo_name }} ./cli
+
+# ──────────────────────────────────────────────
+# STAGE 2: RUNTIME
+# ──────────────────────────────────────────────
+FROM gcr.io/distroless/static-debian12:nonroot
+
+WORKDIR /app
+
+COPY --from=builder /bin/{{ repo_name }} /app/{{ repo_name }}
+
+# Migraciones (referencia; hoy se aplican a mano antes del deploy)
+COPY --from=builder /app/migrations /app/migrations
+
+USER nonroot:nonroot
+
+ENV APP_ENV=production \
+    LOG_LEVEL=info \
+    GRPC_PORT={{ grpc_port }}
+
+EXPOSE {{ grpc_port }}
+
+ENTRYPOINT ["/app/{{ repo_name }}"]

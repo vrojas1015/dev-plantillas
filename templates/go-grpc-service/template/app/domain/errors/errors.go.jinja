@@ -1,0 +1,250 @@
+// Package errors es el catálogo de errores del dominio.
+//
+// Se importa SIEMPRE con alias para no chocar con el errors de la stdlib:
+//
+//	domainerrors "{{ module_path }}/app/domain/errors"
+//
+// Reglas:
+//   - Las capas domain/application/infra devuelven solo *DomainError (vía los
+//     constructores de abajo). Nada de fmt.Errorf("...%w", sentinel) para
+//     errores de negocio.
+//   - Un error de Go inesperado se envuelve así:
+//     domainerrors.InternalError("failed to X", map[string]any{"cause": err.Error()})
+//   - Solo los handlers gRPC llaman a MapToGRPC.
+package errors
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+
+	"go.uber.org/zap"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// ================================================================
+// DomainError — error estructurado del dominio
+// ================================================================
+
+// DomainError encapsula un error de dominio con código gRPC, mensaje legible y
+// detalles opcionales. Es el único tipo de error que deben retornar las capas
+// de dominio, aplicación e infraestructura.
+type DomainError struct {
+	Code    codes.Code
+	Message string
+	Details map[string]any
+	// Reason es la clave estable y legible por máquina, en UPPER_SNAKE_CASE
+	// (convención de google.rpc.ErrorInfo). Los clientes hacen switch contra
+	// Reason, NUNCA contra Message: el mensaje es para humanos.
+	//
+	// Opcional: vacío cae al nombre del código gRPC (NOT_FOUND, ...). Setealo
+	// con WithReason cuando el cliente necesite distinguir dos errores que
+	// comparten código.
+	Reason string
+}
+
+func (e *DomainError) Error() string { return e.Message }
+
+// WithReason fija la clave estable del error y devuelve el mismo *DomainError,
+// para encadenarlo sobre cualquier constructor:
+//
+//	domainerrors.ConflictError(msg, details).WithReason("ITEM_NAME_TAKEN")
+func (e *DomainError) WithReason(reason string) *DomainError {
+	e.Reason = reason
+	return e
+}
+
+func newDomainError(code codes.Code, msg string, details map[string]any) *DomainError {
+	return &DomainError{Code: code, Message: msg, Details: details}
+}
+
+// errorDomain identifica al emisor en el ErrorInfo (el micro, no el host).
+const errorDomain = "{{ repo_name }}"
+
+// ================================================================
+// Constructores — catálogo de errores del dominio
+// ================================================================
+
+// NotFoundError se usa cuando un recurso buscado no existe.
+func NotFoundError(msg string, details map[string]any) *DomainError {
+	return newDomainError(codes.NotFound, msg, details)
+}
+
+// ConflictError se usa cuando una operación crea un duplicado o choca con el estado actual.
+func ConflictError(msg string, details map[string]any) *DomainError {
+	return newDomainError(codes.AlreadyExists, msg, details)
+}
+
+// ValidationError se usa cuando los datos de entrada son inválidos.
+func ValidationError(msg string, details map[string]any) *DomainError {
+	return newDomainError(codes.InvalidArgument, msg, details)
+}
+
+// UnauthorizedError se usa cuando falta autenticación.
+func UnauthorizedError(msg string, details map[string]any) *DomainError {
+	return newDomainError(codes.Unauthenticated, msg, details)
+}
+
+// PermissionDeniedError se usa cuando el actor autenticado no tiene permiso.
+func PermissionDeniedError(msg string, details map[string]any) *DomainError {
+	return newDomainError(codes.PermissionDenied, msg, details)
+}
+
+// FailedPreconditionError se usa cuando una condición previa no se cumple.
+func FailedPreconditionError(msg string, details map[string]any) *DomainError {
+	return newDomainError(codes.FailedPrecondition, msg, details)
+}
+
+// InternalError se usa para errores inesperados del servidor.
+func InternalError(msg string, details map[string]any) *DomainError {
+	return newDomainError(codes.Internal, msg, details)
+}
+
+// ServiceUnavailableError se usa cuando una dependencia externa no está disponible.
+func ServiceUnavailableError(msg string, details map[string]any) *DomainError {
+	return newDomainError(codes.Unavailable, msg, details)
+}
+
+// RateLimitExceededError se usa cuando se alcanza el límite de solicitudes.
+func RateLimitExceededError(msg string, details map[string]any) *DomainError {
+	return newDomainError(codes.ResourceExhausted, msg, details)
+}
+
+// ================================================================
+// MapToGRPC — traducción al protocolo de transporte
+// ================================================================
+
+// MapToGRPC convierte cualquier error en un gRPC status.
+//
+//   - *DomainError: usa su código y mensaje, y adjunta un google.rpc.ErrorInfo
+//     con Reason, Domain y Details aplanados a map[string]string.
+//   - context.Canceled / DeadlineExceeded: se respetan sus códigos.
+//   - Cualquier otro error: codes.Internal con mensaje genérico (no se filtran
+//     detalles internos al cliente; el error completo va al log).
+//
+// El logger es opcional: nil desactiva el logging.
+func MapToGRPC(err error, logger *zap.Logger) error {
+	if err == nil {
+		return nil
+	}
+
+	var de *DomainError
+	if errors.As(err, &de) {
+		if logger != nil {
+			logger.Warn("domain error",
+				zap.String("message", de.Message),
+				zap.Any("details", de.Details),
+				zap.String("code", de.Code.String()),
+			)
+		}
+		return withErrorInfo(status.New(de.Code, de.Message), de, logger)
+	}
+
+	switch {
+	case errors.Is(err, context.Canceled):
+		return status.Error(codes.Canceled, "request canceled")
+	case errors.Is(err, context.DeadlineExceeded):
+		return status.Error(codes.DeadlineExceeded, "deadline exceeded")
+	}
+
+	if logger != nil {
+		logger.Error("unhandled error", zap.Error(err))
+	}
+	return status.Error(codes.Internal, "internal server error")
+}
+
+// withErrorInfo adjunta un google.rpc.ErrorInfo al status. Es el mecanismo
+// estándar de gRPC y no cambia el contrato: quien no lo lea sigue viendo el
+// mismo código y mensaje.
+func withErrorInfo(st *status.Status, de *DomainError, logger *zap.Logger) error {
+	info := &errdetails.ErrorInfo{
+		Reason:   reasonOf(de),
+		Domain:   errorDomain,
+		Metadata: detailsToMetadata(de.Details),
+	}
+	enriched, err := st.WithDetails(info)
+	if err != nil {
+		// Si falla la serialización, se devuelve el status pelado: perder el
+		// detalle es mejor que perder el código y el mensaje.
+		if logger != nil {
+			logger.Warn("could not attach ErrorInfo", zap.Error(err), zap.String("reason", info.GetReason()))
+		}
+		return st.Err()
+	}
+	return enriched.Err()
+}
+
+// reasonOf devuelve el Reason explícito o uno derivado del código gRPC.
+func reasonOf(de *DomainError) string {
+	if de.Reason != "" {
+		return de.Reason
+	}
+	return toUpperSnake(de.Code.String())
+}
+
+// toUpperSnake pasa "AlreadyExists" a "ALREADY_EXISTS".
+func toUpperSnake(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			b.WriteByte('_')
+		}
+		b.WriteRune(r)
+	}
+	return strings.ToUpper(b.String())
+}
+
+// detailsToMetadata aplana Details a map[string]string (lo único que acepta
+// ErrorInfo). Strings tal cual, escalares con %v, el resto como JSON.
+func detailsToMetadata(details map[string]any) map[string]string {
+	if len(details) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(details))
+	for k, v := range details {
+		switch t := v.(type) {
+		case nil:
+			out[k] = ""
+		case string:
+			out[k] = t
+		case bool, int, int8, int16, int32, int64,
+			uint, uint8, uint16, uint32, uint64, float32, float64:
+			out[k] = fmt.Sprintf("%v", t)
+		default:
+			if b, err := json.Marshal(t); err == nil {
+				out[k] = string(b)
+			} else {
+				out[k] = fmt.Sprintf("%v", t)
+			}
+		}
+	}
+	return out
+}
+
+// ================================================================
+// Helpers de clasificación
+// ================================================================
+
+// IsNotFound reporta si err es un NotFoundError.
+func IsNotFound(err error) bool { return hasCode(err, codes.NotFound) }
+
+// IsConflict reporta si err es un ConflictError.
+func IsConflict(err error) bool { return hasCode(err, codes.AlreadyExists) }
+
+// IsValidation reporta si err es un ValidationError.
+func IsValidation(err error) bool { return hasCode(err, codes.InvalidArgument) }
+
+// IsFailedPrecondition reporta si err es un FailedPreconditionError.
+func IsFailedPrecondition(err error) bool { return hasCode(err, codes.FailedPrecondition) }
+
+// IsInternal reporta si err es un InternalError.
+func IsInternal(err error) bool { return hasCode(err, codes.Internal) }
+
+func hasCode(err error, code codes.Code) bool {
+	var de *DomainError
+	return errors.As(err, &de) && de.Code == code
+}

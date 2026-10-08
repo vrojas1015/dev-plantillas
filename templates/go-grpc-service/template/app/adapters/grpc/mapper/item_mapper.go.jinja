@@ -1,0 +1,58 @@
+// Package mapper es la ÚNICA frontera proto <-> dominio. Ni el dominio ni la
+// capa de aplicación importan tipos generados de proto.
+package mapper
+
+import (
+	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	examplev1 "{{ module_path }}/gen/go/example/v1"
+
+	"{{ module_path }}/app/domain/model"
+	"{{ module_path }}/app/domain/port"
+)
+
+// ItemToProto convierte un Item del dominio a su mensaje proto.
+func ItemToProto(m *model.Item) *examplev1.Item {
+	if m == nil {
+		return nil
+	}
+	return &examplev1.Item{
+		Id:          m.ID,
+		Name:        m.Name,
+		Description: m.Description,
+		CreatedAt:   TimestampToProto(m.CreatedAt),
+		UpdatedAt:   TimestampToProto(m.UpdatedAt),
+	}
+}
+
+// ItemsToProto convierte un slice de Items.
+func ItemsToProto(items []*model.Item) []*examplev1.Item {
+	out := make([]*examplev1.Item, len(items))
+	for i, it := range items {
+		out[i] = ItemToProto(it)
+	}
+	return out
+}
+
+// ItemFilterFromProto arma el filtro de la lista desde el PageRequest.
+func ItemFilterFromProto(p *examplev1.PageRequest) port.ItemFilter {
+	return port.ItemFilter{
+		Cursor: p.GetCursor(),
+		Limit:  p.GetLimit(),
+	}
+}
+
+// PageResponseToProto arma el PageResponse.
+func PageResponseToProto(nextCursor string, hasNext bool) *examplev1.PageResponse {
+	return &examplev1.PageResponse{NextCursor: nextCursor, HasNext: hasNext}
+}
+
+// TimestampToProto convierte time.Time a Timestamp (zero value -> nil).
+func TimestampToProto(t time.Time) *timestamppb.Timestamp {
+	if t.IsZero() {
+		return nil
+	}
+	return timestamppb.New(t)
+}

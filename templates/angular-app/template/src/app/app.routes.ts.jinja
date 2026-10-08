@@ -1,0 +1,33 @@
+import { Routes } from '@angular/router';
+
+{% if use_firebase_auth -%}
+import { authGuard } from './core/auth/auth.guard';
+{% endif -%}
+import { Shell } from './layout/shell/shell';
+
+export const routes: Routes = [
+{%- if use_firebase_auth %}
+  // Pública
+  {
+    path: 'login',
+    loadChildren: () => import('./features/auth/auth.routes').then((m) => m.AUTH_ROUTES),
+  },
+{% endif %}
+  // Privada: todo lo que va dentro del layout principal.
+  {
+    path: '',
+    component: Shell,
+{%- if use_firebase_auth %}
+    canActivate: [authGuard],
+{%- endif %}
+    children: [
+      { path: '', pathMatch: 'full', redirectTo: 'items' },
+      {
+        path: 'items',
+        loadChildren: () => import('./features/items/items.routes').then((m) => m.ITEMS_ROUTES),
+      },
+    ],
+  },
+
+  { path: '**', redirectTo: '' },
+];

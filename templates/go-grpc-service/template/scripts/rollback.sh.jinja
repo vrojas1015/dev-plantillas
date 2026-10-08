@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =============================================================================
+# Rollback / deploy de emergencia — {{ repo_name }}
+# =============================================================================
+#
+# Este script NO construye nada. Solo redespliega una imagen que YA existe en
+# Artifact Registry, construida en su momento por la pipeline. En una emergencia
+# querés volver a un artefacto conocido-bueno, no producir uno nuevo desde una
+# laptop cuyo estado nadie auditó.
+#
+# El camino normal para publicar una versión es un git tag (ver la config de CI).
+#
+# Uso:
+#   ./scripts/rollback.sh qa                                       # lista opciones
+#   CLOUD_SQL_INSTANCE=<proj:region:inst> ./scripts/rollback.sh qa qa-v1.0.3
+#   CLOUD_SQL_INSTANCE=<proj:region:inst> ./scripts/rollback.sh prod prod-v1.0.1
+#
+# Variables:
+#   PROJECT_ID          (default {{ gcp_project }}) proyecto GCP
+#   CLOUD_SQL_INSTANCE  (requerida para redesplegar) proj:region:instancia
+#   REGION              (default {{ gcp_region }})
+#   ROLLBACK_YES        si vale 1, no pide confirmación para prod
+# =============================================================================
+
+PROJECT_ID="${PROJECT_ID:-{{ gcp_project }}}"
+REGION="${REGION:-{{ gcp_region }}}"
+REPO_NAME="${REPO_NAME:-{{ artifact_repo }}}"
+IMAGE_NAME="${IMAGE_NAME:-{{ repo_name }}}"
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+usage() {
+  cat >&2 <<EOF
+Uso: [PROJECT_ID=<proyecto>] [CLOUD_SQL_INSTANCE=<proj:region:instancia>] $0 <qa|prod> [image-tag]
+
+  Sin image-tag, lista las imágenes y revisiones disponibles.
+EOF
+  exit 1
+}
+
+ENVIRONMENT="${1:-}"
+IMAGE_TAG="${2:-}"
+
+# Entorno estricto: un typo como `staging` debe fallar, no desplegar prod.
+case "$ENVIRONMENT" in
+  qa)
+    SERVICE_NAME="{{ repo_name }}-qa"
+    CLOUDRUN_YAML="cloudrun.qa.yaml"
+    ;;
+  prod)
+    SERVICE_NAME="{{ repo_name }}"
+    CLOUDRUN_YAML="cloudrun.prod.yaml"
+    ;;
+  *)
+    [ -n "$ENVIRONMENT" ] && echo "Entorno inválido: '${ENVIRONMENT}' (esperado: qa | prod)" >&2
+    usage
+    ;;
+esac
+
+IMAGE_BASE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPO_NAME}/${IMAGE_NAME}"
+
+# --- Sin tag: mostrar qué hay disponible y salir -----------------------------
+if [ -z "$IMAGE_TAG" ]; then
+  echo "Imágenes disponibles para ${ENVIRONMENT} en Artifact Registry:"
+  gcloud artifacts docker tags list "$IMAGE_BASE" \
+    --project="$PROJECT_ID" \
+    --format='value(tag)' 2>/dev/null \
+    | sed 's|.*/||' \
+    | grep "^${ENVIRONMENT}-v" \
+    | sort -V -r \
+    | head -15 \
+    | sed 's/^/   /' \
+    || echo "   (ninguna)"
+
+  echo ""
+  echo "Revisiones actuales de ${SERVICE_NAME} (la de arriba sirve tráfico):"
+  gcloud run revisions list \
+    --service="$SERVICE_NAME" \
+    --region="$REGION" \
+    --project="$PROJECT_ID" \
+    --limit=5 2>/dev/null || echo "   (no se pudieron listar)"
+
+  echo ""
+  echo "Redesplegá con: CLOUD_SQL_INSTANCE=<proj:region:instancia> $0 ${ENVIRONMENT} <image-tag>"
+  exit 0
+fi
+
+# --- Validaciones ------------------------------------------------------------
+CLOUD_SQL_INSTANCE="${CLOUD_SQL_INSTANCE:?Falta CLOUD_SQL_INSTANCE (proj:region:instancia) para redesplegar}"
+
+# El tag lleva el entorno adentro (qa-v1.2.3): evita desplegar la imagen de qa en prod.
+if [[ "$IMAGE_TAG" != "${ENVIRONMENT}-v"* ]]; then
+  echo "El tag '${IMAGE_TAG}' no corresponde al entorno '${ENVIRONMENT}' (esperado ${ENVIRONMENT}-vX.Y.Z)." >&2
+  exit 1
+fi
+
+REMOTE_IMAGE="${IMAGE_BASE}:${IMAGE_TAG}"
+
+echo "Verificando que ${IMAGE_TAG} exista en Artifact Registry..."
+if ! gcloud artifacts docker images describe "$REMOTE_IMAGE" \
+       --project="$PROJECT_ID" >/dev/null 2>&1; then
+  echo "La imagen ${REMOTE_IMAGE} no existe. Este script no construye; corré '$0 ${ENVIRONMENT}' para ver las disponibles." >&2
+  exit 1
+fi
+
+[ -f "$CLOUDRUN_YAML" ] || { echo "No se encontró ${CLOUDRUN_YAML} en ${REPO_ROOT}" >&2; exit 1; }
+
+# --- Confirmación explícita para prod ----------------------------------------
+if [ "$ENVIRONMENT" = "prod" ] && [ "${ROLLBACK_YES:-}" != "1" ]; then
+  echo ""
+  echo "Vas a redesplegar PRODUCCIÓN (${SERVICE_NAME}) con la imagen ${IMAGE_TAG}."
+  if ! read -r -p "Escribí 'prod' para confirmar: " confirm; then
+    echo "No hay terminal para confirmar: abortado." >&2
+    exit 1
+  fi
+  [ "$confirm" = "prod" ] || { echo "Abortado."; exit 1; }
+fi
+
+# --- Deploy ------------------------------------------------------------------
+TMPDIR_DEPLOY="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR_DEPLOY"' EXIT
+TMPFILE="${TMPDIR_DEPLOY}/cloudrun.yaml"
+
+DEPLOY_TIME="$(date -u +%Y%m%dT%H%M%SZ)"
+
+sed \
+  -e "s|__PROJECT_ID__|${PROJECT_ID}|g" \
+  -e "s|__REGION__|${REGION}|g" \
+  -e "s|__IMAGE_TAG__|${IMAGE_TAG}|g" \
+  -e "s|__CLOUD_SQL_INSTANCE__|${CLOUD_SQL_INSTANCE}|g" \
+  -e "s|__DEPLOY_TIME__|${DEPLOY_TIME}|g" \
+  "$CLOUDRUN_YAML" > "$TMPFILE"
+
+echo "Redesplegando ${SERVICE_NAME} con ${IMAGE_TAG}..."
+gcloud run services replace "$TMPFILE" --region="$REGION" --project="$PROJECT_ID"
+
+echo ""
+echo "Rollback completo. URL:"
+gcloud run services describe "$SERVICE_NAME" --region="$REGION" --project="$PROJECT_ID" \
+  --format='value(status.url)'
+
+echo ""
+echo "Esto creó una revisión nueva sirviendo una imagen vieja: el git tag y Cloud Run"
+echo "ahora divergen. Dejá constancia y resolvelo hacia adelante con un tag nuevo."

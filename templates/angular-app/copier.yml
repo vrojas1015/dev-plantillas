@@ -1,0 +1,127 @@
+# Plantilla Copier: app frontend Angular (standalone + signals + SCSS/BEM).
+# Ver README.md (al lado de este archivo) para cómo generar y actualizar.
+
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_templates_suffix: .jinja
+_answers_file: .copier-answers.yml
+
+_message_after_copy: |
+  Proyecto {{ app_name }} generado.
+
+  Siguientes pasos:
+    cd {{ _copier_conf.dst_path }}
+    git init -b main   (si todavía no es un repo)
+    npm install        (genera package-lock.json: commitealo, el CI usa `npm ci`)
+    npm start
+
+  Checklist completo: README.md de la plantilla, sección "Después de generar".
+
+# ------------------------------------------------------------------
+# Identidad de la app
+# ------------------------------------------------------------------
+app_name:
+  type: str
+  help: Nombre técnico de la app (kebab-case, = nombre del repo y del proyecto Angular). Ej. admin-web
+  validator: >-
+    {% if not (app_name | regex_search('^[a-z][a-z0-9]*(-[a-z0-9]+)*$')) %}
+    Debe ser kebab-case: minúsculas, números y guiones (ej. admin-web).
+    {% endif %}
+
+app_title:
+  type: str
+  help: Título visible de la app (header, <title>)
+  default: "{{ app_name | replace('-', ' ') | title }}"
+
+# ------------------------------------------------------------------
+# Backend
+# ------------------------------------------------------------------
+api_base_url_qa:
+  type: str
+  help: URL base del API (gateway) de QA. Si todavía no la sabés, dejá el placeholder.
+  default: https://api-qa.example.com
+
+api_base_url_prod:
+  type: str
+  help: URL base del API (gateway) de producción.
+  default: https://api.example.com
+
+# ------------------------------------------------------------------
+# Auth y deploy
+# ------------------------------------------------------------------
+use_firebase_auth:
+  type: bool
+  help: ¿Login con Firebase Auth + JWT propio del backend (access/refresh token)?
+  default: true
+
+deploy_target:
+  type: str
+  help: ¿Dónde se despliega?
+  choices:
+    Firebase Hosting (deploy keyless desde CI): firebase-hosting
+    Ninguno (sólo CI de verificación): ninguno
+  default: firebase-hosting
+
+firebase_project_qa:
+  type: str
+  help: ID del proyecto Firebase/GCP de QA (no el número).
+  default: "{{ app_name }}-qa"
+  when: "{{ use_firebase_auth or deploy_target == 'firebase-hosting' }}"
+  validator: >-
+    {% if not (firebase_project_qa | regex_search('^[a-z][a-z0-9-]{4,28}[a-z0-9]$')) %}
+    ID de proyecto GCP inválido (6-30 caracteres, minúsculas, números y guiones).
+    {% endif %}
+
+firebase_project_prod:
+  type: str
+  help: ID del proyecto Firebase/GCP de producción (no el número).
+  default: "{{ app_name }}-prod"
+  when: "{{ use_firebase_auth or deploy_target == 'firebase-hosting' }}"
+  validator: >-
+    {% if not (firebase_project_prod | regex_search('^[a-z][a-z0-9-]{4,28}[a-z0-9]$')) %}
+    ID de proyecto GCP inválido (6-30 caracteres, minúsculas, números y guiones).
+    {% endif %}
+
+ci_provider:
+  type: str
+  help: ¿Dónde vive el repo / qué CI se genera?
+  choices:
+    GitLab CI: gitlab
+    GitHub Actions: github
+  default: gitlab
+
+# ------------------------------------------------------------------
+# Idioma
+# ------------------------------------------------------------------
+i18n:
+  type: bool
+  help: ¿Textos de UI vía @ngx-translate (archivos public/i18n/<lang>.json)?
+  default: true
+
+default_lang:
+  type: str
+  help: Idioma por defecto (código ISO 639-1). Se usa en <html lang>, i18n y Playwright.
+  default: es
+  validator: >-
+    {% if not (default_lang | regex_search('^[a-z]{2}$')) %}
+    Usá un código de dos letras (es, en, pt...).
+    {% endif %}
+
+# ------------------------------------------------------------------
+# Valores computados (no se preguntan ni se guardan). Se usan en los nombres
+# de archivo condicionales, que así quedan cortos (límite de rutas en Windows).
+# ------------------------------------------------------------------
+deploy_fb:
+  type: bool
+  default: "{{ deploy_target == 'firebase-hosting' }}"
+  when: false
+
+ci_gitlab:
+  type: bool
+  default: "{{ ci_provider == 'gitlab' }}"
+  when: false
+
+ci_github:
+  type: bool
+  default: "{{ ci_provider == 'github' }}"
+  when: false

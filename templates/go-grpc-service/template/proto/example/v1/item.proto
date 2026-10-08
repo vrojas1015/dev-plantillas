@@ -1,0 +1,68 @@
+// Contrato de EJEMPLO de la plantilla go-grpc-service.
+//
+// Existe solo para que el servicio generado compile, arranque y tenga tests sin
+// depender de un repo de protos externo. Muestra el patrón completo con una
+// entidad mínima (Item): Create + Get + List paginado por cursor.
+//
+// Cuando el servicio tenga su contrato real (en el repo de protos de la
+// organización), borrá este archivo junto con gen/go/example/ y la entidad Item
+// (ver CLAUDE.md, sección "Borrar el ejemplo").
+//
+// Para regenerar el código Go después de editarlo: `make proto` (usa buf).
+syntax = "proto3";
+
+package example.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// ItemService es el CRUD reducido de ejemplo.
+service ItemService {
+  rpc CreateItem(CreateItemRequest) returns (CreateItemResponse);
+  rpc GetItem(GetItemRequest) returns (GetItemResponse);
+  rpc ListItems(ListItemsRequest) returns (ListItemsResponse);
+}
+
+message Item {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// PageRequest: paginación por cursor opaco. limit <= 0 usa el default del servicio.
+message PageRequest {
+  string cursor = 1;
+  int32 limit = 2;
+}
+
+message PageResponse {
+  string next_cursor = 1;
+  bool has_next = 2;
+}
+
+message CreateItemRequest {
+  string name = 1;
+  string description = 2;
+}
+
+message CreateItemResponse {
+  Item item = 1;
+}
+
+message GetItemRequest {
+  string id = 1;
+}
+
+message GetItemResponse {
+  Item item = 1;
+}
+
+message ListItemsRequest {
+  PageRequest page = 1;
+}
+
+message ListItemsResponse {
+  repeated Item items = 1;
+  PageResponse page = 2;
+}

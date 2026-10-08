@@ -1,0 +1,15 @@
+// Mixins compartidos. Uso desde un componente: `@use 'mixins' as m;`
+// (src/styles está en includePaths de angular.json).
+@mixin focus-visible {
+  &:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+}
+
+@mixin card {
+  background: var(--surface-canvas);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+}

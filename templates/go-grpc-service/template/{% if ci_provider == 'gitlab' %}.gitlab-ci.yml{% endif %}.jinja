@@ -1,0 +1,245 @@
+# =============================================================================
+# CI/CD {{ repo_name }} — build (Cloud Build) + deploy (Cloud Run), disparado por tag
+# =============================================================================
+#
+# Autenticación KEYLESS a GCP vía Workload Identity Federation (OIDC): GitLab
+# emite un id_token de corta duración, GCP lo verifica e impersona al service
+# account deployer. NO hay ninguna clave JSON en GitLab.
+#
+# QA y PROD viven en el MISMO proyecto GCP; solo cambia el nombre del servicio
+# ({{ repo_name }}-qa vs {{ repo_name }}) y el cloudrun.<env>.yaml.
+#
+# Disparo:
+#   - Merge request  -> solo el stage `test` (sin deploy).
+#   - Tag qa-v*      -> build + deploy a QA, automático.
+#   - Tag prod-v*    -> build + deploy a prod automático, SALVO que el release
+#                       toque `migrations/`: ahí `guard:prod` falla, el deploy
+#                       no corre, y hay que aplicar el SQL a mano y lanzar
+#                       `release:prod:override`.
+#
+# El tag ES la versión: el tag de la imagen en Artifact Registry es idéntico.
+#
+#   git tag qa-v0.1.0   && git push origin qa-v0.1.0     -> QA
+#   git tag prod-v0.1.0 && git push origin prod-v0.1.0   -> prod
+#
+# Rollback / emergencia: scripts/rollback.sh (no reconstruye, redespliega una
+# imagen que ya existe en el registry).
+#
+# -----------------------------------------------------------------------------
+# PRERREQUISITOS (setup de una sola vez — ver docs/ci-cd-setup.md):
+#   1. SA deployer + WIF pool/provider cuyo attribute-condition incluya el
+#      project_path de este repo.
+#   2. Roles del deployer: cloudbuild.builds.editor, run.admin, storage.admin,
+#      artifactregistry.reader (sobre el repo) e iam.serviceAccountUser (sobre
+#      {{ repo_name }}-sa).
+{%- if protos_module %}
+#   3. Allowlist del CI_JOB_TOKEN de este repo en el repo de protos
+#      ({{ protos_module }}) — Settings > CI/CD > Job token permissions.
+{%- endif %}
+#   4. Protected tags: prod-v* (Maintainers), qa-v* (Developers + Maintainers).
+#   5. Variables CI/CD (proyecto o grupo; NUNCA en este archivo):
+#        GCP_DEPLOYER_SA    = email del SA deployer
+#        GCP_WIF_AUD        = https://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+#        CLOUD_SQL_INSTANCE = <proyecto>:<región>:<instancia>
+#      Opcional: GCP_PROJECT (pisa el default de abajo).
+# =============================================================================
+
+stages:
+  - test
+  - release
+
+variables:
+  # Defaults no secretos. Una variable CI/CD del mismo nombre (proyecto/grupo)
+  # tiene precedencia sobre estos valores.
+  GCP_PROJECT: {{ gcp_project }}
+  REGION: {{ gcp_region }}
+  REPO_NAME: {{ artifact_repo }}   # repositorio de Artifact Registry
+  IMAGE_NAME: {{ repo_name }}
+  GO_IMAGE: golang:{{ go_version }}
+  # go.work es una herramienta local (ver `make workspace`). GOWORK=off
+  # garantiza que CI compile contra lo publicado y verificado por go.sum.
+  GOWORK: "off"
+{%- if protos_module %}
+  GOPRIVATE: {{ protos_module }}
+{%- endif %}
+
+# Pipeline en merge requests (solo tests) y en tags de release.
+# Un push directo a una rama no dispara nada: lo que protege main es el MR.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^(qa|prod)-v/'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - when: never
+
+# -----------------------------------------------------------------------------
+# TEST + VENDOR
+# -----------------------------------------------------------------------------
+# No mutamos go.mod acá: el -mod=readonly por defecto hace fallar el job si
+# go.mod/go.sum quedaron desincronizados, en vez de "arreglarlo" en silencio.
+#
+# vendor/ + go.mod + go.sum pasan como artifacts al stage de release para que el
+# contexto de Cloud Build sea consistente con vendor/modules.txt.
+test:
+  stage: test
+  image: $GO_IMAGE
+{%- if protos_module %}
+  before_script:
+    # Acceso al módulo privado de protos con el token del job (requiere la
+    # allowlist del paso 3). Si los protos viven en otro host, reemplazar por
+    # un token propio guardado como variable masked.
+    - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf "https://${CI_SERVER_HOST}/"
+{%- endif %}
+  script:
+    - go mod download
+    - go mod verify
+    - go vet ./...
+    - go test ./... -count=1 -timeout=120s
+    - go mod vendor
+  artifacts:
+    paths:
+      - vendor/
+      - go.mod
+      - go.sum
+    expire_in: 1 hour
+
+# -----------------------------------------------------------------------------
+# TEMPLATE de release (build Cloud Build + deploy Cloud Run)
+# -----------------------------------------------------------------------------
+.release:
+  stage: release
+  image: google/cloud-sdk:slim
+  needs:
+    - test
+  id_tokens:
+    GCP_ID_TOKEN:
+      aud: "$GCP_WIF_AUD"
+  script:
+    # --- 1. Auth keyless (WIF / external_account) ---
+    - echo "$GCP_ID_TOKEN" > /tmp/gitlab_oidc_token
+    # El audience de las credenciales es el aud del id_token sin https,
+    # prefijado con `//`.
+    - export GCP_STS_AUDIENCE="//${GCP_WIF_AUD#https://}"
+    - |
+      cat > /tmp/gcp_creds.json <<EOF
+      {
+        "type": "external_account",
+        "audience": "${GCP_STS_AUDIENCE}",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+        "token_url": "https://sts.googleapis.com/v1/token",
+        "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${GCP_DEPLOYER_SA}:generateAccessToken",
+        "credential_source": {
+          "file": "/tmp/gitlab_oidc_token",
+          "format": { "type": "text" }
+        }
+      }
+      EOF
+    - gcloud auth login --cred-file=/tmp/gcp_creds.json --quiet
+    - gcloud config set project "$GCP_PROJECT"
+    # --- 2. Build + push vía Cloud Build ---
+    - export IMAGE_TAG="$CI_COMMIT_TAG"
+    - export REMOTE_IMAGE="${REGION}-docker.pkg.dev/${GCP_PROJECT}/${REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}"
+    - echo "Cloud Build -> ${REMOTE_IMAGE}"
+    - gcloud builds submit --config=cloudbuild.yaml --substitutions=_IMAGE="$REMOTE_IMAGE" --project="$GCP_PROJECT" .
+    # --- 3. Deploy a Cloud Run ---
+    - export DEPLOY_TIME="$(date -u +%Y%m%dT%H%M%SZ)"
+    - |
+      sed \
+        -e "s|__PROJECT_ID__|${GCP_PROJECT}|g" \
+        -e "s|__REGION__|${REGION}|g" \
+        -e "s|__IMAGE_TAG__|${IMAGE_TAG}|g" \
+        -e "s|__CLOUD_SQL_INSTANCE__|${CLOUD_SQL_INSTANCE}|g" \
+        -e "s|__DEPLOY_TIME__|${DEPLOY_TIME}|g" \
+        "$CLOUDRUN_YAML" > /tmp/cloudrun.yaml
+    - echo "Deploy ${SERVICE_NAME}:${IMAGE_TAG}"
+    - gcloud run services replace /tmp/cloudrun.yaml --region="$REGION" --project="$GCP_PROJECT"
+    # --- 4. No tocamos IAM: el servicio es interno ---
+    - |
+      echo "Deploy completo:"; \
+      gcloud run services describe "$SERVICE_NAME" --region="$REGION" \
+        --project="$GCP_PROJECT" --format="value(status.url)"
+
+# -----------------------------------------------------------------------------
+# JOBS por entorno
+# -----------------------------------------------------------------------------
+release:qa:
+  extends: .release
+  variables:
+    SERVICE_NAME: {{ repo_name }}-qa
+    CLOUDRUN_YAML: cloudrun.qa.yaml
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^qa-v/'
+  environment:
+    name: qa
+
+# Prod se despliega solo, SALVO que el release traiga migraciones.
+#
+# Las migraciones se aplican a mano y tienen que correr ANTES de que arranque
+# el contenedor nuevo. `guard:prod` compara el rango contra el tag prod-v*
+# anterior y falla si tocó `migrations/`:
+#
+#   sin migraciones  -> guard verde -> deploy automático
+#   con migraciones  -> guard rojo  -> aplicás el SQL y corrés
+#                                      `release:prod:override` a mano
+guard:prod:
+  stage: release
+  # entrypoint: [""] es OBLIGATORIO: alpine/git trae `git` como ENTRYPOINT y
+  # sin esto el job muere con "git: 'sh' is not a git command".
+  image:
+    name: alpine/git:latest
+    entrypoint: [""]
+  needs: []
+  variables:
+    # `git describe` necesita historia y tags completos.
+    GIT_DEPTH: 0
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^prod-v/'
+  script:
+    - git fetch --tags --quiet
+    # Tag prod anterior a este. HEAD^ evita que `describe` matchee el actual.
+    - PREV="$(git describe --tags --abbrev=0 --match 'prod-v*' HEAD^ 2>/dev/null || true)"
+    - |
+      if [ -z "$PREV" ]; then
+        echo "No hay un tag prod-v* anterior: no se puede calcular el rango."
+        echo "Primer release a prod: aplicá migrations/ a mano y corré release:prod:override."
+        exit 1
+      fi
+    - 'echo "Rango a desplegar: ${PREV}..${CI_COMMIT_TAG}"'
+    - |
+      CHANGED="$(git diff --name-only "$PREV..$CI_COMMIT_TAG" -- migrations/)"
+      if [ -n "$CHANGED" ]; then
+        echo "Este release trae migraciones:"
+        echo "$CHANGED" | sed 's/^/    /'
+        echo ""
+        echo "Aplicá el SQL en prod ANTES de desplegar (scripts/apply_migration.sh prod ... --apply)"
+        echo "y después corré release:prod:override a mano."
+        exit 1
+      fi
+    - echo "Sin cambios en migrations/: el deploy automático es seguro."
+
+release:prod:
+  extends: .release
+  needs:
+    - test
+    - guard:prod
+  variables:
+    SERVICE_NAME: {{ repo_name }}
+    CLOUDRUN_YAML: cloudrun.prod.yaml
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^prod-v/'
+      when: on_success
+  environment:
+    name: prod
+
+# Escape hatch: mismo deploy, sin la guarda. Camino para un release con
+# migraciones (después de aplicar el SQL) o si la guarda se equivoca.
+release:prod:override:
+  extends: .release
+  variables:
+    SERVICE_NAME: {{ repo_name }}
+    CLOUDRUN_YAML: cloudrun.prod.yaml
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^prod-v/'
+      when: manual
+      allow_failure: true
+  environment:
+    name: prod

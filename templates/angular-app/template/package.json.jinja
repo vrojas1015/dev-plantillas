@@ -1,0 +1,50 @@
+{
+  "name": "{{ app_name }}",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "npm@11.4.2",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "ng": "ng",
+    "start": "ng serve",
+    "build": "ng build",
+    "build:qa": "ng build --configuration qa",
+    "build:prod": "ng build --configuration production",
+    "watch": "ng build --watch --configuration development",
+    "test:unit": "vitest run",
+    "test:unit:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "typecheck": "tsc -p tsconfig.spec.json --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "npm run format:check && npm run typecheck"{% if deploy_target == 'firebase-hosting' %},
+    "deploy:qa": "npm run build:qa && npx firebase-tools@15 deploy --only hosting --project qa",
+    "deploy:prod": "npm run build:prod && npx firebase-tools@15 deploy --only hosting --project production"{% endif %}
+  },
+  "dependencies": {
+    "@angular/common": "^21.2.0",
+    "@angular/compiler": "^21.2.0",
+    "@angular/core": "^21.2.0",
+    "@angular/forms": "^21.2.0",
+    "@angular/platform-browser": "^21.2.0",
+    "@angular/router": "^21.2.0",{% if i18n %}
+    "@ngx-translate/core": "^17.0.0",{% endif %}{% if use_firebase_auth %}
+    "firebase": "^12.9.0",{% endif %}
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^21.2.0",
+    "@angular/cli": "^21.2.0",
+    "@angular/compiler-cli": "^21.2.0",
+    "@playwright/test": "^1.59.1",
+    "@types/node": "^22.10.5",
+    "jsdom": "^27.1.0",
+    "prettier": "^3.9.6",
+    "typescript": "~5.9.2",
+    "vitest": "^4.0.8"
+  }
+}

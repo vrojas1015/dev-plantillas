@@ -1,0 +1,86 @@
+package application
+
+import (
+	"context"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+
+	domainerrors "{{ module_path }}/app/domain/errors"
+	"{{ module_path }}/app/domain/model"
+	"{{ module_path }}/app/domain/port"
+)
+
+// Límites del caso de uso de ejemplo.
+const (
+	ItemNameMaxLen   = 200
+	DefaultPageLimit = 50
+	MaxPageLimit     = 100
+)
+
+// ItemService implementa los casos de uso de Item (EJEMPLO: borrar junto con la entidad).
+//
+// Reglas del patrón:
+//   - Solo depende de ports (interfaces), nunca de infra ni de proto.
+//   - Valida la entrada y devuelve domainerrors.*; los errores del repo se
+//     propagan tal cual (el repo ya los traduce a DomainError).
+//   - Los UUID se generan acá (uuid.NewString()) antes del Create.
+type ItemService struct {
+	repo port.ItemRepository
+}
+
+// NewItemService construye el servicio.
+func NewItemService(repo port.ItemRepository) *ItemService {
+	return &ItemService{repo: repo}
+}
+
+// CreateItemInput son los datos que acepta CreateItem.
+type CreateItemInput struct {
+	Name        string
+	Description string
+}
+
+// CreateItem valida y persiste un Item nuevo.
+func (s *ItemService) CreateItem(ctx context.Context, in CreateItemInput) (*model.Item, error) {
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		return nil, domainerrors.ValidationError("name is required", map[string]any{"field": "name"})
+	}
+	if utf8.RuneCountInString(name) > ItemNameMaxLen {
+		return nil, domainerrors.ValidationError("name is too long", map[string]any{
+			"field":   "name",
+			"max_len": ItemNameMaxLen,
+		})
+	}
+
+	item := &model.Item{
+		ID:          uuid.NewString(),
+		Name:        name,
+		Description: strings.TrimSpace(in.Description),
+	}
+	return s.repo.Create(ctx, item)
+}
+
+// GetItem devuelve un Item por ID.
+func (s *ItemService) GetItem(ctx context.Context, id string) (*model.Item, error) {
+	if strings.TrimSpace(id) == "" {
+		return nil, domainerrors.ValidationError("id is required", map[string]any{"field": "id"})
+	}
+	if _, err := uuid.Parse(id); err != nil {
+		return nil, domainerrors.ValidationError("id must be a UUID", map[string]any{"field": "id", "value": id})
+	}
+	return s.repo.GetByID(ctx, id)
+}
+
+// ListItems devuelve una página de Items (más nuevos primero).
+// limit <= 0 usa DefaultPageLimit; limit > MaxPageLimit se recorta.
+func (s *ItemService) ListItems(ctx context.Context, filter port.ItemFilter) (*port.ItemPage, error) {
+	switch {
+	case filter.Limit <= 0:
+		filter.Limit = DefaultPageLimit
+	case filter.Limit > MaxPageLimit:
+		filter.Limit = MaxPageLimit
+	}
+	return s.repo.List(ctx, filter)
+}

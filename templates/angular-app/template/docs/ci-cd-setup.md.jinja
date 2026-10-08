@@ -1,0 +1,145 @@
+# CI/CD — setup de una vez
+
+{%- set ci_name = 'GitLab CI' if ci_provider == 'gitlab' else 'GitHub Actions' %}
+{%- set ci_file = '.gitlab-ci.yml' if ci_provider == 'gitlab' else '.github/workflows/' %}
+
+Pipeline en {{ ci_name }} (`{{ ci_file }}`):
+
+| Evento | Qué corre |
+|---|---|
+| {{ 'MR' if ci_provider == 'gitlab' else 'PR' }} | `npm ci` → `lint` → `test:unit` → `build:prod` |
+{%- if deploy_target == 'firebase-hosting' %}
+| Push a `main` | lo anterior + deploy a **producción** (`{{ firebase_project_prod }}`) |
+| Tag `qa-vX.Y.Z` | `build:qa` + deploy a **QA** (`{{ firebase_project_qa }}`) |
+{%- else %}
+| Push a `main` | lo mismo (sin deploy) |
+{%- endif %}
+
+{%- if deploy_target == 'firebase-hosting' %}
+
+El deploy es **keyless**: el CI pide un token OIDC de corta duración, GCP lo valida
+con Workload Identity Federation (WIF) y deja impersonar a un service account de
+deploy **sólo desde este repo**. No hay claves JSON en ningún lado.
+
+## 1. GCP: pool WIF + service account (por cada ambiente)
+
+Correr **dos veces**: una con el proyecto de producción y otra con el de QA.
+Requiere `gcloud` autenticado con permisos de IAM en el proyecto (`roles/owner`, o
+`iam.workloadIdentityPoolAdmin` + `iam.serviceAccountAdmin` + `resourcemanager.projectIamAdmin`).
+Los comandos son PowerShell; en bash cambiá `$VAR = "x"` por `VAR="x"`.
+
+```powershell
+$PROJECT  = "{{ firebase_project_prod }}"        # luego repetir con "{{ firebase_project_qa }}"
+{%- if ci_provider == 'gitlab' %}
+$REPO     = "<grupo>/<subgrupo>/{{ app_name }}"   # ruta completa del repo en GitLab
+$ISSUER   = "https://gitlab.com"                  # o la URL de tu GitLab self-hosted
+$POOL     = "gitlab-pool"
+$PROVIDER = "gitlab-provider"
+$ATTR     = "project_path"
+{%- else %}
+$REPO     = "<org>/{{ app_name }}"                # owner/repo en GitHub
+$ISSUER   = "https://token.actions.githubusercontent.com"
+$POOL     = "github-pool"
+$PROVIDER = "github-provider"
+$ATTR     = "repository"
+{%- endif %}
+$SA_NAME  = "ci-deployer"
+
+gcloud services enable iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com firebasehosting.googleapis.com --project=$PROJECT
+
+gcloud iam workload-identity-pools create $POOL --project=$PROJECT --location=global --display-name="CI"
+
+gcloud iam workload-identity-pools providers create-oidc $PROVIDER --project=$PROJECT --location=global `
+  --workload-identity-pool=$POOL --issuer-uri=$ISSUER `
+  --attribute-mapping="google.subject=assertion.sub,attribute.$ATTR=assertion.$ATTR,attribute.ref=assertion.ref" `
+  --attribute-condition="assertion.$ATTR == '$REPO'"
+
+gcloud iam service-accounts create $SA_NAME --project=$PROJECT --display-name="CI deployer ({{ app_name }})"
+$SA     = "$SA_NAME@$PROJECT.iam.gserviceaccount.com"
+$NUMBER = gcloud projects describe $PROJECT --format="value(projectNumber)"
+
+gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:$SA" --role="roles/firebasehosting.admin" --condition=None
+gcloud projects add-iam-policy-binding $PROJECT --member="serviceAccount:$SA" --role="roles/serviceusage.serviceUsageConsumer" --condition=None
+gcloud iam service-accounts add-iam-policy-binding $SA --project=$PROJECT --role="roles/iam.workloadIdentityUser" `
+  --member="principalSet://iam.googleapis.com/projects/$NUMBER/locations/global/workloadIdentityPools/$POOL/attribute.$ATTR/$REPO"
+
+# Valores para el paso 2:
+"GCP_WIF_PROVIDER = projects/$NUMBER/locations/global/workloadIdentityPools/$POOL/providers/$PROVIDER"
+"GCP_SA_EMAIL     = $SA"
+```
+
+Endurecimiento opcional: en producción, sumar a `--attribute-condition`
+{%- if ci_provider == 'gitlab' %}
+`&& assertion.ref == 'main' && assertion.ref_protected == 'true'`, y en QA
+`&& assertion.ref_type == 'tag'`.
+{%- else %}
+`&& assertion.ref == 'refs/heads/main'`, y en QA `&& assertion.ref.startsWith('refs/tags/qa-v')`.
+{%- endif %}
+
+## 2. Variables del CI
+
+Dos variables **por ambiente** (no son secretos, pero tampoco van en el repo):
+
+| Variable | Valor |
+|---|---|
+| `GCP_WIF_PROVIDER` | `projects/<NÚMERO>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>` |
+| `GCP_SA_EMAIL` | `ci-deployer@<proyecto>.iam.gserviceaccount.com` |
+
+{%- if ci_provider == 'gitlab' %}
+
+En GitLab: *Settings › CI/CD › Variables* → agregar cada una **dos veces**, con
+*Environment scope* `production` y `qa` respectivamente (los jobs `deploy:prod` y
+`deploy:qa` declaran esos environments). Si el grupo comparte proyecto GCP, se
+pueden definir a nivel de grupo.
+
+## 3. Ajustes del repo en GitLab
+
+- *Settings › CI/CD › General pipelines*: activar **Prevent outdated deployment jobs**.
+- *Settings › Repository › Protected tags*: `qa-v*` → Maintainers.
+- *Settings › Repository › Protected branches*: `main` sin push directo; merge por MR.
+- *Settings › Merge requests*: **Pipelines must succeed**.
+{%- else %}
+
+En GitHub: *Settings › Environments* → crear `production` y `qa`, y en cada uno
+*Environment variables* → `GCP_WIF_PROVIDER` y `GCP_SA_EMAIL`. En `production`,
+opcionalmente, *Deployment branches and tags* = sólo `main`.
+
+## 3. Ajustes del repo en GitHub
+
+- *Rulesets* de `main`: requerir PR, requerir el check `CI / verify`, bloquear force push.
+- *Rulesets* de tags: `qa-v*` restringido a maintainers.
+{%- endif %}
+
+## 4. Firebase
+
+- Cada proyecto GCP tiene que tener Firebase habilitado y el sitio de Hosting por
+  defecto (`<proyecto>.web.app`). Los alias `production`/`qa` están en `.firebaserc`.
+- Dominio propio: *Firebase Console › Hosting › Agregar dominio personalizado*.
+{%- if use_firebase_auth %}
+- Auth: habilitar el proveedor *Email/Password* (u otros) y agregar el dominio de la app
+  en *Authentication › Settings › Authorized domains*. Completar el bloque `firebase`
+  de `src/environments/environment*.ts` con la config web de cada proyecto (no es secreta).
+{%- endif %}
+
+## 5. Probar
+
+```bash
+git tag qa-v0.1.0 && git push origin qa-v0.1.0   # despliega QA
+```
+
+Para producción, mergear a `main`. Si el job de deploy falla con
+`Permission 'iam.serviceAccounts.getAccessToken' denied`, revisar que `$REPO` del
+paso 1 coincida exactamente con la ruta del repo.
+
+## Deploy manual (sólo emergencias)
+
+`npm run deploy:qa` / `npm run deploy:prod` usan tus credenciales locales
+(`npx firebase-tools@15 login`). El canal normal es el CI.
+{%- else %}
+
+## Sin deploy
+
+Esta app se generó con `deploy_target = ninguno`: el CI sólo verifica. Para sumar
+deploy a Firebase Hosting más adelante, correr `copier update` y cambiar la
+respuesta `deploy_target` a `firebase-hosting`.
+{%- endif %}

@@ -1,0 +1,15 @@
+# `make proto` -> buf generate. Los plugins corren con `go run` (versiones
+# fijadas), así que solo hace falta tener buf instalado.
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: {{ module_path }}/gen/go
+plugins:
+  - local: ["go", "run", "google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11"]
+    out: gen/go
+    opt: paths=source_relative
+  - local: ["go", "run", "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1"]
+    out: gen/go
+    opt: paths=source_relative
