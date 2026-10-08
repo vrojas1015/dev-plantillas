@@ -1,3 +1,4 @@
+{%- if is_cr -%}
 # Workflow reutilizable: build en Cloud Build + deploy a Cloud Run.
 # Lo invoca ci.yml (no se dispara solo). Ver docs/ci-cd-setup.md.
 
@@ -95,3 +96,77 @@ jobs:
           gcloud run services describe "$SERVICE_NAME" --region="$REGION" \
             --project="$GCP_PROJECT" --format="value(status.url)"
 {% endraw %}
+{%- else -%}
+# Workflow reutilizable: build + push a GHCR + deploy en Coolify v4 (API).
+# Lo invoca ci.yml (no se dispara solo). Ver docs/deploy.md.
+
+name: deploy
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: "qa | prod"
+        required: true
+        type: string
+      image_tag:
+        description: "Tag de git = tag inmutable de la imagen (qa-v* / prod-v*)"
+        required: true
+        type: string
+{% raw %}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      TARGET_ENV: ${{ inputs.environment }}
+      COOLIFY_URL: ${{ vars.COOLIFY_URL }}
+      COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+      COOLIFY_RESOURCE_UUID: ${{ inputs.environment == 'prod' && vars.COOLIFY_RESOURCE_UUID_PROD || vars.COOLIFY_RESOURCE_UUID_QA }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.image_tag }}
+
+      # vendor/ + go.mod + go.sum generados por el job `test` del mismo run.
+      - uses: actions/download-artifact@v4
+        with:
+          name: vendor
+          path: .
+
+      - name: Validar tag y variables
+        run: |
+          case "$IMAGE_TAG" in
+            "${TARGET_ENV}"-v*) ;;
+            *) echo "El tag '$IMAGE_TAG' no corresponde al entorno '$TARGET_ENV'"; exit 1 ;;
+          esac
+          : "${COOLIFY_URL:?Falta la variable COOLIFY_URL}"
+          : "${COOLIFY_TOKEN:?Falta el secret COOLIFY_TOKEN}"
+          : "${COOLIFY_RESOURCE_UUID:?Falta COOLIFY_RESOURCE_UUID_QA/_PROD}"
+          # GHCR exige el nombre en minúsculas.
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Build + push (GHCR)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          DOCKER_BUILDKIT=1 docker build -t "$IMAGE:$IMAGE_TAG" -t "$IMAGE:$TARGET_ENV" .
+          docker push "$IMAGE:$IMAGE_TAG"
+          docker push "$IMAGE:$TARGET_ENV"
+
+      # La API de Coolify redespliega el recurso; el compose usa el tag móvil
+      # (IMAGE_TAG=qa|prod en el panel) con pull_policy: always.
+      - name: Deploy (Coolify)
+        run: |
+          echo "Deploy ${TARGET_ENV} (${IMAGE_TAG}) en Coolify"
+          curl -fsS "$COOLIFY_URL/api/v1/deploy?uuid=$COOLIFY_RESOURCE_UUID&force=false" \
+            -H "Authorization: Bearer $COOLIFY_TOKEN"
+          echo
+          echo "Deploy encolado en Coolify. Seguilo en el panel (Deployments) del recurso."
+{% endraw %}
+{%- endif %}

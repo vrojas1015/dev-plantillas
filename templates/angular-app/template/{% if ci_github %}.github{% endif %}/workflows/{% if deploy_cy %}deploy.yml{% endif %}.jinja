@@ -1,0 +1,81 @@
+# Deploy a Coolify v4: imagen Docker en GHCR + webhook de deploy.
+#
+#   tag qa-vX.Y.Z    → imagen APP_ENV=qa   → ghcr.io/<owner>/<repo>:qa   → Coolify QA
+#   tag prod-vX.Y.Z  → imagen APP_ENV=prod → ghcr.io/<owner>/<repo>:prod → Coolify producción
+#
+# Cada imagen se publica con dos tags: el del git tag (inmutable, para rollback)
+# y el del ambiente (`qa` / `prod`, móvil), que es el que sigue el recurso de Coolify.
+#
+# Configuración en cada GitHub Environment (`qa` y `production`),
+# Settings › Environments › <env>:
+#   Variables  COOLIFY_URL            https://coolify.example.com (sin barra final)
+#              COOLIFY_RESOURCE_UUID  UUID del recurso de ese ambiente en Coolify
+#   Secrets    COOLIFY_TOKEN          API token de Coolify con permiso de deploy
+#
+# El push a GHCR usa el GITHUB_TOKEN del job (permiso packages: write).
+# Setup de una vez: docs/ci-cd-setup.md
+name: Deploy
+
+on:
+  push:
+    tags: ['qa-v*.*.*', 'prod-v*.*.*']
+
+permissions:
+  contents: read
+  packages: write # push de la imagen a GHCR
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+{%- raw %}
+    environment:
+      name: ${{ startsWith(github.ref_name, 'prod-v') && 'production' || 'qa' }}
+    # Nunca dos deploys al mismo ambiente a la vez, y sin cancelar el que corre.
+    concurrency:
+      group: deploy-${{ startsWith(github.ref_name, 'prod-v') && 'production' || 'qa' }}
+      cancel-in-progress: false
+    env:
+      APP_ENV: ${{ startsWith(github.ref_name, 'prod-v') && 'prod' || 'qa' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run test:unit
+
+      - name: Nombre de la imagen (GHCR exige minúsculas)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push de la imagen (APP_ENV=${{ env.APP_ENV }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: APP_ENV=${{ env.APP_ENV }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:${{ env.APP_ENV }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Disparar deploy en Coolify
+        env:
+          COOLIFY_URL: ${{ vars.COOLIFY_URL }}
+          COOLIFY_RESOURCE_UUID: ${{ vars.COOLIFY_RESOURCE_UUID }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          for v in COOLIFY_URL COOLIFY_RESOURCE_UUID COOLIFY_TOKEN; do
+            test -n "${!v}" || { echo "Falta $v en el GitHub Environment de este ambiente"; exit 1; }
+          done
+          curl -fsS "$COOLIFY_URL/api/v1/deploy?uuid=$COOLIFY_RESOURCE_UUID&force=false" \
+            -H "Authorization: Bearer $COOLIFY_TOKEN"
+{%- endraw %}

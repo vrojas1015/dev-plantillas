@@ -1,3 +1,4 @@
+{%- if is_cr -%}
 # =============================================================================
 # CI/CD {{ repo_name }} — build (Cloud Build) + deploy (Cloud Run), disparado por tag
 # =============================================================================
@@ -21,6 +22,36 @@
 #   GCP_WIF_PROVIDER    projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
 #   CLOUD_SQL_INSTANCE  <proyecto>:<región>:<instancia>
 #   GCP_PROJECT         (opcional) pisa el default de abajo
+{%- elif is_cy -%}
+# =============================================================================
+# CI/CD {{ repo_name }} — build + push (GHCR) + deploy en Coolify v4 (API),
+# disparado por tag
+# =============================================================================
+#
+#   - Pull request   -> solo `test` (sin deploy).
+#   - Tag qa-v*      -> test + build + push + deploy a QA.
+#   - Tag prod-v*    -> test + guard + build + push + deploy a prod, SALVO que
+#                       el release toque `migrations/`: `guard-prod` falla y el
+#                       deploy no corre. Aplicás el SQL a mano y lanzás el
+#                       override (Actions > ci > Run workflow, con el tag).
+#   - workflow_dispatch (override) -> deploy a prod del tag indicado, sin guarda.
+#
+# Imagen: ghcr.io/<owner>/<repo>:<tag de git> (inmutable) + :<qa|prod> (móvil).
+# El push usa GITHUB_TOKEN (permiso packages: write). El recurso de Coolify usa
+# el tag móvil con pull_policy: always y la API de Coolify lo redespliega.
+#
+# Setup de una sola vez: docs/deploy.md. En Settings > Secrets and variables >
+# Actions, NUNCA en este archivo:
+#   Variables: COOLIFY_URL, COOLIFY_RESOURCE_UUID_QA, COOLIFY_RESOURCE_UUID_PROD
+#   Secret:    COOLIFY_TOKEN
+{%- else -%}
+# =============================================================================
+# CI {{ repo_name }} — solo tests (deploy_target = ninguno)
+# =============================================================================
+#
+# Corre en pull requests. No hay build de imagen ni deploy: para agregar un
+# destino, `copier update --data deploy_target=<cloud-run|coolify>`.
+{%- endif %}
 {%- if protos_module %}
 # Secret (Settings > Secrets):
 #   PROTOS_TOKEN        token de solo lectura al repo de protos ({{ protos_module }})
@@ -31,6 +62,7 @@ name: ci
 
 on:
   pull_request:
+{%- if has_cd %}
   push:
     tags:
       - "qa-v*"
@@ -41,6 +73,7 @@ on:
         description: "Tag prod-v* a desplegar SIN la guarda de migraciones (aplicá el SQL antes)"
         required: true
         type: string
+{%- endif %}
 
 permissions:
   contents: read
@@ -54,12 +87,13 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # TEST + VENDOR (vendor/ viaja como artifact al deploy: Cloud Build no tiene
-  # credenciales para módulos privados)
+  # TEST{% if has_cd %} + VENDOR (vendor/ viaja como artifact al deploy: el build
+  # de la imagen no tiene credenciales para módulos privados){% endif %}
   # ---------------------------------------------------------------------------
   test:
     runs-on: ubuntu-latest
     steps:
+{%- if has_cd %}
 {%- raw %}
       - name: Validar input del override
         if: github.event_name == 'workflow_dispatch'
@@ -74,6 +108,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+{%- endraw %}
+{%- else %}
+      - uses: actions/checkout@v4
+{%- endif %}
+{%- raw %}
 
       - uses: actions/setup-go@v5
         with:
@@ -95,6 +134,7 @@ jobs:
           go mod verify
           go vet ./...
           go test ./... -count=1 -timeout=120s
+{%- if has_cd %}
 
       - name: Vendor
         if: github.event_name != 'pull_request'
@@ -153,12 +193,19 @@ jobs:
     needs: test
     permissions:
       contents: read
+{%- endraw %}
+{%- if is_cr %}
       id-token: write   # WIF
+{%- else %}
+      packages: write   # push a GHCR con GITHUB_TOKEN
+{%- endif %}
     uses: ./.github/workflows/deploy.yml
     with:
       environment: qa
+{%- if is_cr %}
       cloudrun_yaml: cloudrun.qa.yaml
-      image_tag: ${{ github.ref_name }}
+{%- endif %}
+      image_tag: {{ '${{ github.ref_name }}' }}
     secrets: inherit
 
   release-prod:
@@ -166,12 +213,18 @@ jobs:
     needs: [test, guard-prod]
     permissions:
       contents: read
+{%- if is_cr %}
       id-token: write
+{%- else %}
+      packages: write
+{%- endif %}
     uses: ./.github/workflows/deploy.yml
     with:
       environment: prod
+{%- if is_cr %}
       cloudrun_yaml: cloudrun.prod.yaml
-      image_tag: ${{ github.ref_name }}
+{%- endif %}
+      image_tag: {{ '${{ github.ref_name }}' }}
     secrets: inherit
 
   # Escape hatch: mismo deploy, sin guarda. Protegelo con reviewers en el
@@ -181,11 +234,17 @@ jobs:
     needs: test
     permissions:
       contents: read
+{%- if is_cr %}
       id-token: write
+{%- else %}
+      packages: write
+{%- endif %}
     uses: ./.github/workflows/deploy.yml
     with:
       environment: prod
+{%- if is_cr %}
       cloudrun_yaml: cloudrun.prod.yaml
-      image_tag: ${{ inputs.tag }}
+{%- endif %}
+      image_tag: {{ '${{ inputs.tag }}' }}
     secrets: inherit
-{%- endraw %}
+{%- endif %}

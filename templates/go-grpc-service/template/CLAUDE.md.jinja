@@ -7,7 +7,7 @@
 <!-- TODO: completar. Qué dominio cubre, quién lo llama (gateway, otros micros),
      qué contrato gRPC implementa y reglas de negocio no obvias. -->
 
-Microservicio Go gRPC, interno (Cloud Run sin acceso público), Postgres en el
+Microservicio Go gRPC, interno ({% if is_cr %}Cloud Run sin acceso público{% elif is_cy %}Coolify, sin puerto publicado{% else %}sin destino de deploy configurado{% endif %}), Postgres en el
 schema `{{ db_schema }}`, puerto `{{ grpc_port }}`. Generado desde la plantilla
 Copier `go-grpc-service` (`.copier-answers.yml`; actualizar con `copier update`).
 
@@ -36,7 +36,8 @@ Contrato gRPC: {% if protos_module %}repo de protos `{{ protos_module }}` (ver
 "Protos"). Mientras no se enchufe, el servicio expone el ejemplo local
 `proto/example/v1/item.proto`.{% else %}proto local `proto/example/v1/item.proto`
 (código en `gen/go/`, regenerar con `make proto`).{% endif %} Además registra
-`grpc.health.v1` (lo usan los probes de Cloud Run) y reflection fuera de prod.
+`grpc.health.v1` (probes de Cloud Run y `<binario> healthcheck` de docker
+compose, ver `cli/healthcheck.go`) y reflection fuera de prod.
 
 ## Errores
 
@@ -72,12 +73,18 @@ Contrato gRPC: {% if protos_module %}repo de protos `{{ protos_module }}` (ver
   pedir `limit+1` para `has_next`. Default/máximo de `limit` en el service.
 - JSONB: DTOs unexported separados del dominio + `encoding/json`.
 - Migraciones en `migrations/NNNNNN_desc.{up,down}.sql`, aplicadas a mano
-  (`scripts/apply_migration.sh`). Si nada está desplegado, reescribir `000001`.
+  (`DATABASE_URL=... scripts/apply_migration.sh <qa|prod> <migración>`). Si nada
+  está desplegado, reescribir `000001`. El `docker-compose.yml` local las aplica
+  solo al crear el volumen (`docker compose down -v` para empezar de cero).
+- Copiar los datos del servicio entre dos Postgres (con verificación de filas):
+  `scripts/migrate_db.sh SRC_URL DST_URL` (dry-run; `--apply` para ejecutar).
 
 ## Comandos
 
 ```bash
 cp .env.example .env.dev      # una vez; completar DATABASE_URL
+make up / make down           # Postgres 16 + servicio con docker compose
+docker compose up -d --wait postgres   # solo la base, para `make run`
 make run                      # levanta el servicio (lee .env.dev)
 make test                     # go test ./... -count=1
 make lint                     # gofmt + go vet (+ golangci-lint si está)
@@ -92,7 +99,12 @@ grpcurl -plaintext localhost:{{ grpc_port }} list   # con reflection (no prod)
 
 ## Deploy
 
-Por tag de git vía {% if ci_provider == 'gitlab' %}GitLab CI (`.gitlab-ci.yml`){% else %}GitHub Actions (`.github/workflows/`){% endif %}
+Configuración 12-factor: todo sale de variables de entorno (`app/infra/config`)
+y son **las mismas** en todos los destinos (`APP_ENV`, `SERVICE_ENV`, `DEBUG`,
+`LOG_LEVEL`, `GRPC_PORT`, `DATABASE_URL`, `OTEL_*`). Una variable nueva se
+agrega en `.env.example`, `docker-compose.yml`{% if is_cr %} y `cloudrun.{qa,prod}.yaml`{% elif is_cy %} y `docker-compose.coolify.yml` (+ panel de Coolify){% endif %}.
+{% if is_cr %}
+Por tag de git vía {% if ci_gl %}GitLab CI (`.gitlab-ci.yml`){% else %}GitHub Actions (`.github/workflows/`){% endif %}
 + Cloud Build + Cloud Run, auth keyless (WIF):
 
 ```bash
@@ -107,7 +119,31 @@ git tag prod-v0.1.0 && git push origin prod-v0.1.0   # prod, automático salvo m
 - `.gcloudignore` es crítico: sin él Cloud Build hereda `.gitignore` y pierde `vendor/`.
 - Los comandos que piden credenciales o confirmación (`gcloud auth login`,
   `setup_cloud_run_secrets.sh`, `apply_migration.sh prod --apply`) los corre una persona.
+{% elif is_cy %}
+Por tag de git vía {% if ci_gl %}GitLab CI (`.gitlab-ci.yml`) → GitLab Container Registry{% else %}GitHub Actions (`.github/workflows/`) → GHCR{% endif %}
+→ API de Coolify v4, que redespliega `docker-compose.coolify.yml` en el VPS:
 
+```bash
+git tag qa-v0.1.0   && git push origin qa-v0.1.0     # QA, automático
+git tag prod-v0.1.0 && git push origin prod-v0.1.0   # prod, automático salvo migraciones
+```
+
+- La imagen se publica con el tag inmutable (`qa-v0.1.0`) y uno móvil (`qa`/`prod`);
+  el recurso de Coolify usa `IMAGE_TAG=qa|prod`.
+- Release con cambios en `migrations/`: la guarda de prod bloquea. Aplicar el
+  SQL por túnel SSH (`scripts/apply_migration.sh prod <migración> --apply`) y
+  lanzar el override.
+- Rollback: `IMAGE_TAG=<tag inmutable anterior>` en el panel de Coolify + Redeploy.
+- Setup de una vez (recurso, variables, backups a S3, gRPC detrás de Traefik):
+  `docs/deploy.md`. Mudar a Cloud Run: `docs/migrar-a-cloud-run.md`.
+- Los comandos con credenciales o confirmación (`apply_migration.sh prod --apply`,
+  `migrate_db.sh --apply`, cambios en el panel de Coolify) los corre una persona.
+{% else %}
+Sin destino de deploy (`deploy_target = ninguno`): la CI solo corre tests. La
+imagen se construye con el `Dockerfile` (`go mod vendor && docker build .`).
+Para agregar un destino: `copier update --data deploy_target=cloud-run` (o
+`coolify`) en una rama, revisar el diff y commitear.
+{% endif %}
 ## Protos
 
 {% if protos_module -%}

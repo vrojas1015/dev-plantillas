@@ -1,0 +1,35 @@
+# Servidor estático de la SPA dentro de la imagen (ver Dockerfile).
+# El TLS y el dominio los maneja el proxy de Coolify; acá sólo HTTP en :80.
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	root * /srv
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# Archivos con hash en el nombre (main-ABCD1234.js, chunk-*.js, styles-*.css,
+	# media/*): no cambian nunca → cache de un año. Si no existen, 404 (nunca
+	# index.html: el navegador lo guardaría un año como si fuera JS).
+	@hashed path_regexp hashed ^/(.+-[A-Z0-9]{8}\.(js|mjs|css)|media/.+)$
+	handle @hashed {
+		@found file
+		header @found Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	# Todo lo demás (index.html, rutas de Angular, public/): revalidar siempre.
+	# Fallback SPA: si el archivo no existe se sirve index.html y rutea Angular.
+	handle {
+		header Cache-Control "no-cache"
+		try_files {path} /index.html
+		file_server
+	}
+}

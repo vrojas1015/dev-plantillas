@@ -8,7 +8,7 @@ PROTOS_DIR ?= ../{{ protos_module.split('/')[-1] }}
 
 BIN := bin/{{ repo_name }}
 
-.PHONY: help run build test test-race vet fmt lint tidy vendor proto clean{% if protos_module %} workspace workspace-off{% endif %}
+.PHONY: help run build test test-race vet fmt lint tidy vendor proto up down logs clean{% if protos_module %} workspace workspace-off{% endif %}
 
 ## help: lista los targets
 help:
@@ -54,6 +54,18 @@ vendor:
 ## proto: regenera gen/go desde proto/ (buf; plugins vía `go run`)
 proto:
 	buf generate
+
+## up: levanta Postgres + el servicio con docker compose (genera vendor/ antes)
+up: vendor
+	docker compose up -d --build --wait
+
+## down: baja docker compose (conserva el volumen; `docker compose down -v` lo borra)
+down:
+	docker compose down
+
+## logs: sigue los logs del servicio en docker compose
+logs:
+	docker compose logs -f app
 
 ## clean: borra binarios y vendor/
 clean:

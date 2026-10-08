@@ -1,0 +1,194 @@
+# Migrar {{ repo_name }} de Coolify a Cloud Run
+
+El servicio se generó con `deploy_target = coolify`. La configuración es la
+misma en los dos destinos (mismas variables de entorno, mismo `Dockerfile`,
+mismo `grpc.health.v1`), así que migrar es **cambiar dónde corre y mover los
+datos**, no tocar código.
+
+> **Este archivo desaparece con el `copier update` del paso (a)** (solo se
+> genera con `deploy_target = coolify`), igual que `docker-compose.coolify.yml`
+> y `docs/deploy.md`. Seguí la guía desde `main` o
+> `git show main:docs/migrar-a-cloud-run.md`. `scripts/migrate_db.sh` y
+> `scripts/apply_migration.sh` sí quedan (se generan con cualquier destino).
+
+Resumen:
+
+| Paso | Qué | Downtime |
+|---|---|---|
+| a | Rama + `copier update` a `cloud-run` | no |
+| b | Setup GCP de una vez (`docs/ci-cd-setup.md`) | no |
+| c | Ensayo de migración de datos a Cloud SQL de QA | no |
+| d | Secretos a Secret Manager | no |
+| e | Deploy a QA en Cloud Run y verificación | no |
+| f | Corte de prod: escrituras congeladas, dump final, DNS/clientes | **sí** (minutos) |
+| g | Coolify encendido N días como rollback; después, apagarlo | no |
+
+## (a) Rama nueva y `copier update`
+
+Requisitos: el proyecto commiteado (working tree limpio) y la plantilla en un
+repo git con tags (ver el README de la plantilla).
+
+```bash
+git switch -c migrar-cloud-run
+copier update --defaults \
+  --data deploy_target=cloud-run \
+  --data gcp_project=<id-proyecto-gcp> \
+  --data gcp_region=us-central1 \
+  --data artifact_repo={{ repo_name }}
+```
+
+- `--defaults` mantiene el resto de las respuestas guardadas en
+  `.copier-answers.yml`; `--data` cambia solo las que pasás. Las preguntas
+  `gcp_*` no existían con `coolify`: si no las pasás, toman el default.
+- Para subir de versión de la plantilla en el mismo paso: `--vcs-ref <tag>`.
+  Recomendado: primero actualizá la versión **sin** cambiar el destino, y la
+  migración en un update aparte (diffs más chicos).
+
+Qué cambia (resultado de un proyecto sin modificaciones locales):
+
+| | Archivos |
+|---|---|
+| Aparecen | `cloudbuild.yaml`, `cloudrun.qa.yaml`, `cloudrun.prod.yaml`, `.gcloudignore`, `scripts/rollback.sh`, `scripts/setup_cloud_run_secrets.sh`, `docs/ci-cd-setup.md` |
+| Desaparecen | `docker-compose.coolify.yml`, `docs/deploy.md`, `docs/migrar-a-cloud-run.md` |
+| Cambian | {% if ci_gl %}`.gitlab-ci.yml`{% else %}`.github/workflows/ci.yml`, `.github/workflows/deploy.yml`{% endif %} (release a Cloud Build + Cloud Run con WIF), `CLAUDE.md`, `.env.example`, `docker-compose.yml` (solo comentarios), `.copier-answers.yml` |
+| No cambian | código Go, `Dockerfile`, `migrations/`, `scripts/apply_migration.sh`, `scripts/migrate_db.sh` |
+
+Revisión:
+
+```bash
+git status
+git diff                                  # los "Cambian"
+grep -rn '^<<<<<<<\|^>>>>>>>' . ; find . -name '*.rej'   # conflictos (no debería haber si no tocaste esos archivos)
+go build ./... && go vet ./... && go test ./...
+git add -A && git commit -m "Migrar deploy de Coolify a Cloud Run"
+```
+
+Si habías modificado la CI o `CLAUDE.md`, el update intenta un merge de 3 vías:
+cambios en zonas distintas se conservan (p. ej. la descripción de `CLAUDE.md`);
+si se pisan, quedan marcadores (`<<<<<<<`) o `.rej` para resolver a mano.
+
+**Ojo:** los archivos que desaparecen (`docker-compose.coolify.yml`,
+`docs/deploy.md`) se borran **aunque tengan cambios locales**, sin conflicto ni
+aviso (comportamiento verificado de Copier). Si agregaste variables de entorno
+propias al compose de Coolify, recuperalas con
+`git show main:docker-compose.coolify.yml` y pasalas a `cloudrun.qa.yaml` /
+`cloudrun.prod.yaml` (paso d).
+
+**No mergees a `main` todavía**: el próximo tag `qa-v*` / `prod-v*` desde `main`
+iría a Cloud Run. Mientras dure la migración, los releases a Coolify salen de
+`main` como siempre.
+
+## (b) Setup GCP de una vez
+
+Seguí `docs/ci-cd-setup.md` (aparece después del update): service account de
+runtime, Artifact Registry, WIF, roles del deployer, tags protegidos y
+variables de CI ({% if ci_gl %}`GCP_DEPLOYER_SA`, `GCP_WIF_AUD`, `CLOUD_SQL_INSTANCE`{% else %}`GCP_DEPLOYER_SA`, `GCP_WIF_PROVIDER`, `CLOUD_SQL_INSTANCE`{% endif %}).
+
+Cloud SQL: una instancia Postgres de la **misma versión mayor** (16) o mayor,
+una base por entorno y el usuario `{{ db_schema }}_user`. **No** apliques
+`000001` en Cloud SQL: el schema llega con los datos en el paso (c).
+
+## (c) Migración de datos (ensayo en QA)
+
+`scripts/migrate_db.sh` copia el schema `{{ db_schema }}` (estructura + datos)
+con `pg_dump -Fc` / `pg_restore --no-owner --no-privileges` y compara el conteo
+de filas por tabla. Dry-run por defecto.
+
+Conexiones (dos terminales):
+
+```bash
+# Origen: Postgres del recurso de Coolify (PG_LOCAL_PORT del recurso de QA)
+ssh -N -L 15432:127.0.0.1:15432 usuario@vps
+# Destino: Cloud SQL de QA
+cloud-sql-proxy <proyecto>:<región>:<instancia> --port 5433
+```
+
+```bash
+read -rs SRC_DATABASE_URL && export SRC_DATABASE_URL   # postgres://{{ db_schema }}_user:<pass>@localhost:15432/{{ db_schema }}?sslmode=disable
+read -rs DST_DATABASE_URL && export DST_DATABASE_URL   # postgres://<admin>:<pass>@localhost:5433/<db-qa>?sslmode=disable
+
+./scripts/migrate_db.sh            # dry-run: conecta, cuenta, genera el dump
+./scripts/migrate_db.sh --apply    # restaura y verifica (sale con 2 si los conteos difieren)
+```
+
+Sin `pg_dump` local usa la imagen `postgres:16` con Docker (reescribe
+`localhost` a `host.docker.internal`). Si Cloud SQL es de una versión mayor
+más nueva, `PG_IMAGE=postgres:17`.
+
+Después del restore, los objetos quedan a nombre del usuario de
+`DST_DATABASE_URL` y sin grants: corré los `GRANT` de `docs/ci-cd-setup.md`
+(sección "Base de datos") para `{{ db_schema }}_user`.
+
+Para repetir el ensayo: `./scripts/migrate_db.sh --apply --replace` (borra el
+schema en destino y vuelve a copiar). Medí cuánto tarda: es el piso del
+downtime del corte.
+
+## (d) Secretos a Secret Manager
+
+En Coolify los secretos están en el panel; en Cloud Run, `DATABASE_URL` sale
+de Secret Manager (`<servicio>-database-url-qa` / `<servicio>-database-url`):
+
+```bash
+CLOUD_SQL_INSTANCE=<proyecto>:<región>:<instancia> ./scripts/setup_cloud_run_secrets.sh qa
+```
+
+El resto de las variables (`APP_ENV`, `SERVICE_ENV`, `DEBUG`, `LOG_LEVEL`,
+`GRPC_PORT`, `OTEL_*`) ya están en `cloudrun.<env>.yaml` con los mismos valores
+que usabas en Coolify; compará con el panel por si cambiaste alguno. Cualquier
+otro secreto propio: `gcloud secrets create` + `secretKeyRef` en el yaml.
+
+## (e) Deploy a QA y verificación
+
+Desde la rama (o mergeada si ya no vas a desplegar a Coolify desde `main`):
+
+```bash
+git tag qa-v<X.Y.Z> && git push origin qa-v<X.Y.Z>
+```
+
+Verificación (el servicio es interno: hace falta `roles/run.invoker`):
+
+```bash
+URL="$(gcloud run services describe {{ repo_name }}-qa --region=<región> --format='value(status.url)')"
+grpcurl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "${URL#https://}:443" grpc.health.v1.Health/Check
+grpcurl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "${URL#https://}:443" list            # reflection (QA corre con APP_ENV=development)
+```
+
+Probá los RPC reales contra los datos migrados y apuntá el gateway/clientes de
+QA a Cloud Run.
+
+## (f) Corte de prod
+
+1. **Antes**: ensayo completo en prod con `--apply` contra la base de Cloud SQL
+   de prod (sin cortar nada; mide el tiempo). Bajá el TTL del DNS que usen los
+   clientes, si aplica. Anunciá la ventana.
+2. **Congelar escrituras**: en Coolify, detené el servicio `app` del recurso de
+   prod (Postgres sigue corriendo). Desde acá el servicio no responde.
+3. **Dump final**: no hay dump incremental; el último dump **es** un dump
+   completo, tomado con las escrituras congeladas:
+   ```bash
+   KEEP_DUMP=./prod-final.dump ./scripts/migrate_db.sh --apply --replace
+   ```
+   Tiene que terminar con `OK: mismos conteos en origen y destino.` Si sale con
+   código 2, algo escribió en el origen: no sigas.
+4. **Grants** de `{{ db_schema }}_user` en Cloud SQL (paso c).
+5. **Deploy a prod en Cloud Run**: `git tag prod-v<X.Y.Z> && git push origin prod-v<X.Y.Z>`
+   (con la rama ya mergeada a `main`). Verificá con `grpcurl` como en (e).
+6. **Cambio de clientes**: apuntá el gateway/clientes (o el DNS) al servicio de
+   Cloud Run. Recordá `roles/run.invoker` para el SA de cada cliente.
+7. Guardá `prod-final.dump` en el bucket de backups.
+
+## (g) Rollback y apagado de Coolify
+
+- Dejá el recurso de Coolify de prod **N días** (p. ej. 7–14) con la app
+  detenida y Postgres intacto, y los backups a S3 activos.
+- **Rollback** dentro de esa ventana: apuntá los clientes de vuelta a Coolify y
+  arrancá `app`. Lo escrito en Cloud SQL después del corte no está en Coolify:
+  si hay que conservarlo, copialo en sentido inverso con escrituras congeladas
+  (`scripts/migrate_db.sh --apply --replace <cloud-sql> <coolify>`).
+- Pasados los N días sin incidentes:
+  1. Último backup del Postgres de Coolify a S3 (retención larga).
+  2. Borrar los recursos de QA y prod en Coolify (y sus volúmenes).
+  3. Borrar las variables de CI `COOLIFY_*` y el token de API de Coolify.
+  4. Borrar las imágenes del registry de {% if ci_gl %}GitLab{% else %}GHCR{% endif %} si ya no hacen falta.

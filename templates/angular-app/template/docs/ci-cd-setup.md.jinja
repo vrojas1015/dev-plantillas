@@ -11,6 +11,10 @@ Pipeline en {{ ci_name }} (`{{ ci_file }}`):
 {%- if deploy_target == 'firebase-hosting' %}
 | Push a `main` | lo anterior + deploy a **producción** (`{{ firebase_project_prod }}`) |
 | Tag `qa-vX.Y.Z` | `build:qa` + deploy a **QA** (`{{ firebase_project_qa }}`) |
+{%- elif deploy_target == 'coolify' %}
+| Push a `main` | lo mismo (sin deploy) |
+| Tag `qa-vX.Y.Z` | `lint` + `test:unit` → imagen `APP_ENV=qa` → registry → deploy a **QA** en Coolify |
+| Tag `prod-vX.Y.Z` | `lint` + `test:unit` → imagen `APP_ENV=prod` → registry → deploy a **producción** en Coolify |
 {%- else %}
 | Push a `main` | lo mismo (sin deploy) |
 {%- endif %}
@@ -135,11 +139,167 @@ paso 1 coincida exactamente con la ruta del repo.
 
 `npm run deploy:qa` / `npm run deploy:prod` usan tus credenciales locales
 (`npx firebase-tools@15 login`). El canal normal es el CI.
+{%- elif deploy_target == 'coolify' %}
+{%- set registry = 'GitLab Container Registry' if ci_provider == 'gitlab' else 'GitHub Container Registry (GHCR)' %}
+{%- set image = 'registry.gitlab.com/<grupo>/<subgrupo>/' ~ app_name if ci_provider == 'gitlab' else 'ghcr.io/<owner>/' ~ app_name %}
+
+El deploy va a **Coolify v4** en un VPS propio. El CI construye la imagen Docker
+(`Dockerfile`: build de Angular con Node 24 + `caddy:2-alpine` sirviendo
+`dist/{{ app_name }}/browser`), la publica en el {{ registry }} y le pide a Coolify,
+por su API, que redespliegue el recurso del ambiente.
+
+Angular hornea `environment.<ambiente>.ts` en el bundle, así que hay **una imagen
+por ambiente**, elegida con el build arg `APP_ENV` (`qa` → `build:qa`, `prod` →
+`build:prod`). Cada imagen sale con dos tags:
+
+| Tag de imagen | Ejemplo | Para qué |
+|---|---|---|
+| el del git tag | `{{ image }}:qa-v0.3.1` | inmutable: rollback y auditoría |
+| el del ambiente | `{{ image }}:qa` / `:prod` | móvil: es el que sigue el recurso de Coolify |
+
+> A diferencia del target Firebase (donde el merge a `main` despliega producción),
+> acá **producción sale sólo con un tag `prod-vX.Y.Z`**: el merge a `main` no despliega.
+
+## 1. Servidor y DNS
+
+- VPS con Coolify v4 instalado y el proxy (Traefik) activo.
+- Un registro DNS `A` (y `AAAA` si hay IPv6) por ambiente apuntando a la IP del VPS,
+  por ejemplo `{{ app_name }}-qa.example.com` y `{{ app_name }}.example.com`.
+
+## 2. Credenciales de lectura del registry en el VPS
+
+La imagen es privada: el servidor tiene que poder hacer `docker pull`. Coolify usa
+las credenciales de Docker del host, así que una sola vez, por SSH en el VPS:
+
+```bash
+{%- if ci_provider == 'gitlab' %}
+# Token: proyecto › Settings › Repository › Deploy tokens, scope `read_registry`.
+echo '<deploy-token>' | docker login registry.gitlab.com -u '<usuario-del-deploy-token>' --password-stdin
+{%- else %}
+# Token: GitHub › Settings › Developer settings › Personal access tokens (classic),
+# scope `read:packages` (idealmente de una cuenta de servicio, no personal).
+echo '<token>' | docker login ghcr.io -u '<usuario>' --password-stdin
+{%- endif %}
+```
+
+Si la imagen se hace pública, este paso no hace falta.
+
+## 3. Recursos en Coolify (uno por ambiente)
+
+En Coolify: *Projects › {{ app_name }}* con dos environments, `qa` y `production`.
+En cada uno, *+ New › Docker Image*:
+
+| Campo | QA | Producción |
+|---|---|---|
+| Image | `{{ image }}:qa` | `{{ image }}:prod` |
+| Ports Exposes | `80` | `80` |
+| Domains | `https://{{ app_name }}-qa.example.com` | `https://{{ app_name }}.example.com` |
+
+- **SSL**: con el dominio en `https://` Coolify (Traefik) pide y renueva el
+  certificado de Let's Encrypt solo; el DNS del paso 1 tiene que resolver antes.
+- **Variables de entorno**: no hacen falta. La config del front está en
+  `src/environments/*.ts` y queda dentro del bundle (no es secreta).
+- **Health check**: la imagen trae `HEALTHCHECK` (pide `/` en el puerto 80); el
+  de Coolify puede apuntar a `/` también.
+- Anotar el **UUID** de cada recurso (está en la URL del recurso y en su página
+  de configuración).
+
+**Alternativa — que Coolify construya desde el Dockerfile**: recurso *Public/Private
+Repository* con build pack *Dockerfile* y *Build Arg* `APP_ENV=qa` (o `prod`).
+Sirve para empezar rápido, pero Coolify construye la punta de la rama configurada
+(no el tag) y lo hace en el VPS. El flujo recomendado es el de arriba: el CI
+construye y el VPS sólo hace pull.
+
+## 4. Token de la API de Coolify
+
+*Keys & Tokens › API tokens* → crear un token con permiso de **deploy** (si la API
+está deshabilitada, activarla en *Settings*). Va como secreto del CI, nunca al repo.
+
+## 5. Variables del CI
+
+Mismos nombres en los dos ambientes, con valores distintos:
+
+| Variable | Valor | Tipo |
+|---|---|---|
+| `COOLIFY_URL` | `https://coolify.example.com` (sin barra final) | variable |
+| `COOLIFY_RESOURCE_UUID` | UUID del recurso del ambiente (paso 3) | variable |
+| `COOLIFY_TOKEN` | token del paso 4 | **secreto** |
+
+{%- if ci_provider == 'gitlab' %}
+
+En GitLab: *Settings › CI/CD › Variables* → agregar cada una **dos veces**, con
+*Environment scope* `qa` y `production` (los jobs `deploy:qa` y `deploy:prod`
+declaran esos environments). `COOLIFY_TOKEN` con **Masked** y **Protected**
+(por eso los tags tienen que estar protegidos, ver paso 6). `COOLIFY_URL` puede
+ir con scope `*` si los dos ambientes están en el mismo Coolify.
+
+El push al registry usa `CI_JOB_TOKEN`: no hay que crear nada. Verificar que el
+proyecto tenga el Container Registry habilitado (*Settings › General › Visibility*).
+
+## 6. Ajustes del repo en GitLab
+
+- *Settings › Repository › Protected tags*: `qa-v*` y `prod-v*` → Maintainers.
+- *Settings › Repository › Protected branches*: `main` sin push directo; merge por MR.
+- *Settings › Merge requests*: **Pipelines must succeed**.
+- Runner con Docker-in-Docker (privileged). Los shared runners de GitLab.com sirven.
+{%- else %}
+
+En GitHub: *Settings › Environments* → crear `qa` y `production`; en cada uno,
+*Environment variables* → `COOLIFY_URL` y `COOLIFY_RESOURCE_UUID`, y
+*Environment secrets* → `COOLIFY_TOKEN`. En `production`, opcionalmente,
+*Deployment branches and tags* = sólo tags `prod-v*` y revisores requeridos.
+
+El push a GHCR usa el `GITHUB_TOKEN` del job (`packages: write`): no hay que crear
+nada. La primera vez el paquete queda privado y vinculado al repo.
+
+## 6. Ajustes del repo en GitHub
+
+- *Rulesets* de `main`: requerir PR, requerir el check `CI / verify`, bloquear force push.
+- *Rulesets* de tags: `qa-v*` y `prod-v*` restringidos a maintainers.
+{%- endif %}
+{%- if use_firebase_auth %}
+
+## 7. Firebase Auth
+
+La app usa Firebase Auth aunque se sirva desde Coolify: agregar los dominios de
+QA y producción en *Firebase Console › Authentication › Settings › Authorized
+domains* (de `{{ firebase_project_qa }}` y `{{ firebase_project_prod }}`
+respectivamente), y completar el bloque `firebase` de `src/environments/environment*.ts`.
+{%- endif %}
+
+## Probar en local
+
+```bash
+docker compose up --build                 # build de prod → http://localhost:8080
+APP_ENV=qa docker compose up --build      # build de QA
+```
+
+## Desplegar
+
+```bash
+git tag qa-v0.1.0 && git push origin qa-v0.1.0       # QA
+git tag prod-v0.1.0 && git push origin prod-v0.1.0   # producción
+```
+
+Si el paso de Coolify falla con `401`, revisar el token; con `404`, el UUID o la URL.
+Si Coolify despliega pero sigue la versión vieja, revisar que el recurso apunte al
+tag `:qa`/`:prod` y que el VPS tenga el `docker login` del paso 2.
+
+## Rollback
+
+En Coolify, cambiar el tag de la imagen del recurso a uno anterior (p. ej.
+`:prod-v0.2.0`) y redeploy; o volver a correr el pipeline del tag anterior (mueve
+`:prod` a esa versión). Después, corregir con un tag nuevo.
+
+## Pasar a Firebase Hosting
+
+Si conviene Firebase Hosting (CDN global, sin servidor que mantener):
+[migrar-a-firebase-hosting.md](migrar-a-firebase-hosting.md).
 {%- else %}
 
 ## Sin deploy
 
 Esta app se generó con `deploy_target = ninguno`: el CI sólo verifica. Para sumar
-deploy a Firebase Hosting más adelante, correr `copier update` y cambiar la
-respuesta `deploy_target` a `firebase-hosting`.
+deploy más adelante, correr `copier update` y cambiar la respuesta `deploy_target`
+a `firebase-hosting` o `coolify`.
 {%- endif %}

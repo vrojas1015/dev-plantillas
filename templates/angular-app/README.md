@@ -3,7 +3,8 @@
 Plantilla [Copier](https://copier.readthedocs.io/) para apps frontend del equipo:
 Angular 21 standalone + signals, SCSS/BEM, cliente API tipado, Firebase Auth + JWT
 propio (opcional), @ngx-translate (opcional), vitest + Playwright, y CI/CD en
-GitLab o GitHub con deploy keyless a Firebase Hosting (opcional).
+GitLab o GitHub con deploy keyless a Firebase Hosting o a Coolify v4 en un VPS
+propio (opcional).
 
 Está extraída del patrón de la app de admin existente, sin nombres ni IDs reales.
 
@@ -13,10 +14,13 @@ Está extraída del patrón de la app de admin existente, sin nombres ni IDs rea
 <app>/
 ├── CLAUDE.md                     contexto corto para agentes (stack, estructura, reglas)
 ├── .claude/settings.json         permisos allow/deny para Claude Code
-├── .gitlab-ci.yml | .github/     CI: MR/PR → lint + unit + build; main → prod; tag qa-v* → QA
-├── docs/ci-cd-setup.md           setup de una vez (WIF en GCP + variables del CI)
+├── .gitlab-ci.yml | .github/     CI: MR/PR → lint + unit + build; deploy según deploy_target
+├── docs/ci-cd-setup.md           setup de una vez del deploy elegido + variables del CI
+├── docs/migrar-a-firebase-hosting.md   (si deploy_target = coolify)
 ├── docs/estilos-bem.md           convención SCSS + BEM
 ├── firebase.json, .firebaserc    (si deploy_target = firebase-hosting)
+├── Dockerfile, Caddyfile,        (si deploy_target = coolify) imagen node:24 → caddy:2-alpine
+│   .dockerignore, docker-compose.yml
 ├── e2e/items.spec.ts             e2e de ejemplo (Playwright, API mockeada)
 ├── public/i18n/<lang>.json       (si i18n)
 └── src/
@@ -39,15 +43,46 @@ Está extraída del patrón de la app de admin existente, sin nombres ni IDs rea
 | `app_title` | derivado de `app_name` | título visible (header, `<title>`) |
 | `api_base_url_qa` | `https://api-qa.example.com` | API de dev y QA |
 | `api_base_url_prod` | `https://api.example.com` | API de producción |
-| `use_firebase_auth` | `true` | login Firebase → JWT propio (access en memoria, refresh en localStorage) + interceptor + guard |
-| `deploy_target` | `firebase-hosting` | `firebase-hosting` o `ninguno` (CI sólo verifica) |
+| `use_firebase_auth` | `true` | login Firebase → JWT propio (access en memoria, refresh en localStorage) + interceptor + guard. Independiente del destino de deploy |
+| `deploy_target` | `firebase-hosting` | `firebase-hosting`, `coolify` o `ninguno` (CI sólo verifica). Ver "Destinos de deploy" |
 | `firebase_project_qa` / `_prod` | `<app_name>-qa` / `-prod` | IDs de proyecto GCP/Firebase (sólo si auth o deploy a Firebase) |
 | `ci_provider` | `gitlab` | `gitlab` o `github` |
 | `i18n` | `true` | textos vía @ngx-translate |
 | `default_lang` | `es` | `<html lang>`, idioma de i18n y locale de Playwright |
 
-No se pregunta ni se genera ningún secreto, número de proyecto, audience de WIF ni
-email de service account: son variables del CI documentadas en `docs/ci-cd-setup.md`.
+No se pregunta ni se genera ningún secreto, número de proyecto, audience de WIF,
+email de service account ni token/UUID de Coolify: son variables del CI documentadas
+en `docs/ci-cd-setup.md`.
+
+## Destinos de deploy
+
+| | `firebase-hosting` | `coolify` | `ninguno` |
+|---|---|---|---|
+| Dónde | Firebase Hosting (CDN de Google) | Coolify v4 en un VPS propio | — |
+| Artefacto | `dist/<app>/browser` + `firebase.json` | imagen Docker: build con `node:24`, sirve `caddy:2-alpine` (`Caddyfile`: fallback SPA, gzip/zstd, cache) | — |
+| QA | tag `qa-vX.Y.Z` | tag `qa-vX.Y.Z` → imagen `APP_ENV=qa` | — |
+| Producción | push/merge a `main` | tag `prod-vX.Y.Z` → imagen `APP_ENV=prod` | — |
+| Credenciales del CI | WIF (OIDC, sin claves): `GCP_WIF_PROVIDER`, `GCP_SA_EMAIL` | registry con `GITHUB_TOKEN` / `CI_JOB_TOKEN`; `COOLIFY_URL`, `COOLIFY_RESOURCE_UUID`, `COOLIFY_TOKEN` (secreto) por environment | — |
+| Archivos propios | `firebase.json`, `.firebaserc`, scripts `deploy:*` | `Dockerfile`, `Caddyfile`, `.dockerignore`, `docker-compose.yml`, `docs/migrar-a-firebase-hosting.md` | — |
+
+Con `coolify`, Angular hornea el environment en el bundle: hay **una imagen por
+ambiente** (build arg `APP_ENV=qa|prod`), no una imagen promovida entre ambientes.
+
+### Cambiar de destino (p. ej. `coolify` → `firebase-hosting`)
+
+```powershell
+git switch -c chore/migrar-a-firebase-hosting
+python -m copier update --defaults --data deploy_target=firebase-hosting `
+  --data firebase_project_qa=<id-qa> --data firebase_project_prod=<id-prod>
+```
+
+Los `--data firebase_project_*` sólo hacen falta si el proyecto no usaba Firebase
+Auth (si no, ya están en `.copier-answers.yml`). `--vcs-ref=:current:` cambia el
+destino sin subir de versión de plantilla. En un proyecto sin modificar el update no
+da conflictos: aparecen `firebase.json`/`.firebaserc`, desaparecen los archivos de
+Coolify (**aunque se hayan editado a mano**: revisar `git diff`) y el resultado es
+idéntico a generar con `firebase-hosting` desde cero. Paso a paso completo (WIF, QA,
+corte de DNS, rollback): `docs/migrar-a-firebase-hosting.md` del proyecto generado.
 
 ## Generar
 
@@ -95,6 +130,10 @@ SemVer (`v1.0.0`). El proyecto tiene que estar commiteado y limpio antes de actu
    **borrar `features/items`** (y su e2e) cuando ya no sirva de ejemplo.
 8. Si `deploy_target = firebase-hosting`: seguir `docs/ci-cd-setup.md` (WIF por
    ambiente, variables `GCP_WIF_PROVIDER` y `GCP_SA_EMAIL`, tags `qa-v*` protegidos).
+   Si `deploy_target = coolify`: seguir `docs/ci-cd-setup.md` (recursos *Docker Image*
+   en Coolify, dominio + SSL, `docker login` al registry en el VPS, variables
+   `COOLIFY_*` por environment, tags `qa-v*`/`prod-v*` protegidos) y probar la imagen
+   con `docker compose up --build`.
 9. Configurar el repo según `docs/02-repositorios-gitlab-github.md` (rama protegida,
    pipeline obligatorio, aprobaciones).
 10. Ajustar `CLAUDE.md` con lo propio de la app (sin pasar de ~120 líneas).
@@ -106,9 +145,11 @@ SemVer (`v1.0.0`). El proyecto tiene que estar commiteado y limpio antes de actu
   Actions va dentro de `{% raw %}…{% endraw %}`.
 - Archivos/carpetas condicionales: nombre `{% if <var> %}nombre{% endif %}`; para que
   las rutas no superen el límite de Windows se usan las variables computadas cortas
-  `deploy_fb`, `ci_gitlab`, `ci_github` (definidas al final de `copier.yml`).
-- Antes de mergear un cambio, generar las cuatro combinaciones (auth/i18n/CI/deploy)
-  y correr `npm run lint && npm run test:unit && npm run build` en cada una.
+  `deploy_fb`, `deploy_cy`, `ci_gitlab`, `ci_github` (definidas al final de `copier.yml`).
+- Antes de mergear un cambio, generar las combinaciones (auth/i18n/CI/deploy)
+  y correr `npm run lint && npm run test:unit && npm run build` en cada una. Si se
+  toca `Dockerfile`/`Caddyfile`: `docker build` + `docker run` y revisar con `curl -I`
+  `/`, una ruta profunda (fallback SPA) y un asset con hash (cache).
 - Versiones de dependencias: alineadas con la app de referencia (Angular `^21.2.0`,
   vitest `^4.0.8`, Playwright `^1.59.1`, ngx-translate `^17.0.0`, firebase `^12.9.0`,
   TypeScript `~5.9.2`). Subirlas en la plantilla y propagar con `copier update`.

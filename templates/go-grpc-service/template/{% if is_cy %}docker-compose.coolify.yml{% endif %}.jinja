@@ -1,0 +1,74 @@
+# =============================================================================
+# Coolify v4 (build pack "Docker Compose") — {{ repo_name }}
+# =============================================================================
+#
+# Un recurso de Coolify por entorno (QA y prod), los dos apuntando a este
+# archivo. Setup completo en docs/deploy.md.
+#
+# - La imagen NO se construye en el VPS: la construye la CI y la sube al
+#   registry ({% if ci_gl %}GitLab Container Registry{% else %}GHCR{% endif %}) con dos tags: el inmutable (qa-v1.2.3) y uno
+#   móvil por entorno (qa / prod). El recurso usa IMAGE_TAG=qa o prod y la CI
+#   dispara el redeploy por la API de Coolify. pull_policy: always fuerza a
+#   bajar la imagen en cada deploy (el tag móvil cambia de digest).
+#   Rollback: IMAGE_TAG=<tag inmutable anterior> en el panel + Redeploy.
+# - Las variables ${VAR} se cargan en el panel de Coolify (Environment
+#   Variables). ${VAR:?} = obligatoria: el deploy falla si falta.
+# - Mismas variables que Cloud Run (APP_ENV, SERVICE_ENV, DEBUG, LOG_LEVEL,
+#   GRPC_PORT, DATABASE_URL, OTEL_*): migrar de destino no toca el código.
+# - Puertos: la app NO publica puertos al host (la ven Traefik/otros
+#   contenedores por la red de Docker). Postgres publica solo en 127.0.0.1 del
+#   VPS (PG_LOCAL_PORT, distinto por entorno) para aplicar migraciones, hacer
+#   dumps y migrar datos por túnel SSH; nunca queda expuesto a internet.
+# - Migraciones: NO se aplican solas. scripts/apply_migration.sh por túnel,
+#   antes del deploy que las necesita (mismo criterio que Cloud Run).
+# =============================================================================
+
+services:
+  app:
+    image: ${IMAGE_REPO:-{{ image_repo_default }}}:${IMAGE_TAG:?}
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      SERVICE_ENV: ${SERVICE_ENV:-production}
+      DEBUG: ${DEBUG:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      GRPC_PORT: "{{ grpc_port }}"
+      # postgres://<POSTGRES_USER>:<POSTGRES_PASSWORD>@postgres:5432/<POSTGRES_DB>?sslmode=disable
+      # (o la URL de un Postgres externo/administrado: este servicio no la arma).
+      DATABASE_URL: ${DATABASE_URL:?}
+      OTEL_SERVICE_NAME: {{ repo_name }}
+      OTEL_RESOURCE_ATTRIBUTES: service.version=${IMAGE_TAG},deployment.environment=${SERVICE_ENV:-production}
+    expose:
+      - "{{ grpc_port }}"
+    healthcheck:
+      # Imagen distroless (sin shell ni curl): el binario trae su propio
+      # cliente de grpc.health.v1 (`healthcheck`, ver cli/healthcheck.go).
+      test: ["CMD", "/app/{{ repo_name }}", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-{{ db_schema }}_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      POSTGRES_DB: ${POSTGRES_DB:-{{ db_schema }}}
+    ports:
+      - "127.0.0.1:${PG_LOCAL_PORT:?}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:

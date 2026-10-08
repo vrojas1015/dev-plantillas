@@ -1,0 +1,74 @@
+# =============================================================================
+# Desarrollo local — {{ repo_name }} + Postgres 16
+# =============================================================================
+#
+#   make up      # go mod vendor + docker compose up -d --build --wait
+#   make down    # docker compose down (conserva los datos)
+#   docker compose down -v   # borra también el volumen (DB desde cero)
+#
+# El Dockerfile compila con -mod=vendor (offline): sin `go mod vendor` previo
+# el build falla. `make up` lo hace solo.
+#
+# Solo Postgres (para correr el servicio con `make run` contra .env.dev):
+#   docker compose up -d --wait postgres
+#   (DATABASE_URL de .env.example ya apunta a localhost:${PG_PORT:-5432})
+#
+# Migraciones: scripts/compose-initdb.sh aplica migrations/*.up.sql en orden,
+# SOLO la primera vez que se inicializa el volumen (así funciona
+# /docker-entrypoint-initdb.d de la imagen oficial). Con el volumen ya creado,
+# una migración nueva se aplica con scripts/apply_migration.sh o recreando el
+# volumen (`docker compose down -v && make up`).
+#
+# Mismas variables de entorno que en {% if is_cr %}Cloud Run{% elif is_cy %}Coolify{% else %}cualquier destino{% endif %}; solo cambian los valores.
+# =============================================================================
+
+name: {{ repo_name }}
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/migrations:ro
+      - ./scripts/compose-initdb.sh:/docker-entrypoint-initdb.d/10-migrations.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: {{ repo_name }}:local
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      SERVICE_ENV: dev
+      DEBUG: "true"
+      LOG_LEVEL: debug
+      GRPC_PORT: "{{ grpc_port }}"
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+      OTEL_SERVICE_NAME: {{ repo_name }}
+      OTEL_RESOURCE_ATTRIBUTES: service.version=local,deployment.environment=dev
+    ports:
+      - "${APP_PORT:-{{ grpc_port }}}:{{ grpc_port }}"
+    healthcheck:
+      # Imagen distroless: el binario trae su propio cliente de grpc.health.v1.
+      test: ["CMD", "/app/{{ repo_name }}", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pgdata:

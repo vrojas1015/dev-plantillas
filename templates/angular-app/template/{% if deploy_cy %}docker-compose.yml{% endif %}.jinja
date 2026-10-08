@@ -1,0 +1,17 @@
+# Probar la imagen en local:
+#   docker compose up --build                 → http://localhost:8080 (build de prod)
+#   APP_ENV=qa docker compose up --build      → build de QA
+#
+# En Coolify se recomienda el recurso "Docker Image" con la imagen que publica el
+# CI (ver docs/ci-cd-setup.md). Si usás el build pack "Docker Compose", sacá
+# `ports`: Coolify enruta el dominio al puerto 80 del contenedor por su proxy.
+services:
+  web:
+    build:
+      context: .
+      args:
+        APP_ENV: ${APP_ENV:-prod}
+    image: {{ app_name }}:${APP_ENV:-prod}
+    ports:
+      - '${HOST_PORT:-8080}:80'
+    restart: unless-stopped

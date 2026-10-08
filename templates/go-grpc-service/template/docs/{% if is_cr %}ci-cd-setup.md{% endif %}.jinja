@@ -63,10 +63,14 @@ y `run.invoker`, crea el repo `{{ artifact_repo }}` y los secretos
 CREATE USER {{ db_schema }}_user WITH LOGIN PASSWORD '<password>';
 ```
 
-Aplicar el schema (`scripts/apply_migration.sh`, psql en Docker):
+Aplicar el schema (`scripts/apply_migration.sh`: psql local o en Docker). La
+URL de Secret Manager usa el socket `/cloudsql/...`, que solo existe dentro de
+Cloud Run; desde tu máquina, por [Cloud SQL Auth Proxy](https://cloud.google.com/sql/docs/postgres/sql-proxy):
 
 ```bash
-QA_DB_NAME=<db_qa> ./scripts/apply_migration.sh qa 000001_create_{{ db_schema }}_schema
+cloud-sql-proxy <proyecto>:<región>:<instancia> --port 5432 &
+read -rs DATABASE_URL && export DATABASE_URL   # postgres://USER:PASS@localhost:5432/DB?sslmode=disable
+./scripts/apply_migration.sh qa 000001_create_{{ db_schema }}_schema
 ```
 
 Grants al usuario de runtime:
@@ -259,7 +263,7 @@ prod sin la guarda. Usalo solo después de aplicar el SQL.
 2. Release: auth WIF → Cloud Build construye y pushea → `gcloud run services replace`.
 3. Prod: `guard` compara contra el tag `prod-v*` anterior. Si el rango toca
    `migrations/`, el deploy no corre: aplicá el SQL
-   (`PROD_DB_NAME=... ./scripts/apply_migration.sh prod <migración> --apply`) y
+   (`DATABASE_URL=... ./scripts/apply_migration.sh prod <migración> --apply`) y
    lanzá el override. El **primer** release a prod siempre va por override (no
    hay tag anterior contra el que comparar).
 

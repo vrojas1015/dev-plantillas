@@ -1,0 +1,169 @@
+{%- set ci_name = 'GitLab CI' if ci_provider == 'gitlab' else 'GitHub Actions' -%}
+{%- set mr = 'MR' if ci_provider == 'gitlab' else 'PR' -%}
+# Migrar de Coolify a Firebase Hosting
+
+Esta app se generó con `deploy_target = coolify`. Esta guía la pasa a Firebase
+Hosting (CDN global, SSL y escalado gestionados, deploy keyless desde CI) **sin
+reescribir código**: sólo cambian los archivos de deploy y el CI, y lo hace
+`copier update`. Coolify queda andando unos días como rollback.
+
+Tiempo estimado: 1–2 horas de trabajo + la propagación de DNS.
+
+## Qué cambia
+
+| | Coolify (hoy) | Firebase Hosting (después) |
+|---|---|---|
+| Archivos de deploy | `Dockerfile`, `Caddyfile`, `.dockerignore`, `docker-compose.yml` | `firebase.json`, `.firebaserc` |
+| CI | imagen → registry → webhook de Coolify | `build:<ambiente>` → `firebase deploy` (WIF, sin claves) |
+| QA | tag `qa-vX.Y.Z` | tag `qa-vX.Y.Z` (igual) |
+| Producción | tag `prod-vX.Y.Z` | **merge/push a `main`** (los tags `prod-v*` dejan de desplegar) |
+| Cache / fallback SPA | `Caddyfile` | `firebase.json` (`rewrites` y `headers`) |
+| Variables del CI | `COOLIFY_URL`, `COOLIFY_RESOURCE_UUID`, `COOLIFY_TOKEN` | `GCP_WIF_PROVIDER`, `GCP_SA_EMAIL` |
+
+El código de la app (`src/`), los environments y los tests no cambian.
+
+## 0. Antes de empezar
+
+- Proyectos Firebase/GCP de QA y producción creados, con Hosting habilitado.
+{%- if use_firebase_auth %}
+  La app ya usa Firebase Auth con `{{ firebase_project_qa }}` / `{{ firebase_project_prod }}`:
+  lo natural es usar esos mismos proyectos.
+{%- else %}
+  Anotar sus IDs (no el número): van en el comando del paso 2.
+{%- endif %}
+- Permisos de IAM en esos proyectos para crear el pool WIF y el service account.
+- El repo limpio (`git status` sin cambios) y `python -m copier --version` ≥ 9.
+- Si se tocaron a mano `Caddyfile` o `Dockerfile` (headers, redirects, CSP…),
+  anotarlo: hay que llevar esas reglas a `firebase.json` en el paso 3.
+- **Bajar el TTL** del registro DNS del dominio de producción a 300 s al menos
+  un día antes del corte (paso 6).
+
+## 1. Rama nueva
+
+```bash
+git switch main && git pull
+git switch -c chore/migrar-a-firebase-hosting
+```
+
+## 2. `copier update` cambiando la respuesta
+
+```bash
+{%- if use_firebase_auth %}
+python -m copier update --defaults --data deploy_target=firebase-hosting
+{%- else %}
+python -m copier update --defaults --data deploy_target=firebase-hosting \
+  --data firebase_project_qa=<id-proyecto-qa> \
+  --data firebase_project_prod=<id-proyecto-prod>
+{%- endif %}
+```
+
+- `--defaults` reutiliza todas las demás respuestas de `.copier-answers.yml`; sólo
+  cambia `deploy_target`{% if not use_firebase_auth %} y se cargan los proyectos Firebase (que hasta ahora no se preguntaban){% endif %}.
+- Sin `--vcs-ref`, Copier además trae la **última versión** de la plantilla. Para
+  cambiar sólo el destino y quedarse en la versión actual, agregar
+  `--vcs-ref=:current:`. Otra opción: primero `python -m copier update --defaults`
+  (sólo versión, commit) y después el comando de arriba.
+- En PowerShell, cambiar `\` por `` ` `` al final de cada línea (o escribirlo en una línea).
+
+## 3. Revisar el diff
+
+```bash
+git status
+git diff
+```
+
+Lo esperable en un proyecto sin modificaciones a mano:
+
+- **Aparecen**: `firebase.json`, `.firebaserc`.
+- **Desaparecen**: `Dockerfile`, `Caddyfile`, `.dockerignore`, `docker-compose.yml`
+  y esta guía (`docs/migrar-a-firebase-hosting.md`).
+- **Cambian**: {% if ci_provider == 'gitlab' %}`.gitlab-ci.yml`{% else %}`.github/workflows/deploy.yml`{% endif %}, `package.json` (scripts `deploy:qa` / `deploy:prod` de emergencia),
+  `docs/ci-cd-setup.md` (ahora con el setup de WIF), `README.md`, `CLAUDE.md`
+  y `.copier-answers.yml`.
+
+Si un archivo que **sigue existiendo** se había tocado a mano, Copier conserva el
+cambio o deja marcadores de conflicto (`<<<<<<<`) / archivos `*.rej`: resolverlos y
+borrar los `.rej`. Buscar con:
+
+```bash
+git grep -n '<<<<<<<' ; git status --short | grep '\.rej'
+```
+
+**Ojo**: los archivos de Coolify se borran **aunque se hayan modificado** (Copier no
+avisa). Si el `Caddyfile` tenía reglas propias (headers, redirects, CSP), verlas con
+`git show HEAD:Caddyfile` y pasarlas a `headers` / `redirects` / `rewrites` de
+`firebase.json`.
+
+Verificar que sigue compilando:
+
+```bash
+npm ci && npm run lint && npm run test:unit && npm run build:qa && npm run build:prod
+```
+
+Commit (todavía **sin mergear**):
+
+```bash
+git add -A && git commit -m "chore: migrar deploy de Coolify a Firebase Hosting"
+```
+
+## 4. Setup de una vez de Firebase y WIF
+
+Seguir el `docs/ci-cd-setup.md` que dejó el update (ya es la versión de Firebase):
+pool de Workload Identity Federation + service account por ambiente, y las
+variables `GCP_WIF_PROVIDER` / `GCP_SA_EMAIL` en {{ ci_name }} con scope `qa` y
+`production`. Hacerlo **antes del paso 5**: con Firebase, el merge a `main`
+despliega producción (al sitio `<proyecto>.web.app`, el dominio todavía apunta a
+Coolify, así que no afecta a los usuarios).
+
+## 5. Deploy a QA y a producción (en `*.web.app`)
+
+1. Push de la rama y abrir el {{ mr }}; esperar el CI en verde.
+2. **QA antes de mergear**: el pipeline de un tag usa el CI del commit taggeado, así
+   que un tag `qa-v*` sobre la rama ya despliega QA con Firebase:
+
+   ```bash
+   git tag qa-v<X.Y.Z> && git push origin qa-v<X.Y.Z>
+   ```
+
+3. Probar `https://<proyecto-qa>.web.app`: carga, navegación, una ruta profunda con
+   F5 (fallback SPA), llamadas al API{% if use_firebase_auth %}, login{% endif %}. `index.html` tiene que responder
+   con `Cache-Control: no-cache`.
+4. Mergear el {{ mr }}. El pipeline de `main` despliega a `https://<proyecto-prod>.web.app`;
+   repetir la prueba ahí.
+{%- if use_firebase_auth %}
+5. Auth: `*.web.app` / `*.firebaseapp.com` ya están autorizados por defecto; los
+   dominios propios ya estaban autorizados para Coolify.
+{%- endif %}
+
+Si el backend restringe CORS por origen, agregar los `*.web.app` (y más tarde los
+dominios propios ya servidos por Firebase) antes de probar.
+
+## 6. Corte de DNS (dominio propio)
+
+Primero QA, después producción:
+
+1. *Firebase Console › Hosting › Agregar dominio personalizado* con el dominio del
+   ambiente (p. ej. `{{ app_name }}-qa.example.com`).
+2. Agregar el registro `TXT` de verificación que pide Firebase y esperar que valide.
+3. Reemplazar el `A`/`AAAA` (o `CNAME`) que apuntaba al VPS por los que indica
+   Firebase. Desde acá el tráfico nuevo va a Firebase.
+4. Firebase emite el certificado SSL (de minutos a unas horas). Mientras tanto
+   algunos usuarios todavía resuelven al VPS: por eso Coolify sigue arriba.
+5. Verificar: `curl -I https://<dominio>/` → `200`, header `x-served-by`/`server`
+   de Firebase, `cache-control: no-cache`.
+
+## 7. Coolify como rollback (N días)
+
+Dejar los recursos de Coolify **andando y sin tocar** al menos **14 días** (o lo que
+se acuerde). Rollback = volver el registro DNS a la IP del VPS (con TTL bajo, es
+inmediato) y, si hace falta, `git revert` del commit de migración.
+
+Pasado ese plazo, limpiar:
+
+- En Coolify: borrar los recursos de QA y producción de esta app.
+- En {{ ci_name }}: borrar `COOLIFY_URL`, `COOLIFY_RESOURCE_UUID` y `COOLIFY_TOKEN`;
+  revocar el token en Coolify.
+- Borrar las imágenes del registry (`:qa`, `:prod`, `:qa-v*`, `:prod-v*`) y el
+  token de lectura del registry del VPS{% if ci_provider == 'gitlab' %} (deploy token){% endif %}.
+- Volver a subir el TTL del DNS.
+- Avisar al equipo: producción ahora sale con merge a `main`, no con tag `prod-v*`.
