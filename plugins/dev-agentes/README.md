@@ -17,9 +17,17 @@ Para probar cambios locales sin instalar: `claude --plugin-dir ./plugins/dev-age
 | Tipo | Nombre | Qué hace |
 |---|---|---|
 | Skill | `/verificar` | Build, tests, lint y formato de cada proyecto tocado (Go, Node/Angular, Python); deja la evidencia en el issue |
+| Hook | `guard-worktree` | Si la sesión trabaja en `worktrees/issue-<n>/`, bloquea ediciones a otros archivos del workspace (copias principales, otros issues). Permite su archivo en `docs/issues/` y todo lo que esté fuera del workspace |
+| Hook | `format` | Después de cada edición: `gofmt`, `prettier` del proyecto o `ruff format`. Nunca bloquea |
 
-Próximas piezas (ver `docs/03-flujo-de-trabajo.md`): hooks de formato y de
-worktree, revisores por stack (`go-reviewer`, `angular-reviewer`,
+### Variables para desactivar
+
+| Variable | Efecto |
+|---|---|
+| `DEV_AGENTES_ALLOW_OUTSIDE=1` | Desactiva `guard-worktree` (editar fuera del issue a conciencia) |
+| `DEV_AGENTES_NO_FORMAT=1` | Desactiva `format` |
+
+Próximas piezas (ver `docs/03-flujo-de-trabajo.md`): revisores por stack (`go-reviewer`, `angular-reviewer`,
 `migration-reviewer`), `/issue-start`, `/cerrar-issue`, `/nuevo-proyecto`.
 
 ## Diseño
@@ -32,4 +40,8 @@ worktree, revisores por stack (`go-reviewer`, `angular-reviewer`,
 - **Costo de contexto bajo**: cada skill paga sólo su descripción (~150 tokens)
   en cada sesión; el cuerpo se carga al invocarla. Revisar con
   `claude --plugin-dir ./plugins/dev-agentes plugin details dev-agentes`.
-- **Validación** en CI: `claude plugin validate --strict`.
+- **Validación** en CI: `claude plugin validate --strict` y los tests de hooks
+  (`bash plugins/dev-agentes/tests/hooks.test.sh`), que simulan el JSON que
+  manda Claude Code, incluidas rutas de Windows.
+- Los hooks son `bash` (en Windows, Claude Code los corre con Git Bash) y leen
+  JSON con `jq`, `node` o `python`, lo que haya.
