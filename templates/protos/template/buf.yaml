@@ -1,0 +1,18 @@
+# Módulo buf de los contratos. Todos los .proto viven en proto/<paquete>/vN/.
+# `make lint` y `make breaking` usan las reglas de acá.
+version: v2
+modules:
+  - path: proto
+# Dependencias de la BSR (ej. googleapis para google/api/annotations.proto).
+# Al agregar una: `buf dep update` (genera buf.lock, commitealo) y ver el
+# comentario de `disable` en buf.gen.yaml.
+# deps:
+#   - buf.build/googleapis/googleapis
+lint:
+  use:
+    - STANDARD
+breaking:
+  # FILE: lo más estricto (detecta también mover tipos entre archivos, que
+  # rompe el código generado de Go/Python/TS aunque el wire sea compatible).
+  use:
+    - FILE

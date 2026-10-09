@@ -1,0 +1,90 @@
+# Co-desarrollar un contrato (sin publicar)
+
+Para probar un cambio de `.proto` en un consumidor antes de sacar una versión:
+
+1. En este repo, rama con el cambio: `make lint generate` (el código nuevo
+   queda en `gen/`).
+2. Apuntar el consumidor al checkout local con el mecanismo de su lenguaje
+   (abajo). Se asume este repo clonado al lado: `../{{ repo_name }}`.
+3. Cuando funciona: MR/PR acá → merge → `make release` → el consumidor vuelve
+   a la dependencia publicada con la versión nueva. **Nunca** mergear un
+   consumidor apuntando a un checkout local.
+{%- if l_go %}
+
+## Go: `go work`
+
+```bash
+cd ../mi-servicio
+go work init . ../{{ repo_name }}     # go.work: no se commitea (.gitignore)
+go build ./... && go test ./...
+rm go.work go.work.sum               # volver al módulo publicado
+```
+
+Los servicios de la plantilla `go-grpc-service` con `protos_module` tienen
+`make workspace` / `make workspace-off` (usan `PROTOS_DIR`, default `../{{ module_path.split('/')[-1] }}`).
+Con `go.work` activo el import resuelve aunque `go.mod` no tenga el `require`
+(sí lo necesita para compilar sin workspace, p. ej. en CI). Alternativa sin
+workspace, útil antes del primer tag (no mergear así):
+
+```bash
+go mod edit -require={{ module_path }}@v0.0.0 -replace={{ module_path }}=../{{ repo_name }}
+go mod tidy
+# al publicar: go mod edit -dropreplace={{ module_path }} && go get {{ module_path }}@vX.Y.Z
+```
+{%- endif %}
+{%- if l_py %}
+
+## Python: `pip install -e`
+
+```bash
+cd ../mi-servicio-python
+pip install -e ../{{ repo_name }}/gen/python    # editable: ve cada `make generate`
+# volver: pip install "{{ python_package }} @ git+...@vX.Y.Z#subdirectory=gen/python"
+```
+{%- endif %}
+{%- if l_ts %}
+
+## TypeScript / JavaScript: `npm link` o `file:`
+
+```bash
+cd ../{{ repo_name }}/gen/ts && npm install && npm link
+cd ../../../mi-app && npm link {{ npm_package }}
+# volver: npm unlink {{ npm_package }} && npm install
+```
+
+Alternativa sin symlinks globales: `npm install ../{{ repo_name }}/gen/ts` (queda
+`"file:../{{ repo_name }}/gen/ts"` en `package.json`: no commitearlo). No hay
+paso de build: `lib/` ya es JS + `.d.ts`. Con link/`file:` las dependencias del
+paquete no se instalan en el consumidor: si el consumidor importa
+`@bufbuild/protobuf` (para `create`, `toBinary`...), agregalo como dependencia
+propia (`npm install @bufbuild/protobuf@^2.16.0`). Para probar exactamente lo
+que se publicaría: `cd gen/ts && npm pack` e instalar el `.tgz`. Angular/Vite: si no ve el paquete
+linkeado, `preserveSymlinks: true` en la config de build.
+{%- endif %}
+{%- if l_jvm %}
+
+## Java / Kotlin: `includeBuild` o `publishToMavenLocal`
+
+Composite build (Gradle sustituye `{{ maven_group }}:{{ repo_name }}` por el proyecto local):
+
+```kotlin
+// settings.gradle.kts del consumidor (no commitear)
+includeBuild("../{{ repo_name }}/gen/jvm")
+```
+
+O publicar en el repo Maven local:
+
+```bash
+cd ../{{ repo_name }}/gen/jvm && ./gradlew publishToMavenLocal   # versión de gradle.properties
+# en el consumidor: repositories { mavenLocal() } y esa versión
+```
+{%- endif %}
+{%- if l_sw %}
+
+## Swift: paquete local
+
+- Xcode: arrastrar la carpeta `../{{ repo_name }}` al proyecto (o File › Add
+  Package Dependencies › Add Local…): un paquete local con el mismo nombre
+  reemplaza al remoto mientras esté agregado.
+- Otro Package.swift: `.package(path: "../{{ repo_name }}")` en lugar de la URL.
+{%- endif %}

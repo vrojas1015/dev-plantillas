@@ -1,0 +1,40 @@
+{#- Se llama .gitignore.jinja para que git no lo aplique dentro del repo de la plantilla. -#}
+# Temporal de scripts/generate.sh
+.gen-tmp/
+
+# Entornos y dependencias locales
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+{%- if l_jvm %}
+.gradle/
+build/
+.kotlin/
+{%- endif %}
+{%- if l_sw %}
+# Swift: librería, los consumidores resuelven sus versiones.
+.build/
+.swiftpm/
+Package.resolved
+{%- endif %}
+{%- if l_go %}
+
+# Workspace local de Go (co-desarrollo, ver docs/co-desarrollo.md)
+go.work
+go.work.sum
+{%- endif %}
+
+# Archivos de entorno (nunca commitear secretos)
+.env
+.env.*
+
+# Claude Code: settings personales (los compartidos van en .claude/settings.json)
+.claude/settings.local.json
+
+# IDEs / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db

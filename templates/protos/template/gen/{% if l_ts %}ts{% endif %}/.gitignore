@@ -1,0 +1,3 @@
+node_modules/
+# Librería: los consumidores resuelven sus propias versiones; CI usa npm install.
+package-lock.json

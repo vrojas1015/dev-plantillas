@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Compila SOLO los mensajes Swift (gen/swift/*.pb.swift + SwiftProtobuf) en un
+# paquete temporal. Sirve en Linux (imagen swift:6.x), donde el paquete completo
+# no compila: Connect-Swift usa os.log/URLSession de Apple. El paquete completo
+# (`swift build` en la raíz) se compila en macOS (Xcode o runner macOS).
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+mkdir -p "$TMP/Sources/{{ swift_module }}"
+cp gen/swift/*.pb.swift "$TMP/Sources/{{ swift_module }}/"
+cat > "$TMP/Package.swift" <<'SWIFT'
+// swift-tools-version:5.9
+import PackageDescription
+let package = Package(
+    name: "{{ swift_module }}",
+    dependencies: [.package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.1")],
+    targets: [.target(name: "{{ swift_module }}", dependencies: [.product(name: "SwiftProtobuf", package: "swift-protobuf")])]
+)
+SWIFT
+swift build --package-path "$TMP"
+echo "OK: mensajes Swift compilados ($(find gen/swift -name '*.pb.swift' | wc -l) archivos .pb.swift)"

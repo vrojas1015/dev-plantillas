@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Regenera TODO el código de gen/ desde proto/ (lo llama `make generate`).
+#
+# buf escribe primero en un directorio temporal (.gen-tmp/) y recién si todo
+# salió bien reemplaza el código generado de gen/ (no los archivos de
+# empaquetado: pyproject.toml, package.json, build.gradle.kts...). Así un .proto
+# borrado no deja archivos huérfanos y un error de red no deja gen/ a medias.
+# El resultado es determinístico: CI corre esto y exige `git diff` limpio en gen/.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+command -v buf >/dev/null 2>&1 || { echo "buf no está instalado (https://buf.build/docs/installation)"; exit 1; }
+
+# Aviso (no bloquea) si el buf local no coincide con el de CI.
+EXPECTED_BUF="$(sed -n -E 's/^[[:space:]]*BUF_VERSION:[[:space:]]*"?([0-9.]+)"?.*/\1/p' {% if ci_gl %}.gitlab-ci.yml{% else %}.github/workflows/ci.yml{% endif %} 2>/dev/null | head -1 || true)"
+LOCAL_BUF="$(buf --version 2>/dev/null | tr -d '[:space:]')"
+if [[ -n "$EXPECTED_BUF" && "$EXPECTED_BUF" != "$LOCAL_BUF" ]]; then
+  echo "Aviso: buf local $LOCAL_BUF, CI usa $EXPECTED_BUF. Si el diff de gen/ sale raro, alineá la versión."
+fi
+
+TMP=.gen-tmp
+rm -rf "$TMP"
+trap 'rm -rf "$TMP"' EXIT
+
+# Los plugins remotos tienen rate limit sin autenticar (BUF_TOKEN lo evita):
+# reintenta con espera si la BSR responde "too many requests".
+for attempt in 1 2 3 4 5; do
+  if out="$(buf generate -o "$TMP" 2>&1)"; then
+    if [[ -n "$out" ]]; then echo "$out"; fi
+    break
+  fi
+  echo "$out" >&2
+  if [[ "$out" != *resource_exhausted* || $attempt -eq 5 ]]; then exit 1; fi
+  wait_s=$((attempt * 30))
+  echo "Rate limit de la BSR: reintento $((attempt + 1))/5 en ${wait_s}s (BUF_TOKEN lo evita)." >&2
+  sleep "$wait_s"
+  rm -rf "$TMP"
+done
+
+# replace <dir>: cambia gen/<dir> por la versión recién generada.
+replace() {
+  rm -rf "$1"
+  if [[ -d "$TMP/$1" ]]; then
+    mkdir -p "$(dirname "$1")"
+    mv "$TMP/$1" "$1"
+  fi
+}
+{%- if l_go %}
+replace gen/go
+{%- endif %}
+{%- if l_py %}
+replace "gen/python/{{ python_package }}"
+{%- endif %}
+{%- if l_ts %}
+replace gen/ts/lib
+{%- endif %}
+{%- if l_jvm %}
+replace gen/jvm/src/main
+{%- endif %}
+{%- if l_sw %}
+replace gen/swift
+{%- endif %}
+{%- if l_py %}
+
+# Python: imports absolutos dentro del paquete + __init__.py + py.typed.
+PY="${PYTHON:-}"
+if [[ -z "$PY" ]]; then
+  for c in python3 python; do
+    if "$c" -c "import sys" >/dev/null 2>&1; then PY="$c"; break; fi
+  done
+fi
+[[ -n "$PY" ]] || { echo "Falta Python 3 (o PYTHON=/ruta/python)"; exit 1; }
+"$PY" scripts/fix_py_imports.py "gen/python/{{ python_package }}"
+{%- endif %}
+
+echo "Código generado en gen/. Revisá 'git status gen/' y commitealo junto al .proto."

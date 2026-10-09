@@ -1,0 +1,17 @@
+"""Importa todos los módulos del paquete Python generado (lo usan `make check-py` y CI).
+
+Detecta imports rotos, código generado para un runtime de protobuf más nuevo
+que el instalado y stubs grpc que no cargan. Uso: python scripts/check_py.py <paquete>
+"""
+
+import importlib
+import pkgutil
+import sys
+
+name = sys.argv[1]
+pkg = importlib.import_module(name)
+mods = [m.name for m in pkgutil.walk_packages(pkg.__path__, name + ".")]
+for mod in mods:
+    importlib.import_module(mod)
+grpc_mods = [m for m in mods if m.endswith("_pb2_grpc")]
+print(f"OK: {len(mods)} modulos importados ({len(grpc_mods)} stubs grpc) desde {pkg.__path__[0]}")

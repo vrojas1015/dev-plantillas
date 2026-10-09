@@ -1,0 +1,13 @@
+{
+  // Solo para `tsc --noEmit`: valida los .d.ts generados (lib/ ya es JS + .d.ts,
+  // no hay build). skipLibCheck queda en false a propósito.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false
+  },
+  "include": ["lib/**/*.d.ts"]
+}

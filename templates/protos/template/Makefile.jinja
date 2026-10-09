@@ -1,0 +1,92 @@
+# Makefile de {{ repo_name }} (necesita bash: en Windows, Git Bash)
+.DEFAULT_GOAL := help
+SHELL := bash
+
+# Contra qué se compara `make breaking` (cualquier input de buf: rama, tag...).
+# Ojo: en un Makefile `#` abre un comentario, por eso va escapado.
+AGAINST ?= .git\#branch=main
+{%- if l_py %}
+
+# Python para el chequeo del paquete (venv propio en .venv).
+ifeq ($(OS),Windows_NT)
+  PY_BOOT ?= python
+  VENV_PY := .venv/Scripts/python
+else
+  PY_BOOT ?= python3
+  VENV_PY := .venv/bin/python
+endif
+{%- endif %}
+
+.PHONY: help lint breaking generate check check-gen{% if l_go %} check-go{% endif %}{% if l_py %} check-py{% endif %}{% if l_ts %} check-ts{% endif %}{% if l_jvm %} check-jvm{% endif %}{% if l_sw %} check-swift{% endif %} release version
+
+## help: lista los targets
+help:
+	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/^## /  /'
+
+## lint: buf lint (reglas STANDARD) + formato de los .proto
+lint:
+	buf lint
+	buf format --diff --exit-code
+
+## breaking: cambios incompatibles contra main (AGAINST='.git#tag=v1.2.0' para otro punto)
+breaking:
+	buf breaking --against '$(AGAINST)'
+
+## generate: regenera gen/ desde proto/ (plugins remotos: necesita internet)
+generate:
+	bash scripts/generate.sh
+
+## check-gen: falla si gen/ no corresponde a proto/ (regenera y compara con git)
+check-gen: generate
+	@if [ -n "$$(git status --porcelain -- gen)" ]; then \
+	  git status --short -- gen; \
+	  echo "gen/ desactualizado: corré 'make generate' y commiteá el resultado."; exit 1; \
+	fi
+{%- if l_go %}
+
+## check-go: compila el código Go generado
+check-go:
+	go build ./...
+	go vet ./...
+{%- endif %}
+{%- if l_py %}
+
+## check-py: instala gen/python en .venv e importa todos los módulos
+check-py:
+	@test -x $(VENV_PY) || $(PY_BOOT) -m venv .venv
+	$(VENV_PY) -m pip install --quiet --upgrade pip
+	$(VENV_PY) -m pip install --quiet --force-reinstall ./gen/python
+	$(VENV_PY) scripts/check_py.py {{ python_package }}
+{%- endif %}
+{%- if l_ts %}
+
+## check-ts: tipos (.d.ts) con tsc --noEmit + importa todos los .js con Node
+check-ts:
+	cd gen/ts && npm install --no-audit --no-fund && npx tsc --noEmit && node ../../scripts/check_ts.mjs
+{%- endif %}
+{%- if l_jvm %}
+
+## check-jvm: compila gen/jvm con Gradle (wrapper; necesita JDK 17+)
+check-jvm:
+	cd gen/jvm && sh ./gradlew --no-daemon build
+{%- endif %}
+
+{%- if l_sw %}
+
+## check-swift: macOS -> swift build del paquete; Linux -> solo mensajes; sin swift -> se saltea
+check-swift:
+	@if [ "$$(uname -s)" = Darwin ]; then swift build; \
+	elif command -v swift >/dev/null 2>&1; then bash scripts/check_swift_msgs.sh; \
+	else echo "swift no instalado: check-swift salteado (CI lo compila)"; fi
+{%- endif %}
+
+## check: todo lo que corre CI en un MR/PR (salvo breaking)
+check: lint check-gen{% if l_go %} check-go{% endif %}{% if l_py %} check-py{% endif %}{% if l_ts %} check-ts{% endif %}{% if l_jvm %} check-jvm{% endif %}{% if l_sw %} check-swift{% endif %}
+
+## version: muestra la versión de cada paquete
+version:
+	bash scripts/version.sh show
+
+## release: VERSION=X.Y.Z -> regenera, bump de versiones, commit y tag vX.Y.Z (sin push)
+release:
+	bash scripts/release.sh "$(VERSION)"

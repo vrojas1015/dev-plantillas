@@ -212,6 +212,14 @@ Para enchufar el repo de protos (ver también `CLAUDE.md` → "Protos"):
 4. Si no se había respondido `protos_module`: `copier update --data protos_module=…`
    para que aparezca el cableado de CI/Makefile.
 
+Con un repo de protos generado por la plantilla `templates/protos` (mismo
+`ItemService` de ejemplo, código en `<protos_module>/gen/go/<paquete>/v1`), el
+paso 2 se reduce a cambiar el import `<module_path>/gen/go/example/v1` en
+handler, test, mapper y `cli/main.go`. Probado: `go build`/`go test` en verde con
+`go work` y con `replace`. El ejemplo local y el del repo de protos no pueden
+convivir en el binario (pánico de registro de protobuf-go por
+`example/v1/item.proto` duplicado): el paso 3 es obligatorio.
+
 ## Actualizar un proyecto existente (`copier update`)
 
 `copier update` aplica al proyecto los cambios de la plantilla entre la versión

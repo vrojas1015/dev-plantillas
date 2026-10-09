@@ -1,0 +1,112 @@
+# {{ repo_name }} — contexto para Claude
+
+## Qué es este repo
+
+Contratos gRPC (Protobuf) de {{ org_name }} y su código generado para
+{{ languages | join(', ') }}. Es la fuente de verdad de las APIs entre
+servicios, gateway y apps. Generado desde la plantilla Copier `protos`
+(`.copier-answers.yml`; actualizar con `copier update`).
+
+Acá **solo** se editan `.proto`, la configuración de buf y el empaquetado.
+Nada de lógica de negocio.
+
+## Layout
+
+| Path | Qué es |
+|---|---|
+| `proto/<paquete>/vN/*.proto` | Contratos (package `<paquete>.vN`) |
+| `buf.yaml` / `buf.gen.yaml` | Lint STANDARD, breaking FILE / plugins remotos con versión fija |
+{%- if l_go %}
+| `go.mod` + `gen/go/` | Módulo Go `{{ module_path }}` (import `{{ module_path }}/gen/go/<paquete>/vN`) |
+{%- endif %}
+{%- if l_py %}
+| `gen/python/` | Paquete `{{ python_package }}` (`pyproject.toml` a mano, el resto generado) |
+{%- endif %}
+{%- if l_ts %}
+| `gen/ts/` | Paquete npm `{{ npm_package }}` (JS ESM + `.d.ts` en `lib/`) |
+{%- endif %}
+{%- if l_jvm %}
+| `gen/jvm/` | Gradle: `{{ maven_group }}:{{ repo_name }}` (Java{% if l_kt %} + Kotlin{% endif %}, paquete `{{ maven_group }}.<paquete>.vN`) |
+{%- endif %}
+{%- if l_sw %}
+| `Package.swift` + `gen/swift/` | Paquete SPM, producto `{{ swift_module }}` (SwiftProtobuf + Connect-Swift) |
+{%- endif %}
+| `scripts/` | `generate.sh`, `version.sh`, `release.sh`{% if l_py %}, ajuste de imports Python{% endif %} |
+| `docs/` | `consumir.md`, `publicar.md`, `co-desarrollo.md` |
+
+**Nunca editar a mano** lo generado en `gen/`: se regenera y CI exige que
+coincida con `proto/` (`git diff --exit-code gen/`).
+
+## Reglas de contratos (duras)
+
+1. **Nunca reusar ni renumerar** un número de campo. En un vN publicado no se
+   borran campos: se marcan `[deprecated = true]` (`buf breaking` FILE rechaza
+   el borrado aunque haya `reserved`). Si se borra (paquete aún no publicado o
+   excepción acordada en el MR): `reserved 4; reserved "old_name";`.
+2. En un paquete `vN` publicado, **solo cambios aditivos**: campos, mensajes,
+   RPCs o valores de enum nuevos. Renombrar campos/mensajes, cambiar tipos,
+   mover tipos entre archivos o borrar RPCs rompe a alguien.
+3. Cambio incompatible → paquete nuevo `<paquete>.v(N+1)` en
+   `proto/<paquete>/v(N+1)/`, conviviendo con vN hasta que nadie use vN.
+4. Presencia: `optional` cuando hay que distinguir "no vino" de "vino vacío/0"
+   (updates parciales, filtros). Si no, escalar sin `optional`.
+5. Enums: primer valor `<ENUM>_UNSPECIFIED = 0` (prefijo del enum en todos los
+   valores, lo exige el lint). El servidor trata `UNSPECIFIED` como "no vino".
+6. Paginación estándar: `PageRequest { cursor, limit }` en el request y
+   `PageResponse { next_cursor, has_next }` en la respuesta (cursor opaco).
+7. Un RPC = `XxxRequest`/`XxxResponse` propios (aunque hoy estén vacíos): así
+   se pueden agregar campos sin romper.
+8. IDs como `string`; fechas `google.protobuf.Timestamp`; dinero/decimales
+   nunca `float`/`double`.
+9. Comentá cada servicio, RPC y campo no obvio: el comentario viaja al código
+   generado de todos los lenguajes.
+
+## Versionado (semver del repo)
+
+- Tag `vX.Y.Z` = versión de **todos** los paquetes (Go, Python, npm, Maven, SPM).
+- MINOR: cambio aditivo. PATCH: comentarios/empaquetado. MAJOR: solo si se
+  borra un paquete vN viejo (los incompatibles van a v(N+1), no a MAJOR).
+- `make release VERSION=X.Y.Z` regenera, actualiza versiones, commitea y
+  crea el tag; **el push lo hace una persona**. CI publica al recibir el tag.
+
+## Orden de trabajo para un cambio de contrato
+
+```
+1. protos (este repo): .proto + make generate + MR → merge → release vX.Y.Z
+2. servicio que implementa el RPC: sube la dependencia y lo implementa
+3. gateway / clientes server-side: exponen o consumen el RPC
+4. front / apps: consumen el endpoint
+```
+
+Durante el desarrollo se puede co-desarrollar sin publicar (Go `go work`,
+Python `pip install -e`, TS `npm link`, Gradle `includeBuild`): ver
+`docs/co-desarrollo.md`. Nunca mergear un consumidor apuntando a un checkout local.
+
+## Comandos
+
+```bash
+make lint                      # buf lint + buf format
+make breaking                  # vs main (AGAINST='.git#tag=v1.2.0' para otro punto)
+make generate                  # regenera gen/ (plugins remotos: internet)
+make check                     # lo mismo que CI en un MR (salvo breaking)
+make release VERSION=X.Y.Z     # bump + commit + tag (sin push)
+buf format -w                  # formatea los .proto
+```
+
+Antes de commitear un cambio de `.proto`: `make lint breaking generate` y
+commitear `proto/` y `gen/` juntos.
+
+## Agregar un contrato
+
+1. `proto/<paquete>/v1/<archivo>.proto` con `package <paquete>.v1;` (sin
+   opciones de lenguaje: el managed mode de `buf.gen.yaml` las pone).
+2. `make lint generate check`. Ningún cambio en el empaquetado: todo lo que hay
+   en `proto/` se publica.
+3. Nuevo dep de la BSR (ej. googleapis): `deps` en `buf.yaml`, `buf dep update`
+   y `disable` del managed mode para ese módulo (ver `buf.gen.yaml`).
+
+## Ejemplo
+
+`proto/{{ first_package }}/v1/item.proto` (`{{ first_package }}.v1.ItemService`:
+Create/Get/List paginado) es el mismo contrato que trae la plantilla
+`go-grpc-service`. Reemplazarlo por el primer contrato real.
