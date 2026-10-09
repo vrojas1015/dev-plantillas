@@ -21,6 +21,7 @@ guías de cómo se organizan carpetas, repos y trabajo con agentes.
 | `docs/03-flujo-de-trabajo.md` | Issue → worktree → sesión → MR, con varios agentes en paralelo |
 | `docs/04-stack-y-despliegue.md` | Stack Google primero, destinos de deploy (Google o Coolify) y cómo migrar entre ellos |
 | `docs/05-api-gateway.md` | Diseño y seguridad del API gateway (OWASP API Top 10): especificación de la plantilla |
+| `docs/06-documentacion.md` | Diseño del repo de documentación (issues, ADRs, runbooks, MkDocs): especificación de la plantilla |
 
 ## Requisitos
 
