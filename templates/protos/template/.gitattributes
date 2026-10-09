@@ -1,0 +1,12 @@
+# LF siempre: scripts bash, Makefile y código generado (el diff de CI compara bytes).
+* text=auto eol=lf
+*.bat text eol=crlf
+*.jar binary
+# Código generado: colapsado en los diffs de MR/PR (GitLab y GitHub).
+gen/** linguist-generated=true gitlab-generated=true
+# ...salvo los archivos de empaquetado, que se editan a mano.
+gen/python/pyproject.toml -linguist-generated -gitlab-generated
+gen/ts/package.json -linguist-generated -gitlab-generated
+gen/ts/tsconfig.json -linguist-generated -gitlab-generated
+gen/jvm/*.kts -linguist-generated -gitlab-generated
+gen/jvm/gradle.properties -linguist-generated -gitlab-generated

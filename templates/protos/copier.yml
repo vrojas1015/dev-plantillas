@@ -1,0 +1,188 @@
+# =============================================================================
+# Plantilla Copier: repo de contratos gRPC multi-lenguaje (buf v2)
+# =============================================================================
+# Ver README.md (al lado de este archivo). Todo lo que vive en template/ es el
+# contenido del repo generado; lo que está acá afuera no se copia.
+# =============================================================================
+
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_answers_file: .copier-answers.yml
+_templates_suffix: .jinja
+
+_message_after_copy: |
+  Repo {{ repo_name }} generado ({{ languages | join(', ') }}).
+
+  Siguientes pasos:
+    1. cd {{ _copier_conf.dst_path }}
+    2. git init -b main
+    3. make generate     (buf generate con plugins remotos de BSR: necesita internet)
+    4. make check        (lint + código generado al día + compilar cada lenguaje)
+    5. git add . && git commit -m "Scaffold inicial desde la plantilla protos"
+    6. Primera versión: make release VERSION=0.1.0 y después
+       git push origin main && git push origin v0.1.0
+  Consumo y publicación: docs/consumir.md y docs/publicar.md.
+
+# -----------------------------------------------------------------------------
+# Preguntas
+# -----------------------------------------------------------------------------
+
+repo_name:
+  type: str
+  help: "Nombre del repo de contratos (también artifactId de Maven)"
+  default: protos
+  validator: >-
+    {% if not (repo_name | regex_search('^[a-z][a-z0-9-]*[a-z0-9]$')) %}
+    Solo minúsculas, dígitos y guiones; debe empezar con letra y no terminar en guion.
+    {% endif %}
+
+org_name:
+  type: str
+  help: "Organización/grupo en GitLab o GitHub (ej. mi-org); se usa para los defaults"
+  default: mi-org
+  validator: >-
+    {% if not (org_name | regex_search('^[a-z0-9][a-z0-9-]*$')) %}
+    Solo minúsculas, dígitos y guiones.
+    {% endif %}
+
+ci_provider:
+  type: str
+  help: "Proveedor de CI/CD y de registry de paquetes"
+  choices:
+    GitLab CI: gitlab
+    GitHub Actions: github
+  default: gitlab
+
+languages:
+  type: str
+  help: "Lenguajes a generar (kotlin implica java)"
+  multiselect: true
+  choices:
+    Go: go
+    Python: python
+    TypeScript: typescript
+    Java: java
+    Kotlin: kotlin
+    Swift (iOS/macOS): swift
+  default: [go, python, typescript]
+  validator: >-
+    {% if not languages %}Elegí al menos un lenguaje.{% endif %}
+
+module_path:
+  type: str
+  help: "Module path de Go del repo (ej. gitlab.com/mi-org/protos)"
+  default: >-
+    {% if ci_provider == 'github' %}github.com{% else %}gitlab.com{% endif %}/{{ org_name }}/{{ repo_name }}
+  when: "{{ 'go' in languages }}"
+  validator: >-
+    {% if not (module_path | regex_search('^[a-z0-9.-]+\.[a-z]+(/[A-Za-z0-9._~-]+)+$')) %}
+    Module path inválido (esperado host/ruta, ej. gitlab.com/mi-org/protos).
+    {% endif %}
+
+python_package:
+  type: str
+  help: "Nombre del paquete Python (import y distribución; ej. mi_org_protos)"
+  default: "{{ (org_name ~ '_' ~ repo_name) | replace('-', '_') }}"
+  when: "{{ 'python' in languages }}"
+  validator: >-
+    {% if not (python_package | regex_search('^[a-z][a-z0-9_]*$')) %}
+    Identificador Python: minúsculas, dígitos y guion bajo.
+    {% endif %}
+
+npm_package:
+  type: str
+  help: "Paquete npm con scope (ej. @mi-org/protos). En GitLab/GitHub el scope debe ser el grupo/owner"
+  default: "@{{ org_name }}/{{ repo_name }}"
+  when: "{{ 'typescript' in languages }}"
+  validator: >-
+    {% if not (npm_package | regex_search('^@[a-z0-9][a-z0-9._-]*/[a-z0-9][a-z0-9._-]*$')) %}
+    Nombre npm con scope: @scope/nombre en minúsculas.
+    {% endif %}
+
+maven_group:
+  type: str
+  help: "groupId de Maven y prefijo de los paquetes Java/Kotlin (ej. com.miorg)"
+  default: "com.{{ org_name | replace('-', '') }}"
+  when: "{{ 'java' in languages or 'kotlin' in languages }}"
+  validator: >-
+    {% if not (maven_group | regex_search('^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$')) %}
+    groupId inválido (ej. com.miorg).
+    {% endif %}
+
+swift_module:
+  type: str
+  help: "Módulo/producto Swift (SPM) que importa la app (ej. MiOrgProtos)"
+  default: >-
+    {{ (org_name ~ '-' ~ repo_name).split('-') | map('capitalize') | join('') }}
+  when: "{{ 'swift' in languages }}"
+  validator: >-
+    {% if not (swift_module | regex_search('^[A-Z][A-Za-z0-9]*$')) %}
+    Identificador Swift en UpperCamelCase (ej. MiOrgProtos).
+    {% endif %}
+
+first_package:
+  type: str
+  help: "Primer paquete proto (ej. example -> proto/example/v1/item.proto, package example.v1)"
+  default: example
+  validator: >-
+    {% if not (first_package | regex_search('^[a-z][a-z0-9]*$')) %}
+    Una palabra en minúsculas (letras y dígitos), sin guiones ni guion bajo.
+    {% elif first_package in ['google', 'buf', 'grpc'] %}
+    Nombre reservado por dependencias comunes.
+    {% endif %}
+
+# -----------------------------------------------------------------------------
+# Valores derivados (no se preguntan ni se guardan; se recalculan en cada
+# copy/update). Flags cortos para nombres de archivo condicionales: Windows
+# corta las rutas en 260 caracteres.
+# -----------------------------------------------------------------------------
+
+l_go:
+  type: bool
+  default: "{{ 'go' in languages }}"
+  when: false
+
+l_py:
+  type: bool
+  default: "{{ 'python' in languages }}"
+  when: false
+
+l_ts:
+  type: bool
+  default: "{{ 'typescript' in languages }}"
+  when: false
+
+l_kt:
+  type: bool
+  default: "{{ 'kotlin' in languages }}"
+  when: false
+
+# Java o Kotlin: el proyecto Gradle gen/jvm (Kotlin necesita el código Java).
+l_jvm:
+  type: bool
+  default: "{{ 'java' in languages or 'kotlin' in languages }}"
+  when: false
+
+l_sw:
+  type: bool
+  default: "{{ 'swift' in languages }}"
+  when: false
+
+ci_gl:
+  type: bool
+  default: "{{ ci_provider == 'gitlab' }}"
+  when: false
+
+ci_gh:
+  type: bool
+  default: "{{ ci_provider == 'github' }}"
+  when: false
+
+# URL https del repo (doc y `pip install git+...`). Con Go sale del module_path.
+repo_url:
+  type: str
+  default: >-
+    {%- if 'go' in languages -%}https://{{ module_path }}
+    {%- elif ci_provider == 'github' -%}https://github.com/{{ org_name }}/{{ repo_name }}
+    {%- else -%}https://gitlab.com/{{ org_name }}/{{ repo_name }}{%- endif -%}
+  when: false

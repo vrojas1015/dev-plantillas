@@ -1,0 +1,39 @@
+# {{ repo_name }}
+
+Contratos gRPC de {{ org_name }} (Protobuf + [buf](https://buf.build)) y su
+código generado para {{ languages | join(', ') }}.
+
+| Lenguaje | Cómo se consume (detalle en `docs/consumir.md`) |
+|---|---|
+{%- if l_go %}
+| Go | `go get {{ module_path }}@vX.Y.Z` → `import examplev1 "{{ module_path }}/gen/go/{{ first_package }}/v1"` |
+{%- endif %}
+{%- if l_py %}
+| Python | `pip install "{{ python_package }} @ git+{{ repo_url }}.git@vX.Y.Z#subdirectory=gen/python"` o registry |
+{%- endif %}
+{%- if l_ts %}
+| TypeScript / JS | `npm install {{ npm_package }}@X.Y.Z` (registry de {{ 'GitLab' if ci_gl else 'GitHub Packages' }}) |
+{%- endif %}
+{%- if l_jvm %}
+| Java{% if l_kt %} / Kotlin{% endif %} | `implementation("{{ maven_group }}:{{ repo_name }}:X.Y.Z")` (Maven de {{ 'GitLab' if ci_gl else 'GitHub Packages' }}) |
+{%- endif %}
+{%- if l_sw %}
+| Swift (iOS/macOS) | SPM: `{{ repo_url }}.git`, producto `{{ swift_module }}`, desde `X.Y.Z` |
+{%- endif %}
+
+## Trabajo diario
+
+```bash
+make lint breaking     # reglas de estilo y compatibilidad
+make generate          # regenera gen/ (commitearlo junto al .proto)
+make check             # lo mismo que corre CI
+```
+
+Requisitos: `buf` 1.71+ y bash{% if l_go %}; Go 1.25+{% endif %}{% if l_py %}; Python 3.10+{% endif %}{% if l_ts %}; Node 24+{% endif %}{% if l_jvm %}; JDK 17+{% endif %}{% if l_sw %}; Swift 6 (Xcode 26+){% endif %}.
+
+## Documentación
+
+- `CLAUDE.md`: reglas de contratos, versionado y orden de trabajo.
+- `docs/consumir.md`: cómo usar los paquetes desde cada lenguaje.
+- `docs/publicar.md`: cómo sacar una versión y qué publica CI.
+- `docs/co-desarrollo.md`: probar un cambio de contrato sin publicar.

@@ -139,3 +139,34 @@ jobs:
       - name: Sigue compilando
         working-directory: ${{ runner.temp }}/demo
         run: go build ./... && go vet ./... && go test -count=1 ./...
+
+  # Repo de contratos con go + python + typescript: lint, generación con los
+  # plugins remotos de la BSR, código generado al día y compilación por lenguaje.
+  # (java/kotlin/swift se verificaron a mano; ver templates/protos/README.md)
+  protos:
+    runs-on: ubuntu-latest
+    env:
+      BUF_TOKEN: ${{ secrets.BUF_TOKEN }}   # opcional: evita el límite de la BSR sin autenticar
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install copier
+      - uses: bufbuild/buf-action@v1
+        with: { setup_only: true }
+      - uses: actions/setup-go@v5
+        with: { go-version: stable }
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - name: Generar
+        run: |
+          copier copy --defaults --trust -d org_name=demo -d 'languages=[go, python, typescript]' \
+            templates/protos "$RUNNER_TEMP/protos"
+          cd "$RUNNER_TEMP/protos"
+          git init -q && git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm base
+          make generate
+          git add -A && git -c user.name=ci -c user.email=ci@example.com commit -qm gen --allow-empty
+      - name: make check
+        working-directory: ${{ runner.temp }}/protos
+        run: make check

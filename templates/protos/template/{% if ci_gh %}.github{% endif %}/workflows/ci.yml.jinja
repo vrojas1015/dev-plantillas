@@ -1,0 +1,222 @@
+# =============================================================================
+# CI {{ repo_name }} — contratos gRPC ({{ languages | join(', ') }})
+# =============================================================================
+#
+#   - Pull request   -> lint + breaking (contra la rama base) + código
+#                       generado al día + compilar/importar cada lenguaje.
+#   - Push a main    -> lo mismo, con breaking contra el último tag v*.
+#   - Tag vX.Y.Z     -> checks + versión de los paquetes == tag + publicar.
+#
+# El tag ES la versión. Se crea con `make release VERSION=X.Y.Z` (bump +
+# commit + tag) y lo pushea una persona. Ver docs/publicar.md.
+{%- if l_go %}
+# Go no se publica: `go get {{ module_path }}@vX.Y.Z` lee el tag.
+{%- endif %}
+{%- if l_sw %}
+# Swift no se publica: SPM lee el tag directamente.
+{%- endif %}
+{%- if l_py %}
+# Python: wheel + sdist como assets del GitHub Release del tag.
+{%- endif %}
+{%- if l_ts or l_jvm %}
+# {% if l_ts %}npm{% endif %}{% if l_ts and l_jvm %} y {% endif %}{% if l_jvm %}Maven{% endif %}: GitHub Packages con GITHUB_TOKEN (sin secretos propios).
+{%- endif %}
+# Opcional: secret BUF_TOKEN (token de la BSR) para evitar el rate limit de
+# los plugins remotos en `buf generate`.
+# =============================================================================
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  # Igual a tu `buf --version` local (scripts/generate.sh avisa si difieren).
+  BUF_VERSION: "1.71.0"
+
+jobs:
+  buf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # breaking necesita historia y tags
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+{%- raw %}
+      - name: Instalar buf
+        run: |
+          curl -fsSL "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-x86_64" -o /usr/local/bin/buf
+          chmod +x /usr/local/bin/buf
+          buf --version
+      - name: Lint
+        run: make lint
+      - name: Breaking
+        if: github.ref_type != 'tag'
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          if [ -n "$BASE" ]; then
+            git fetch --quiet origin "+refs/heads/${BASE}:refs/heads/${BASE}"
+            AGAINST=".git#branch=${BASE}"
+          else
+            PREV="$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)"
+            if [ -z "$PREV" ]; then echo "Sin tag v* anterior: nada contra qué comparar."; exit 0; fi
+            AGAINST=".git#tag=${PREV}"
+          fi
+          echo "buf breaking --against ${AGAINST}"
+          buf breaking --against "${AGAINST}"
+      - name: Código generado al día
+        env:
+          BUF_TOKEN: ${{ secrets.BUF_TOKEN }}
+        run: make check-gen
+{%- endraw %}
+{%- if l_go %}
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make check-go
+{%- endif %}
+{%- if l_py %}
+
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: |
+          pip install --quiet ./gen/python
+          python scripts/check_py.py {{ python_package }}
+{%- endif %}
+{%- if l_ts %}
+
+  typescript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: make check-ts
+{%- endif %}
+{%- if l_jvm %}
+
+  jvm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: sh ./gradlew --no-daemon build
+        working-directory: gen/jvm
+{%- endif %}
+{%- if l_sw %}
+
+  # Paquete completo en macOS: Connect-Swift necesita frameworks de Apple
+  # (en Linux solo compilan los mensajes: scripts/check_swift_msgs.sh).
+  swift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift build
+{%- endif %}
+
+  # ---------------------------------------------------------------------------
+  # Tag vX.Y.Z
+  # ---------------------------------------------------------------------------
+  version:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+{%- raw %}
+      - run: bash scripts/version.sh check "${{ github.ref_name }}"
+{%- endraw %}
+{%- set checks = ['buf', 'version'] + (['go'] if l_go else []) + (['python'] if l_py else []) + (['typescript'] if l_ts else []) + (['jvm'] if l_jvm else []) + (['swift'] if l_sw else []) %}
+{%- if l_py %}
+
+  publish-python:
+    if: github.ref_type == 'tag'
+    needs: [{{ checks | join(', ') }}]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # crear el Release y subir assets
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+{%- raw %}
+      - name: Wheel + sdist al GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          pip install --quiet build
+          python -m build gen/python --outdir dist
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber
+          else
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --verify-tag
+          fi
+{%- endraw %}
+{%- endif %}
+{%- if l_ts %}
+
+  publish-npm:
+    if: github.ref_type == 'tag'
+    needs: [{{ checks | join(', ') }}]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: https://npm.pkg.github.com
+          scope: "{{ npm_package.split('/')[0] }}"
+      - run: npm publish
+        working-directory: gen/ts
+        env:
+          NODE_AUTH_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+{%- endif %}
+{%- if l_jvm %}
+
+  publish-maven:
+    if: github.ref_type == 'tag'
+    needs: [{{ checks | join(', ') }}]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: sh ./gradlew --no-daemon publish
+        working-directory: gen/jvm
+        env:
+          GITHUB_TOKEN: {{ '${{ secrets.GITHUB_TOKEN }}' }}
+{%- endif %}

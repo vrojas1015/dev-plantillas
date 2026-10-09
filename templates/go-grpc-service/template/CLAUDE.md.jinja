@@ -158,6 +158,15 @@ Sin repo de protos compartido. Para enchufar uno más adelante:
 4. Módulo privado: `GOPRIVATE`, token en CI y `make workspace`
    (`copier update` con `protos_module` los genera; ver `docs/ci-cd-setup.md`).
 
+Repo de protos hecho con la plantilla `protos`: su ejemplo es este mismo
+`ItemService`, en `<módulo-de-protos>/gen/go/<paquete>/v1`. Para pasarse basta
+cambiar el import `{{ module_path }}/gen/go/example/v1` por ese (handler, su
+test, mapper y `cli/main.go`) y borrar `proto/`, `gen/` y `buf.*`: los dos no
+pueden convivir (protobuf-go entra en pánico al registrar dos veces
+`example/v1/item.proto`). Sin tag publicado todavía:
+`go mod edit -require=<módulo>@v0.0.0 -replace=<módulo>=../<repo-protos>` y
+`go mod tidy` (sacar el `replace` al publicar la primera versión).
+
 ## Borrar el ejemplo (entidad `Item`)
 
 `app/domain/model/item.go`, `app/domain/port/item_repository.go`,

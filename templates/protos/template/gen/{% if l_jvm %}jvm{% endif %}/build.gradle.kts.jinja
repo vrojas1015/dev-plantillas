@@ -1,0 +1,105 @@
+// Compila y publica el código generado en src/main (lo escribe `make generate`:
+// no editar a mano). Publica {{ maven_group }}:{{ repo_name }}:<version>.
+//
+// Versiones de runtime alineadas con los plugins de buf.gen.yaml:
+//   protocolbuffers/java{% if l_kt %} y /kotlin{% endif %} v36.2 -> protobuf 4.36.2
+//   grpc/java v1.84.1 -> grpc 1.84.1{% if l_kt %}
+//   grpc/kotlin v1.5.0 -> grpc-kotlin-stub 1.5.0{% endif %}
+// Al subir un plugin, subir la dependencia correspondiente.
+plugins {
+    `java-library`
+    `maven-publish`
+{%- if l_kt %}
+    kotlin("jvm") version "2.4.21"
+{%- endif %}
+}
+
+val protobufVersion = "4.36.2"
+val grpcVersion = "1.84.1"
+{%- if l_kt %}
+val grpcKotlinVersion = "1.5.0"
+val coroutinesVersion = "1.11.0"
+{%- endif %}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    // api: los tipos de protobuf/grpc aparecen en la API pública generada.
+    api("com.google.protobuf:protobuf-java:$protobufVersion")
+    api("io.grpc:grpc-protobuf:$grpcVersion")
+    api("io.grpc:grpc-stub:$grpcVersion")
+{%- if l_kt %}
+    api("com.google.protobuf:protobuf-kotlin:$protobufVersion")
+    api("io.grpc:grpc-kotlin-stub:$grpcKotlinVersion")
+    api("org.jetbrains.kotlinx:kotlinx-coroutines-core:$coroutinesVersion")
+{%- endif %}
+}
+
+// Bytecode Java 17 con cualquier JDK >= 17 (sin toolchains: no descarga JDKs).
+// Lo pueden usar servicios en Java/Kotlin 17, 21 o más nuevos.
+java {
+    withSourcesJar()
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.release = 17
+    // El código generado usa APIs deprecadas a propósito; no ensuciar el build.
+    options.compilerArgs.add("-Xlint:-deprecation")
+}
+{%- if l_kt %}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+        freeCompilerArgs.add("-Xjdk-release=17")
+    }
+}
+{%- endif %}
+
+publishing {
+    publications {
+        create<MavenPublication>("maven") {
+            from(components["java"])
+            pom {
+                name = "{{ repo_name }}"
+                description = "Contratos gRPC de {{ org_name }} (código generado)"
+                url = "{{ repo_url }}"
+            }
+        }
+    }
+    repositories {
+{%- if ci_gl %}
+        // GitLab Maven package registry del proyecto. En CI: CI_JOB_TOKEN.
+        // Local (no recomendado): GITLAB_TOKEN con un PAT de scope api.
+        val projectApi = System.getenv("CI_API_V4_URL")
+        val projectId = System.getenv("CI_PROJECT_ID")
+        if (projectApi != null && projectId != null) {
+            maven {
+                name = "gitlab"
+                url = uri("$projectApi/projects/$projectId/packages/maven")
+                credentials(HttpHeaderCredentials::class) {
+                    val job = System.getenv("CI_JOB_TOKEN")
+                    name = if (job != null) "Job-Token" else "Private-Token"
+                    value = job ?: System.getenv("GITLAB_TOKEN")
+                }
+                authentication { create<HttpHeaderAuthentication>("header") }
+            }
+        }
+{%- else %}
+        // GitHub Packages del repo. En CI: GITHUB_TOKEN con packages: write.
+        val repo = System.getenv("GITHUB_REPOSITORY")
+        if (repo != null) {
+            maven {
+                name = "github"
+                url = uri("https://maven.pkg.github.com/$repo")
+                credentials {
+                    username = System.getenv("GITHUB_ACTOR")
+                    password = System.getenv("GITHUB_TOKEN")
+                }
+            }
+        }
+{%- endif %}
+    }
+}

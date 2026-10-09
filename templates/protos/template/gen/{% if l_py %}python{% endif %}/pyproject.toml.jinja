@@ -1,0 +1,27 @@
+# Paquete Python con el código generado de {{ repo_name }}.
+# El código en {{ python_package }}/ lo escribe `make generate`: no editar a mano.
+# `version` la actualiza `make release` (CI exige que coincida con el tag).
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "{{ python_package }}"
+version = "0.1.0"
+description = "Contratos gRPC de {{ org_name }} ({{ repo_name }}): mensajes protobuf y stubs grpc"
+requires-python = ">=3.10"
+# protobuf: el código generado con protocolbuffers/python v36.2 exige runtime
+# 7.x >= 7.36.2 (lo valida al importar). Al subir el plugin, subir el mínimo.
+dependencies = [
+  "protobuf>=7.36.2,<8",
+  "grpcio>=1.66,<2",
+]
+
+[project.urls]
+Repository = "{{ repo_url }}"
+
+[tool.hatch.build.targets.wheel]
+packages = ["{{ python_package }}"]
+
+[tool.hatch.build.targets.sdist]
+include = ["{{ python_package }}", "pyproject.toml"]

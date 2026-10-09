@@ -1,0 +1,193 @@
+# =============================================================================
+# CI {{ repo_name }} — contratos gRPC ({{ languages | join(', ') }})
+# =============================================================================
+#
+#   - Merge request  -> lint + breaking (contra la rama destino) + código
+#                       generado al día + compilar/importar cada lenguaje.
+#   - Rama default   -> lo mismo, con breaking contra el último tag v*.
+#   - Tag vX.Y.Z     -> checks + versión de los paquetes == tag + publicar.
+#
+# El tag ES la versión. Se crea con `make release VERSION=X.Y.Z` (bump +
+# commit + tag) y lo pushea una persona. Ver docs/publicar.md.
+{%- if l_go %}
+# Go no se publica: `go get {{ module_path }}@vX.Y.Z` lee el tag.
+{%- endif %}
+{%- if l_sw %}
+# Swift no se publica: SPM lee el tag directamente.
+{%- endif %}
+#
+# Publicación con CI_JOB_TOKEN (sin secretos propios) al registry de paquetes
+# de ESTE proyecto: {% if l_py %}PyPI{% endif %}{% if l_py and (l_ts or l_jvm) %}, {% endif %}{% if l_ts %}npm{% endif %}{% if l_ts and l_jvm %}, {% endif %}{% if l_jvm %}Maven{% endif %}.
+# Opcional: variable BUF_TOKEN (token de la BSR) para evitar el rate limit de
+# los plugins remotos en `buf generate`.
+# =============================================================================
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+
+stages:
+  - check
+  - publish
+
+variables:
+  # Igual a tu `buf --version` local (scripts/generate.sh avisa si difieren).
+  BUF_VERSION: "1.71.0"
+  # buf breaking necesita historia y tags.
+  GIT_DEPTH: "0"
+
+.buf:
+  image: python:3.12
+  before_script:
+    - curl -fsSL "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-x86_64" -o /usr/local/bin/buf
+    - chmod +x /usr/local/bin/buf
+    - buf --version
+
+lint:
+  extends: .buf
+  stage: check
+  script:
+    - make lint
+
+breaking:
+  extends: .buf
+  stage: check
+  script:
+    - |
+      if [ -n "${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}" ]; then
+        BASE="$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+        git fetch --quiet origin "+refs/heads/${BASE}:refs/heads/${BASE}"
+        AGAINST=".git#branch=${BASE}"
+      else
+        PREV="$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)"
+        if [ -z "$PREV" ]; then echo "Sin tag v* anterior: nada contra qué comparar."; exit 0; fi
+        AGAINST=".git#tag=${PREV}"
+      fi
+      echo "buf breaking --against ${AGAINST}"
+      buf breaking --against "${AGAINST}"
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+
+generated:
+  extends: .buf
+  stage: check
+  script:
+    # Regenera y exige que gen/ commiteado sea idéntico.
+    - make check-gen
+{%- if l_go %}
+
+go:
+  image: golang:1.25
+  stage: check
+  script:
+    - make check-go
+{%- endif %}
+{%- if l_py %}
+
+python:
+  image: python:3.12
+  stage: check
+  script:
+    - pip install --quiet ./gen/python
+    - python scripts/check_py.py {{ python_package }}
+{%- endif %}
+{%- if l_ts %}
+
+typescript:
+  image: node:24
+  stage: check
+  script:
+    - make check-ts
+{%- endif %}
+{%- if l_jvm %}
+
+jvm:
+  image: eclipse-temurin:21
+  stage: check
+  variables:
+    GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle-home"
+  cache:
+    key: gradle
+    paths: [.gradle-home/caches, .gradle-home/wrapper]
+  script:
+    - cd gen/jvm && sh ./gradlew --no-daemon build
+{%- endif %}
+{%- if l_sw %}
+
+# Linux: solo los mensajes (Connect-Swift necesita frameworks de Apple).
+swift:messages:
+  image: swift:6.4
+  stage: check
+  script:
+    - bash scripts/check_swift_msgs.sh
+
+# Paquete completo (mensajes + clientes Connect): necesita un runner macOS con
+# Xcode 26+ (en GitLab.com: runners SaaS macOS, planes Premium/Ultimate; o un
+# runner propio con tag `macos`). Manual y opcional hasta tener uno.
+swift:macos:
+  stage: check
+  tags: [macos]
+  when: manual
+  allow_failure: true
+  script:
+    - swift build
+{%- endif %}
+
+# -----------------------------------------------------------------------------
+# Tag vX.Y.Z
+# -----------------------------------------------------------------------------
+
+.on-tag:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+/
+
+version:
+  extends: .on-tag
+  image: python:3.12
+  stage: check
+  script:
+    - bash scripts/version.sh check "$CI_COMMIT_TAG"
+{%- if l_py %}
+
+publish:python:
+  extends: .on-tag
+  image: python:3.12
+  stage: publish
+  script:
+    - pip install --quiet build twine
+    - python -m build gen/python --outdir dist
+    - >-
+      TWINE_USERNAME=gitlab-ci-token TWINE_PASSWORD="$CI_JOB_TOKEN"
+      python -m twine upload --repository-url "${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi" dist/*
+{%- endif %}
+{%- if l_ts %}
+
+publish:npm:
+  extends: .on-tag
+  image: node:24
+  stage: publish
+  script:
+    - cd gen/ts
+    - echo "{{ npm_package.split('/')[0] }}:registry=${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/npm/" > .npmrc
+    - echo "//${CI_API_V4_URL#*://}/projects/${CI_PROJECT_ID}/packages/npm/:_authToken=${CI_JOB_TOKEN}" >> .npmrc
+    - npm publish
+{%- endif %}
+{%- if l_jvm %}
+
+publish:maven:
+  extends: .on-tag
+  image: eclipse-temurin:21
+  stage: publish
+  variables:
+    GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle-home"
+  cache:
+    key: gradle
+    paths: [.gradle-home/caches, .gradle-home/wrapper]
+    policy: pull
+  script:
+    - cd gen/jvm && sh ./gradlew --no-daemon publish
+{%- endif %}

@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(buf lint:*)",
+      "Bash(buf format:*)",
+      "Bash(buf breaking:*)",
+      "Bash(buf generate:*)",
+      "Bash(buf build:*)",
+      "Bash(make help:*)",
+      "Bash(make lint:*)",
+      "Bash(make breaking:*)",
+      "Bash(make generate:*)",
+      "Bash(make check:*)",
+      "Bash(make check-gen:*)",
+      "Bash(make check-go:*)",
+      "Bash(make check-py:*)",
+      "Bash(make check-ts:*)",
+      "Bash(make check-jvm:*)",
+      "Bash(make version:*)",
+      "Bash(bash scripts/generate.sh:*)",
+      "Bash(bash scripts/version.sh show:*)",
+      "Bash(go build:*)",
+      "Bash(go vet:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go list:*)",
+      "Bash(swift build:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git tag --list:*)",
+      "Bash(git describe:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git ls-files:*)",
+      "Bash(ls:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Bash(git push:*)"
+    ]
+  }
+}

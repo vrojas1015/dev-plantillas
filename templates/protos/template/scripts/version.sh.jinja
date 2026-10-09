@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# Versión de los paquetes publicables. La fuente de verdad es el TAG de git
+# (vX.Y.Z); los archivos de abajo la repiten porque pip/npm/Gradle la leen de
+# ahí. `make release` los actualiza y CI, al taggear, exige que coincidan.
+#
+#   scripts/version.sh show            # versión de cada archivo
+#   scripts/version.sh set 1.2.3       # escribe la versión en todos
+#   scripts/version.sh check v1.2.3    # falla si alguno no coincide (CI)
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# archivo|regex de la línea (extended)|reemplazo con @V@
+FILES=(
+{%- if l_py %}
+  'gen/python/pyproject.toml|^version = "[^"]*"$|version = "@V@"'
+{%- endif %}
+{%- if l_ts %}
+  'gen/ts/package.json|^  "version": "[^"]*",$|  "version": "@V@",'
+{%- endif %}
+{%- if l_jvm %}
+  'gen/jvm/gradle.properties|^version=.*$|version=@V@'
+{%- endif %}
+)
+
+SEMVER='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
+
+current() { # archivo regex -> versión
+  grep -E -m1 "$2" "$1" | sed -E 's/.*[="]([0-9][^"]*)"?,?$/\1/'
+}
+
+cmd="${1:-show}"
+want="${2:-}"
+want="${want#v}"
+
+case "$cmd" in
+  show)
+    for e in ${FILES[@]+"${FILES[@]}"}; do
+      IFS='|' read -r f re _ <<<"$e"
+      echo "$f: $(current "$f" "$re")"
+    done ;;
+  set)
+    [[ "$want" =~ $SEMVER ]] || { echo "Versión inválida: '$want' (esperado X.Y.Z)"; exit 1; }
+    for e in ${FILES[@]+"${FILES[@]}"}; do
+      IFS='|' read -r f re rep <<<"$e"
+      grep -qE "$re" "$f" || { echo "No encontré la línea de versión en $f"; exit 1; }
+      sed -E "s/${re}/${rep//@V@/$want}/" "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+      echo "$f -> $want"
+    done ;;
+  check)
+    [[ "$want" =~ $SEMVER ]] || { echo "Tag inválido: '${2:-}' (esperado vX.Y.Z)"; exit 1; }
+    bad=0
+    for e in ${FILES[@]+"${FILES[@]}"}; do
+      IFS='|' read -r f re _ <<<"$e"
+      got="$(current "$f" "$re")"
+      if [[ "$got" != "$want" ]]; then echo "$f tiene $got y el tag es v$want"; bad=1; fi
+    done
+    [[ $bad -eq 0 ]] || { echo "Usá 'make release VERSION=$want' (bump + commit + tag) en vez de taggear a mano."; exit 1; }
+    echo "Versiones OK: v$want" ;;
+  *)
+    echo "Uso: $0 show | set X.Y.Z | check vX.Y.Z"; exit 2 ;;
+esac

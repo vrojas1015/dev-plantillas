@@ -1,0 +1,88 @@
+# `make generate` -> scripts/generate.sh -> buf generate.
+#
+# Plugins REMOTOS de la BSR (buf.build): corren en los servidores de Buf, no
+# hace falta instalar protoc ni protoc-gen-*; solo `buf` e internet.
+# Versiones FIJADAS: subir una versión cambia el código generado y, en Python,
+# Java y TS, el mínimo del runtime (ver "Versiones" en docs/publicar.md).
+version: v2
+managed:
+  # Managed mode: buf completa go_package, java_package, etc.; los .proto no
+  # llevan opciones específicas de lenguaje.
+  enabled: true
+{%- if l_go or l_jvm %}
+  override:
+{%- endif %}
+{%- if l_go %}
+    # <module_path>/gen/go/<paquete>/vN, package <paquete>vN (ej. examplev1).
+    - file_option: go_package_prefix
+      value: {{ module_path }}/gen/go
+{%- endif %}
+{%- if l_jvm %}
+    # Paquetes Java/Kotlin: {{ maven_group }}.<paquete>.vN
+    - file_option: java_package_prefix
+      value: {{ maven_group }}
+{%- endif %}
+  # Si se agregan deps de la BSR (buf.yaml), excluirlas del managed mode para
+  # no reescribir sus paquetes, p. ej.:
+  # disable:
+  #   - module: buf.build/googleapis/googleapis
+plugins:
+{%- if l_go %}
+  # --- Go -------------------------------------------------------------------
+  - remote: buf.build/protocolbuffers/go:v1.36.12
+    out: gen/go
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go:v1.6.2
+    out: gen/go
+    opt: paths=source_relative
+{%- endif %}
+{%- if l_py %}
+  # --- Python (runtime: protobuf>=7.36.2,<8; ver gen/python/pyproject.toml) --
+  - remote: buf.build/protocolbuffers/python:v36.2
+    out: gen/python/{{ python_package }}
+  - remote: buf.build/protocolbuffers/pyi:v36.2
+    out: gen/python/{{ python_package }}
+  - remote: buf.build/grpc/python:v1.84.0
+    out: gen/python/{{ python_package }}
+{%- endif %}
+{%- if l_ts %}
+  # --- TypeScript / JavaScript (protobuf-es v2) -----------------------------
+  # js+dts: JS ESM listo para Node y bundlers + tipos .d.ts. No hay paso de
+  # build. Los descriptores de servicio sirven directo a Connect-ES v2
+  # (@connectrpc/connect), sin plugin extra.
+  - remote: buf.build/bufbuild/es:v2.16.0
+    out: gen/ts/lib
+    opt:
+      - target=js+dts
+      - import_extension=js
+{%- endif %}
+{%- if l_jvm %}
+  # --- Java (proyecto Gradle en gen/jvm) -------------------------------------
+  - remote: buf.build/protocolbuffers/java:v36.2
+    out: gen/jvm/src/main/java
+  - remote: buf.build/grpc/java:v1.84.1
+    out: gen/jvm/src/main/java
+{%- endif %}
+{%- if l_kt %}
+  # --- Kotlin (DSL sobre las clases Java + stubs con corrutinas) -------------
+  - remote: buf.build/protocolbuffers/kotlin:v36.2
+    out: gen/jvm/src/main/kotlin
+  - remote: buf.build/grpc/kotlin:v1.5.0
+    out: gen/jvm/src/main/kotlin
+{%- endif %}
+{%- if l_sw %}
+  # --- Swift (SPM: Package.swift en la raíz, target en gen/swift) ------------
+  # Mensajes con SwiftProtobuf + clientes Connect-Swift (URLSession; habla
+  # gRPC, gRPC-Web y Connect). PathToUnderscores: nombres de archivo únicos
+  # (Swift no admite dos archivos con el mismo nombre en un módulo).
+  - remote: buf.build/apple/swift:v1.38.1
+    out: gen/swift
+    opt:
+      - Visibility=Public
+      - FileNaming=PathToUnderscores
+  - remote: buf.build/connectrpc/swift:v1.2.3
+    out: gen/swift
+    opt:
+      - Visibility=Public
+      - FileNaming=PathToUnderscores
+{%- endif %}

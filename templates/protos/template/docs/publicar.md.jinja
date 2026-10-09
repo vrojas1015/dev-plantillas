@@ -1,0 +1,117 @@
+# Publicar una versión de {{ repo_name }}
+
+## Modelo
+
+- **El tag `vX.Y.Z` es la versión** de todos los paquetes. Semver: MINOR para
+  cambios aditivos, PATCH para comentarios/empaquetado, MAJOR solo al retirar
+  un paquete `vN` viejo (los cambios incompatibles van a un paquete `v(N+1)`).
+- El código generado está **commiteado** en `gen/`; CI verifica en cada MR/PR
+  que corresponda a `proto/` y, en el tag, publica exactamente eso.
+{%- set vfiles = (['`gen/python/pyproject.toml`'] if l_py else []) + (['`gen/ts/package.json`'] if l_ts else []) + (['`gen/jvm/gradle.properties`'] if l_jvm else []) %}
+{%- if vfiles %}
+- Las versiones dentro de los archivos de empaquetado ({{ vfiles | join(', ') }})
+  las escribe `make release` y CI **exige** que coincidan con el tag
+  (`scripts/version.sh check`). Se eligió verificar en vez de setearlas desde
+  el tag en CI para que lo commiteado en el tag sea idéntico a lo publicado
+  (un `pip install git+...@vX.Y.Z` reporta la misma versión que el registry).
+{%- else %}
+- {{ languages | join(', ') }}: no hay archivos de versión; el tag es todo.
+{%- endif %}
+
+## Pasos
+
+```bash
+git switch main && git pull
+make check                     # opcional: lo mismo que CI
+make release VERSION=0.3.0     # regenera, bump, commit "chore(release): v0.3.0", tag anotado
+git push origin main && git push origin v0.3.0
+```
+
+`make release` falla si hay cambios sin commitear, si `gen/` no corresponde a
+`proto/` o si el tag ya existe. No pushea: eso lo decide una persona.
+
+Con `main` protegida (sin push directo): en una rama, `bash scripts/version.sh
+set X.Y.Z`, commit y MR/PR; después del merge, sobre ese commit de `main`:
+`git tag -a vX.Y.Z -m "Release vX.Y.Z" && git push origin vX.Y.Z`.
+
+## Qué publica CI con el tag
+
+| Lenguaje | Destino |
+|---|---|
+{%- if l_go %}
+| Go | Nada: el proxy de Go lee el tag (`go get {{ module_path }}@vX.Y.Z`) |
+{%- endif %}
+{%- if l_py %}
+| Python | {% if ci_gl %}PyPI registry del proyecto (`twine` con `CI_JOB_TOKEN`){% else %}wheel + sdist como assets del GitHub Release del tag{% endif %} |
+{%- endif %}
+{%- if l_ts %}
+| TS/JS | {% if ci_gl %}npm registry del proyecto (`CI_JOB_TOKEN`){% else %}GitHub Packages npm (`GITHUB_TOKEN`, `packages: write`){% endif %} |
+{%- endif %}
+{%- if l_jvm %}
+| Java/Kotlin | {% if ci_gl %}Maven registry del proyecto (`./gradlew publish` con `CI_JOB_TOKEN`){% else %}GitHub Packages Maven (`./gradlew publish` con `GITHUB_TOKEN`){% endif %} |
+{%- endif %}
+{%- if l_sw %}
+| Swift | Nada: SPM lee el tag (los tags `vX.Y.Z` con `v` funcionan) |
+{%- endif %}
+
+Un registry no acepta volver a publicar la misma versión: si algo falló a
+mitad de camino, se corrige y se saca `vX.Y.(Z+1)`. **Nunca** mover ni borrar
+un tag publicado (el proxy de Go y los caches ya lo guardaron).
+
+## Setup de una sola vez
+
+{%- if ci_gl %}
+
+- Settings > General > Visibility: habilitar **Package registry**.
+- Tags protegidos `v*` (Settings > Repository > Protected tags), Maintainers.
+{%- if l_ts %}
+- npm: el scope `{{ npm_package.split('/')[0] }}` debería coincidir con el grupo raíz
+  para poder instalar desde el endpoint de grupo/instancia (el de proyecto acepta
+  cualquiera).
+{%- endif %}
+- Consumidores en CI de otros proyectos: agregarlos al allowlist de
+  Settings > CI/CD > Job token permissions de este repo.
+{%- else %}
+
+- Settings > Rules > Rulesets: proteger tags `v*`.
+- Settings > Actions > General > Workflow permissions: lectura por default
+  (el workflow pide `contents: write` / `packages: write` solo donde publica).
+{%- if l_ts %}
+- npm en GitHub Packages: el scope `{{ npm_package.split('/')[0] }}` tiene que ser el
+  owner del repo (usuario u organización).
+{%- endif %}
+- Visibilidad de los paquetes (Packages > Package settings): heredar del repo o
+  dar acceso a los repos consumidores.
+{%- endif %}
+- Opcional: variable/secret `BUF_TOKEN` (token de la BSR) en CI. Los plugins
+  remotos sin autenticar tienen rate limit; con muchos plugins o muchos
+  pipelines aparece `resource_exhausted: too many requests`.
+
+## Versiones de plugins y runtimes
+
+Subir un plugin en `buf.gen.yaml` cambia el código generado de todos los
+archivos: hacelo en un MR propio, con `make generate` y el bump de runtime.
+
+| Plugin (`buf.gen.yaml`) | Runtime que exige el código generado |
+|---|---|
+{%- if l_go %}
+| `protocolbuffers/go:v1.36.12`, `grpc/go:v1.6.2` | `google.golang.org/protobuf v1.36.12`, `google.golang.org/grpc` >= 1.64 (`go.mod`) |
+{%- endif %}
+{%- if l_py %}
+| `protocolbuffers/python:v36.2` (+ `pyi`), `grpc/python:v1.84.0` | `protobuf>=7.36.2,<8` (se valida al importar), `grpcio` |
+{%- endif %}
+{%- if l_ts %}
+| `bufbuild/es:v2.16.0` | `@bufbuild/protobuf ^2.16.0` |
+{%- endif %}
+{%- if l_jvm %}
+| `protocolbuffers/java:v36.2`{% if l_kt %}, `protocolbuffers/kotlin:v36.2`{% endif %}, `grpc/java:v1.84.1`{% if l_kt %}, `grpc/kotlin:v1.5.0`{% endif %} | `protobuf-java{% if l_kt %}/-kotlin{% endif %} 4.36.2`, `grpc-* 1.84.1`{% if l_kt %}, `grpc-kotlin-stub 1.5.0`{% endif %} (`gen/jvm/build.gradle.kts`) |
+{%- endif %}
+{%- if l_sw %}
+| `apple/swift:v1.38.1`, `connectrpc/swift:v1.2.3` | `swift-protobuf 1.38.1`, `connect-swift 1.2.3` (`Package.swift`) |
+{%- endif %}
+{%- if l_py %}
+
+Si un consumidor Python está atado a protobuf 5.x/6.x, la salida es bajar
+`protocolbuffers/python`/`pyi` (v29.x genera para 5.29, v33.x para 6.33) y el
+rango de `pyproject.toml`; no se pueden mezclar runtimes en un mismo proceso.
+{%- endif %}

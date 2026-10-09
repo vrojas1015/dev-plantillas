@@ -1,0 +1,52 @@
+"""Ajusta el código Python generado por buf para que sea un paquete instalable.
+
+Los plugins de Python generan imports absolutos desde la raíz de proto/
+(`from example.v1 import item_pb2`). Dentro del paquete distribuible esos
+módulos viven en `<paquete>.example.v1`, así que acá se reescriben a
+`from <paquete>.example.v1 import item_pb2`. Solo se tocan imports cuyo primer
+componente es un directorio generado en el paquete: `google.protobuf` y
+cualquier dependencia externa quedan como están.
+
+También crea los `__init__.py` y el marcador `py.typed` (PEP 561, por los .pyi).
+Uso: python scripts/fix_py_imports.py gen/python/<paquete>
+"""
+
+from __future__ import annotations
+
+import re
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        print(__doc__)
+        return 2
+    root = Path(sys.argv[1])
+    if not root.is_dir():
+        print(f"No existe {root}: ¿corrió buf generate?")
+        return 1
+    package = root.name
+    tops = sorted(p.name for p in root.iterdir() if p.is_dir() and p.name != "__pycache__")
+    if tops:
+        pattern = re.compile(r"^(\s*)from (" + "|".join(map(re.escape, tops)) + r")(\.[\w.]+)? import ", re.M)
+        for path in sorted(root.rglob("*")):
+            if path.suffix not in {".py", ".pyi"} or path.name == "__init__.py":
+                continue
+            text = path.read_text(encoding="utf-8")
+            fixed = pattern.sub(lambda m: f"{m.group(1)}from {package}.{m.group(2)}{m.group(3) or ''} import ", text)
+            if fixed != text:
+                path.write_text(fixed, encoding="utf-8", newline="\n")
+
+    for directory in [root, *sorted(p for p in root.rglob("*") if p.is_dir())]:
+        if directory.name == "__pycache__":
+            continue
+        init = directory / "__init__.py"
+        if not init.exists():
+            init.write_text("", encoding="utf-8")
+    (root / "py.typed").write_text("", encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

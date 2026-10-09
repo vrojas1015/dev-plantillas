@@ -1,0 +1,237 @@
+# Consumir {{ repo_name }}
+
+Una versión = un tag `vX.Y.Z` de este repo (ver `publicar.md`). Los ejemplos
+usan el contrato de ejemplo `{{ first_package }}.v1.ItemService`.
+{%- set host = repo_url.split('/')[2] %}
+{%- set owner_repo = repo_url.split('/', 3)[3] %}
+{%- if l_go %}
+
+## Go
+
+```bash
+go get {{ module_path }}@vX.Y.Z
+```
+
+```go
+import examplev1 "{{ module_path }}/gen/go/{{ first_package }}/v1"
+
+// Servidor: embeber Unimplemented…Server (forward-compat con RPCs nuevos).
+type ItemHandler struct {
+	examplev1.UnimplementedItemServiceServer
+}
+
+// Cliente:
+client := examplev1.NewItemServiceClient(conn)
+res, err := client.GetItem(ctx, &examplev1.GetItemRequest{Id: "123"})
+```
+
+Repo privado: `GOPRIVATE={{ module_path }}` y credenciales de git para
+`{{ host }}` (`~/.netrc`, o
+`git config --global url."https://oauth2:<token>@{{ host }}/".insteadOf "https://{{ host }}/"`).
+En CI: {% if ci_gl %}allowlist del `CI_JOB_TOKEN` del proyecto consumidor en
+este repo (Settings > CI/CD > Job token permissions){% else %}un secret con un
+token de solo lectura a este repo{% endif %}.
+
+Servicio generado con la plantilla `go-grpc-service`: responder
+`protos_module={{ module_path }}` y seguir la sección "Protos" de su
+`CLAUDE.md`. Como el ejemplo es el mismo `ItemService`, alcanza con cambiar el
+import `<servicio>/gen/go/example/v1` por
+`{{ module_path }}/gen/go/{{ first_package }}/v1` y borrar `proto/`, `gen/`,
+`buf.yaml` y `buf.gen.yaml` del servicio. No pueden convivir los dos:
+protobuf-go entra en pánico si dos paquetes registran el mismo archivo
+`.proto` (`{{ first_package }}/v1/item.proto`).
+{%- endif %}
+{%- if l_py %}
+
+## Python
+
+Desde el tag de git (no necesita registry):
+
+```bash
+pip install "{{ python_package }} @ git+{{ repo_url }}.git@vX.Y.Z#subdirectory=gen/python"
+```
+
+En `requirements.txt` va la misma línea (en `pyproject.toml`, como string de
+`dependencies`). Repo privado: token en la URL
+(`git+https://oauth2:${TOKEN}@{{ host }}/...`) o un credential helper de git.
+{% if ci_gl %}
+Desde el PyPI registry del proyecto en GitLab (lo publica CI en cada tag):
+
+```bash
+pip install {{ python_package }}==X.Y.Z \
+  --index-url https://__token__:<token>@{{ host }}/api/v4/projects/<id>/packages/pypi/simple
+```
+
+`<token>`: PAT o deploy token con `read_package_registry`; `<id>`: ID numérico
+del proyecto. Con `--extra-index-url` en vez de `--index-url` se mezcla con PyPI.
+{%- else %}
+Wheel del GitHub Release (lo adjunta CI en cada tag):
+
+```bash
+gh release download vX.Y.Z -R {{ owner_repo }} -p '*.whl'
+pip install ./{{ python_package }}-X.Y.Z-py3-none-any.whl
+```
+{%- endif %}
+
+```python
+import grpc
+from {{ python_package }}.{{ first_package }}.v1 import item_pb2, item_pb2_grpc
+
+with grpc.insecure_channel("localhost:5000") as channel:
+    stub = item_pb2_grpc.ItemServiceStub(channel)
+    res = stub.GetItem(item_pb2.GetItemRequest(id="123"))
+```
+
+Servidor: heredar de `item_pb2_grpc.ItemServiceServicer` y registrar con
+`item_pb2_grpc.add_ItemServiceServicer_to_server(servicer, server)`. Tipos para
+mypy/IDE: vienen los `.pyi` (`py.typed`). Runtime: `protobuf>=7.36.2,<8` y `grpcio`.
+{%- endif %}
+{%- if l_ts %}
+
+## TypeScript y JavaScript
+
+El paquete trae JS ESM + `.d.ts` (protobuf-es v2), sin `.ts` crudos: funciona
+en TypeScript, en JavaScript puro con Node y en bundlers (Angular, Vite...).
+Se importa por subpath, archivo por archivo:
+`{{ npm_package }}/<paquete>/vN/<archivo>_pb`.
+
+{% if ci_gl -%}
+`.npmrc` del consumidor (registry del proyecto en GitLab; `<id>` = ID del
+proyecto; token con `read_package_registry`):
+
+```ini
+{{ npm_package.split('/')[0] }}:registry=https://{{ host }}/api/v4/projects/<id>/packages/npm/
+//{{ host }}/api/v4/projects/<id>/packages/npm/:_authToken=${NPM_TOKEN}
+```
+{%- else -%}
+`.npmrc` del consumidor (GitHub Packages siempre pide token, `read:packages`):
+
+```ini
+{{ npm_package.split('/')[0] }}:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NPM_TOKEN}
+```
+{%- endif %}
+
+```bash
+npm install {{ npm_package }}@X.Y.Z
+```
+
+```js
+// consumer.mjs (JS puro) o consumer.ts (mismo código, con tipos)
+import { create, toBinary, fromBinary, toJson } from "@bufbuild/protobuf";
+import { ItemSchema, ItemService } from "{{ npm_package }}/{{ first_package }}/v1/item_pb";
+
+const item = create(ItemSchema, { id: "1", name: "hola" });
+const bytes = toBinary(ItemSchema, item);
+console.log(toJson(ItemSchema, fromBinary(ItemSchema, bytes)));
+console.log(Object.keys(ItemService.method)); // createItem, getItem, listItems
+```
+
+- `@bufbuild/protobuf` es dependencia del paquete; importala directo en el
+  consumidor (npm la deduplica).
+- Llamar al servicio: Connect-ES v2 (`@connectrpc/connect` +
+  `@connectrpc/connect-web` o `@connectrpc/connect-node`) usa `ItemService` tal
+  cual: `createClient(ItemService, transport)`. Desde un navegador el servidor
+  tiene que hablar Connect o gRPC-Web (gRPC puro no corre en browsers).
+- TypeScript: `moduleResolution` `bundler`, `node16` o `nodenext` (el paquete
+  usa `exports`).
+{%- endif %}
+{%- if l_jvm %}
+
+## Java{% if l_kt %} y Kotlin{% endif %} (Gradle / Maven)
+
+Artefacto `{{ maven_group }}:{{ repo_name }}:X.Y.Z`; clases en
+`{{ maven_group }}.<paquete>.vN`. Trae como dependencias (`api`)
+`protobuf-java`, `grpc-protobuf`, `grpc-stub`{% if l_kt %}, `protobuf-kotlin`,
+`grpc-kotlin-stub` y `kotlinx-coroutines-core`{% endif %}. Bytecode Java 17. El
+transporte lo elige el consumidor (ej. `io.grpc:grpc-netty-shaded`).
+
+```kotlin
+// build.gradle.kts del consumidor
+repositories {
+    mavenCentral()
+    maven {
+{%- if ci_gl %}
+        url = uri("https://{{ host }}/api/v4/projects/<id>/packages/maven")
+        credentials(HttpHeaderCredentials::class) {
+            name = "Private-Token"   // "Deploy-Token" con deploy token; "Job-Token" en CI
+            value = providers.environmentVariable("GITLAB_TOKEN").get()
+        }
+        authentication { create<HttpHeaderAuthentication>("header") }
+{%- else %}
+        url = uri("https://maven.pkg.github.com/{{ owner_repo }}")
+        credentials {                // GitHub Packages siempre pide token (read:packages)
+            username = providers.environmentVariable("GITHUB_ACTOR").get()
+            password = providers.environmentVariable("GITHUB_TOKEN").get()
+        }
+{%- endif %}
+    }
+}
+dependencies {
+    implementation("{{ maven_group }}:{{ repo_name }}:X.Y.Z")
+    runtimeOnly("io.grpc:grpc-netty-shaded:1.84.1")
+}
+```
+
+Maven: el mismo `groupId`/`artifactId`/`version` y el repositorio de arriba en
+`<repositories>` (credenciales en `~/.m2/settings.xml`).
+
+```java
+import {{ maven_group }}.{{ first_package }}.v1.GetItemRequest;
+import {{ maven_group }}.{{ first_package }}.v1.ItemServiceGrpc;
+
+var stub = ItemServiceGrpc.newBlockingStub(channel);
+var res = stub.getItem(GetItemRequest.newBuilder().setId("123").build());
+```
+{%- if l_kt %}
+
+```kotlin
+import {{ maven_group }}.{{ first_package }}.v1.ItemServiceGrpcKt
+import {{ maven_group }}.{{ first_package }}.v1.getItemRequest
+
+val stub = ItemServiceGrpcKt.ItemServiceCoroutineStub(channel)
+val res = stub.getItem(getItemRequest { id = "123" })   // suspend fun
+
+// Servidor: extender ItemServiceGrpcKt.ItemServiceCoroutineImplBase.
+```
+{%- endif %}
+{%- endif %}
+{%- if l_sw %}
+
+## Swift (iOS / macOS)
+
+Paquete SPM con `Package.swift` en la raíz de este repo; la versión es el tag.
+Producto `{{ swift_module }}`: mensajes SwiftProtobuf + clientes Connect-Swift.
+
+- **Xcode**: File › Add Package Dependencies… › URL `{{ repo_url }}.git` ›
+  Dependency Rule "Up to Next Major Version" desde `X.Y.Z` › agregar el
+  producto `{{ swift_module }}` al target de la app. Repo privado: cuenta de
+  {{ 'GitLab' if ci_gl else 'GitHub' }} en Xcode › Settings › Accounts (o SSH).
+- **Otro Package.swift**:
+
+```swift
+.package(url: "{{ repo_url }}.git", from: "X.Y.Z"),
+// en el target:
+.product(name: "{{ swift_module }}", package: "{{ repo_url.split('/')[-1] }}"),
+```
+
+```swift
+import Connect
+import {{ swift_module }}
+
+let client = ProtocolClient(
+    httpClient: URLSessionHTTPClient(),
+    config: ProtocolClientConfig(host: "https://api.example.com", networkProtocol: .connect, codec: ProtoCodec())
+)
+let items = {{ first_package | capitalize }}_V1_ItemServiceClient(client: client)
+let res = await items.getItem(request: .with { $0.id = "123" })
+if let item = res.message?.item { print(item.name) }
+```
+
+Protocolo: con `URLSessionHTTPClient` el servidor tiene que hablar **Connect**
+o **gRPC-Web** (`networkProtocol: .grpcWeb`). Un servidor gRPC puro (como los
+de `go-grpc-service`) necesita delante algo que traduzca (Envoy con el filtro
+`grpc_web`, Vanguard o el API gateway). Para gRPC nativo: `ConnectNIO`
+(`NIOHTTPClient`, del mismo paquete `connect-swift`) con `networkProtocol: .grpc`.
+Toolchain: Swift 6.2+ (Xcode 26+); iOS 15+ / macOS 12+.
+{%- endif %}

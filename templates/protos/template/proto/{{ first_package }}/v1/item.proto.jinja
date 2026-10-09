@@ -1,0 +1,71 @@
+// Contrato de EJEMPLO: entidad Item con Create + Get + List paginado por cursor.
+//
+// Es el mismo servicio que trae la plantilla go-grpc-service
+// ({{ first_package }}.v1.ItemService), así que un servicio generado con esa
+// plantilla lo implementa cambiando solo el import del código Go generado.
+// Reemplazalo por el primer contrato real (o borralo) cuando exista.
+//
+// Reglas (detalle en CLAUDE.md):
+//   - Nunca reusar ni renumerar un número de campo. No borrar campos de un
+//     vN publicado: `[deprecated = true]` (si se borra, `reserved`).
+//   - En v1 solo cambios aditivos; un cambio incompatible es un paquete v2.
+//   - Enums con un primer valor <ENUM>_UNSPECIFIED = 0.
+//   - `optional` cuando hay que distinguir "no vino" de "vino vacío/cero".
+syntax = "proto3";
+
+package {{ first_package }}.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// ItemService es el CRUD reducido de ejemplo.
+service ItemService {
+  rpc CreateItem(CreateItemRequest) returns (CreateItemResponse);
+  rpc GetItem(GetItemRequest) returns (GetItemResponse);
+  rpc ListItems(ListItemsRequest) returns (ListItemsResponse);
+}
+
+message Item {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// PageRequest: paginación por cursor opaco. limit <= 0 usa el default del servicio.
+message PageRequest {
+  string cursor = 1;
+  int32 limit = 2;
+}
+
+// PageResponse: next_cursor vacío y has_next=false en la última página.
+message PageResponse {
+  string next_cursor = 1;
+  bool has_next = 2;
+}
+
+message CreateItemRequest {
+  string name = 1;
+  string description = 2;
+}
+
+message CreateItemResponse {
+  Item item = 1;
+}
+
+message GetItemRequest {
+  string id = 1;
+}
+
+message GetItemResponse {
+  Item item = 1;
+}
+
+message ListItemsRequest {
+  PageRequest page = 1;
+}
+
+message ListItemsResponse {
+  repeated Item items = 1;
+  PageResponse page = 2;
+}
