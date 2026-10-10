@@ -9,7 +9,10 @@ Comprueba:
   - ids de issues y ADRs sin duplicar;
   - que todo repo mencionado (area, repos, servicios, depende_de, ...) tenga
     ficha en contenido/servicios/, y que los issues/ADRs referenciados existan;
-  - que un issue `resuelto` tenga la sección «Verificación» completa.
+  - que un issue `resuelto` tenga la sección «Verificación» completa;
+  - sólo si REGISTRO_E2E apunta al registro de la suite e2e (scripts/escenarios.py):
+    que un issue `resuelto` no tenga escenarios CU-<id>-<n> sin test o que no
+    estén en verde (✅) en el registro.
 
 Cada problema sale como `archivo: campo: problema`. Exit 1 si hay alguno.
 """
@@ -23,6 +26,8 @@ from collections import defaultdict
 
 import jsonschema
 from jsonschema.exceptions import best_match
+
+import escenarios
 
 from comun import (
     CONTENIDO,
@@ -285,6 +290,32 @@ def validar_verificacion(docs: list[Documento], rep: Reporte) -> None:
             )
 
 
+def validar_escenarios(docs: list[Documento], rep: Reporte) -> None:
+    """Issue `resuelto` => cada escenario CU-<id>-<n> con test y en verde. Sólo con registro."""
+    fuente = escenarios.origen()
+    if not fuente:
+        return
+    try:
+        reg = escenarios.cargar(fuente)
+    except escenarios.ErrorRegistro as e:
+        rep.error("REGISTRO_E2E", "registro", str(e))
+        return
+    for d in por_tipo(docs, "issue"):
+        if d.meta.get("estado") != "resuelto":
+            continue
+        for c in escenarios.de_issue(d):
+            est = escenarios.estado(reg, c)
+            if est == escenarios.SIN_TEST:
+                rep.error(d.rel, "estado", f"resuelto con el escenario {escenarios.nombre(c)} sin test en el registro e2e")
+            elif est != "pasa":
+                rep.error(
+                    d.rel,
+                    "estado",
+                    f"resuelto con el escenario {escenarios.nombre(c)} {escenarios.icono(est)} {est} "
+                    f"en el registro e2e (tiene que estar ✅)",
+                )
+
+
 def main() -> int:
     configurar_salida()
     docs = cargar_documentos()
@@ -294,6 +325,7 @@ def main() -> int:
     validar_duplicados(docs, rep)
     validar_referencias(docs, rep)
     validar_verificacion(docs, rep)
+    validar_escenarios(docs, rep)
 
     for archivo, campo, problema in sorted(rep.avisos):
         print(f"aviso: {archivo}: {campo}: {problema}")

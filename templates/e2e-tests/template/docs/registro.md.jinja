@@ -1,0 +1,84 @@
+# Registro de casos de uso (`registro.json`)
+
+Cada corrida de la suite produce `reportes/registro.json`: escenario → estado →
+última corrida → enlace al reporte. Lo escribe `scripts/registro.ts` desde el
+reporte JSON de Playwright y el CI lo publica como artefacto (`registro-e2e`).
+El repo `docs` lo **lee** (modelo pull: este repo nunca escribe en `docs`) para:
+
+- la página de estado por escenario (`_generado/escenarios.md`);
+- la regla de `validar`: un issue `resuelto` no puede tener escenarios
+  `CU-<n>-*` sin test o que no estén en verde.
+
+## De un test a un escenario
+
+Los escenarios de aceptación de un issue en `docs` tienen identificador
+`CU-<número de issue>-<n>`; el test que lo cubre lleva la etiqueta:
+
+```ts
+test('aplicar descuento dentro del tope', { tag: ['@CU-042-1', '@regresion'] }, async ({ page }) => { … });
+```
+
+Un test puede cubrir varios escenarios, y un escenario tener varios tests
+(p. ej. API y web): su estado es el **peor** de sus tests.
+
+| Estado | Icono | Cuándo |
+|---|---|---|
+| `pasa` | ✅ | todos sus tests pasaron al primer intento |
+| `falla` | ❌ | algún test falló (también después de los reintentos) |
+| `inestable` | ⚠️ | algún test está en cuarentena (`@inestable`) o pasó sólo al reintentar |
+| `pendiente` | 🔧 | algún test está en `test.fixme`/`test.skip` |
+
+Un escenario que está en el issue pero no aparece en el registro **no tiene
+test** (`docs` lo muestra como 🔧 «sin test»).
+
+## Formato
+
+Esquema: [`esquemas/registro.schema.json`](../esquemas/registro.schema.json)
+(JSON Schema 2020-12). `version: 1`: sólo se agregan campos opcionales; un
+cambio incompatible sube la versión y `docs` lo rechaza con un mensaje claro.
+
+```json
+{
+  "version": 1,
+  "generado": "2026-10-10T07:40:00.000Z",
+  "ambiente": "qa",
+  "corrida": { "id": "123456", "inicio": "…", "duracion_ms": 30210, "commit": "abc123…", "enlace": "https://…/actions/runs/123456" },
+  "resumen": { "tests": 17, "escenarios": 3, "pasa": 16, "falla": 0, "inestable": 1, "pendiente": 0, "tasa_inestables": 0.0588 },
+  "escenarios": {
+    "CU-001-1": {
+      "estado": "pasa", "icono": "✅", "ultima_corrida": "…", "enlace": "https://…",
+      "tests": [{ "titulo": "un ítem creado se puede leer por id", "archivo": "api/items.spec.ts:13",
+                  "proyecto": "api", "estado": "pasa", "etiquetas": ["@regresion", "@CU-001-1"],
+                  "intentos": 1, "duracion_ms": 375 }]
+    }
+  },
+  "sin_escenario": [ … tests sin @CU-… … ]
+}
+```
+
+`resumen.tasa_inestables` es la métrica de confianza de la suite
+(docs/12-pruebas.md §6): si sube, se para a arreglar.
+
+## Cómo lo lee `docs`
+
+En el repo `docs` (plantilla `docs`), la variable `REGISTRO_E2E` apunta al
+registro: una ruta local o una URL. Sin `REGISTRO_E2E`, `docs` no cambia nada.
+
+| Dónde | `REGISTRO_E2E` |
+|---|---|
+| CI de `docs` en GitLab | Un paso previo baja el registro del **último** job `e2e` (rojo o verde) con un token de sólo lectura (`read_api`) y lo deja en `.e2e/registro.json`; ver abajo |
+| CI de `docs` en GitHub | `id=$(gh run list -R <org>/{{ repo_name }} -w e2e.yml -L 1 --json databaseId -q '.[0].databaseId')` y `gh run download "$id" -R <org>/{{ repo_name }} -n registro-e2e -D .e2e` (token de sólo lectura con `actions:read`); `REGISTRO_E2E=.e2e/registro.json` |
+| URL directa | Cualquier URL que devuelva el JSON; con `REGISTRO_E2E_TOKEN` se manda como `Authorization: Bearer` (`PRIVATE-TOKEN` si la URL es de la API de GitLab) |
+| Local | `REGISTRO_E2E=../{{ repo_name }}/reportes/registro.json make generar` |
+
+GitLab (el endpoint `jobs/artifacts/<ref>/raw/...` sólo mira el último
+pipeline **exitoso**, que escondería una corrida en rojo; por eso, el último job):
+
+```bash
+api="$CI_API_V4_URL/projects/<id de {{ repo_name }}>"
+job=$(curl -fsS -H "PRIVATE-TOKEN: $REGISTRO_E2E_TOKEN" "$api/jobs?scope[]=success&scope[]=failed&per_page=50"   | python -c "import json,sys; print(next(j['id'] for j in json.load(sys.stdin) if j['name'] == 'e2e'))")
+mkdir -p .e2e && curl -fsS -H "PRIVATE-TOKEN: $REGISTRO_E2E_TOKEN" -o .e2e/registro.json "$api/jobs/$job/artifacts/reportes/registro.json"
+export REGISTRO_E2E=.e2e/registro.json
+```
+
+Detalle en el README del repo `docs` («Estado de escenarios e2e»).

@@ -6,6 +6,8 @@
 - Índices de sección (`runbooks/`, `postmortems/`, `releases/`, `servicios/`,
   `casos-de-uso/`): agrega al final la lista de documentos de la carpeta, así
   ningún documento queda huérfano sin que nadie edite un índice compartido.
+- Casos de uso: si existe `_generado/escenarios.md` (registro e2e configurado,
+  ver scripts/escenarios.py), un enlace a la página de estado por escenario.
 """
 
 from __future__ import annotations
@@ -118,5 +120,11 @@ def on_page_markdown(markdown, page, config, files):
         return _adr(markdown, meta)
     seccion = posixpath.dirname(src)
     if posixpath.basename(src) == "index.md" and seccion in SECCIONES:
-        return _indice(markdown, seccion, page, files)
+        markdown = _indice(markdown, seccion, page, files)
+        if seccion == "casos-de-uso" and files.get_file_from_path("_generado/escenarios.md") is not None:
+            markdown += (
+                "\n## Estado de los escenarios\n\n"
+                "[Estado por escenario de la suite e2e](../_generado/escenarios.md)\n"
+            )
+        return markdown
     return markdown

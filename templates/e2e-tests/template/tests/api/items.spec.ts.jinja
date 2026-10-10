@@ -1,0 +1,45 @@
+/**
+ * Flujo del recurso de ejemplo (ItemService detrás del gateway). Reemplazar por
+ * los flujos reales: un test por escenario de aceptación, con su @CU-<issue>-<n>.
+ */
+import { expect, test } from '../fixtures/index.ts';
+
+interface Item {
+  id: string;
+  name: string;
+  description: string;
+}
+
+test(
+  'un ítem creado se puede leer por id',
+  { tag: ['@regresion', '@CU-001-1'] },
+  async ({ apiComo, datos }) => {
+    const nombre = datos.nombre('item');
+    const escritor = await apiComo('{{ "anonimo" if a_none else "escritor" }}');
+
+    const creado = await escritor.post('v1/items', {
+      data: { name: nombre, description: 'Ítem sintético e2e' },
+    });
+    expect(creado.status(), await creado.text()).toBe(200);
+    const { item } = (await creado.json()) as { item: Item };
+    expect(item.name).toBe(nombre);
+    // datos.alLimpiar(() => admin.delete(`v1/items/${item.id}`));  // cuando el API tenga DELETE
+
+    const lector = await apiComo('{{ "anonimo" if a_none else "lector" }}');
+    const leido = await lector.get(`v1/items/${item.id}`);
+    expect(leido.status()).toBe(200);
+    expect(((await leido.json()) as { item: Item }).item).toMatchObject({
+      id: item.id,
+      name: nombre,
+      description: 'Ítem sintético e2e',
+    });
+  },
+);
+
+test('un id inexistente devuelve 404 sin detalles internos', { tag: ['@regresion'] }, async ({ apiComo }) => {
+  const api = await apiComo('{{ "anonimo" if a_none else "lector" }}');
+  const res = await api.get('v1/items/00000000-0000-0000-0000-000000000000');
+  expect(res.status()).toBe(404);
+  const cuerpo = await res.text();
+  expect(cuerpo).not.toMatch(/panic|goroutine|stack|sql/i);
+});

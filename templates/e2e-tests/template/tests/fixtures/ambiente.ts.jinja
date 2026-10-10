@@ -1,0 +1,96 @@
+/**
+ * Ambiente contra el que corre la suite: URLs, OpenAPI y prefijo de datos.
+ *
+ * Se elige con E2E_AMBIENTE ({{ ambientes | join(' | ') }}; default {{ ambientes[0] }}). Las variables
+ * salen, en este orden, de: el entorno del proceso (el CI las inyecta) >
+ * ambientes/<ambiente>.env (local, ignorado por git) > ambientes/<ambiente>.env.example
+ * (versionado, sin secretos). Lo que ya está en el entorno (y no vacío) nunca se pisa.
+ *
+ * Sin dependencias de Playwright: lo usan también scripts/, robustez/ y carga/.
+ */
+import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseEnv } from 'node:util';
+
+export const RAIZ = fileURLToPath(new URL('../../', import.meta.url));
+export const AMBIENTES = [{% for a in ambientes %}'{{ a }}'{{ ', ' if not loop.last }}{% endfor %}] as const;
+
+export interface Ambiente {
+  nombre: string;
+  /** URL base del API gateway, sin barra final. */
+  apiBaseUrl: string;
+{%- if web %}
+  /** URL base del front web, sin barra final. */
+  webBaseUrl: string;
+{%- endif %}
+  /** OpenAPI del gateway: URL (http/https) o ruta absoluta a un archivo del repo. */
+  openapi: string;
+  /** Prefijo de todo lo que crea esta corrida (ver tests/fixtures/datos.ts). */
+  prefijo: string;
+  /** En prod sólo corre @smoke y nunca robustez ni carga. */
+  esProd: boolean;
+}
+
+let cargado: Ambiente | undefined;
+
+function cargarArchivo(ruta: string): void {
+  if (!existsSync(ruta)) return;
+  const valores = parseEnv(readFileSync(ruta, 'utf8'));
+  for (const [clave, valor] of Object.entries(valores)) {
+    // Vacío cuenta como no definido: el CI suele exportar variables sin valor.
+    if (!process.env[clave] && valor) process.env[clave] = valor;
+  }
+}
+
+/** Variable obligatoria: error claro si falta (mejor que un 'undefined' en una URL). */
+export function requerida(nombre: string): string {
+  const valor = process.env[nombre];
+  if (!valor) {
+    throw new Error(
+      `Falta la variable ${nombre} (ambiente ${process.env['E2E_AMBIENTE']}): ` +
+        'definila en ambientes/<ambiente>.env o en las variables del CI.',
+    );
+  }
+  return valor;
+}
+
+function sinBarra(url: string): string {
+  return url.replace(/\/+$/, '');
+}
+
+export function cargarAmbiente(): Ambiente {
+  if (cargado) return cargado;
+  const nombre = process.env['E2E_AMBIENTE'] || '{{ ambientes[0] }}';
+  if (!(AMBIENTES as readonly string[]).includes(nombre)) {
+    throw new Error(`E2E_AMBIENTE=${nombre} no existe; opciones: ${AMBIENTES.join(', ')}`);
+  }
+  process.env['E2E_AMBIENTE'] = nombre;
+  cargarArchivo(join(RAIZ, 'ambientes', `${nombre}.env`));
+  cargarArchivo(join(RAIZ, 'ambientes', `${nombre}.env.example`));
+
+  // Un id por corrida, el mismo en el proceso principal y en los workers de
+  // Playwright (heredan el entorno del proceso que carga primero la config).
+  process.env['E2E_CORRIDA'] ||=
+    process.env['GITHUB_RUN_ID'] ?? process.env['CI_PIPELINE_ID'] ?? Date.now().toString(36);
+
+  const apiBaseUrl = sinBarra(requerida('API_BASE_URL'));
+  const openapi = process.env['OPENAPI_URL'] || '{{ api_gateway_openapi_url }}';
+  cargado = {
+    nombre,
+    apiBaseUrl,
+{%- if web %}
+    webBaseUrl: sinBarra(requerida('WEB_BASE_URL')),
+{%- endif %}
+    openapi: /^https?:\/\//.test(openapi)
+      ? openapi
+      : openapi.startsWith('/')
+        ? `${apiBaseUrl}${openapi}`
+        : isAbsolute(openapi)
+          ? openapi
+          : join(RAIZ, openapi),
+    prefijo: process.env['E2E_PREFIJO'] || `e2e-${process.env['E2E_CORRIDA']}`,
+    esProd: nombre === 'prod',
+  };
+  return cargado;
+}

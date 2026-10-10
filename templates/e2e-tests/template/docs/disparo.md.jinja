@@ -1,0 +1,62 @@
+# Disparo de las suites
+
+La suite corre contra **un ambiente desplegado**. Se dispara de tres formas
+(docs/12-pruebas.md §7):
+
+| Disparo | {% if ci_gh %}GitHub Actions (`.github/workflows/e2e.yml`){% else %}GitLab CI (`.gitlab-ci.yml`){% endif %} |
+|---|---|
+{%- if ci_gh %}
+| Manual | Actions > e2e > Run workflow: `ambiente`, `suites`, `grep` |
+| Desde otro repo | `gh workflow run e2e.yml -R <org>/{{ repo_name }} -f ambiente=qa -f origen=<repo>@<sha>` (o `repository_dispatch` con `event_type: e2e` y `client_payload: {ambiente, suites, grep, origen}`) |
+| Programado | `schedule`: nocturno ({{ 'e2e + robustez' if robustez else 'e2e' }}){% if carga %} y semanal (+ carga){% endif %} |
+{%- else %}
+| Manual | Build > Pipelines > Run pipeline: `E2E_AMBIENTE`, `E2E_SUITES`, `E2E_GREP` |
+| Desde otro proyecto | Job `trigger` multi-proyecto con `strategy: depend`, o trigger token (`POST /projects/:id/trigger/pipeline` con `variables[E2E_AMBIENTE]=qa`) |
+| Programado | Build > Pipeline schedules: nocturno con `E2E_SUITES={{ 'e2e,robustez' if robustez else 'e2e' }}`{% if carga %}, semanal con `E2E_SUITES={{ 'e2e,robustez,carga' if robustez else 'e2e,carga' }}`{% endif %} |
+{%- endif %}
+
+Sin disparo explícito (un {{ 'PR' if ci_gh else 'MR' }} de este repo) sólo corre la
+verificación: typecheck y `playwright test --list`.
+
+## El deploy a QA de un servicio dispara la suite y su resultado bloquea prod
+
+El flujo de `docs/12-pruebas.md` §1: tag `qa-v*` en un servicio → deploy a
+QA → **e2e contra QA** → recién entonces `prod-v*`. Para que el resultado
+bloquee, el pipeline del servicio **espera** al de este repo:
+
+{%- if ci_gh %}
+
+- Ejemplo listo para copiar al workflow de deploy del servicio:
+  [`docs/ejemplos/github-disparar-e2e.yml`](ejemplos/github-disparar-e2e.yml).
+  Dispara con `gh workflow run`, encuentra la corrida por su título
+  (`run-name` incluye `origen`) y la sigue con `gh run watch --exit-status`:
+  si el e2e falla, el job del servicio falla.
+- Token: `E2E_DISPARO_TOKEN` en el repo del servicio (o de la organización),
+  con permiso **sólo** "Actions: read and write" sobre `{{ repo_name }}`
+  (fine-grained PAT o, mejor, una GitHub App). Las credenciales de los usuarios
+  de prueba **no** salen de este repo: el e2e corre acá, con sus secretos.
+- `repository_dispatch` sirve para disparar sin esperar (notificaciones).
+{%- else %}
+
+- Ejemplo listo para copiar al `.gitlab-ci.yml` del servicio:
+  [`docs/ejemplos/gitlab-disparar-e2e.yml`](ejemplos/gitlab-disparar-e2e.yml).
+  Un job `trigger` con `strategy: depend` toma el estado del pipeline de e2e:
+  si el e2e falla, el pipeline del servicio no llega al deploy a prod.
+- Sin tokens: alcanza con que quien corre el pipeline del servicio tenga rol
+  Developer en `{{ repo_name }}`. Las credenciales de prueba se quedan en este
+  proyecto (variables con scope de environment).
+{%- endif %}
+
+## Orden y concurrencia
+
+e2e → robustez → carga, en serie: comparten los usuarios de prueba y el rate
+limit del gateway (un 429 por la suite de al lado sería un falso rojo). {% if ci_gh %}`concurrency`
+deja una corrida por ambiente a la vez (las demás esperan).{% else %}`resource_group: e2e-$E2E_AMBIENTE`
+deja un job de suite por ambiente a la vez (GitLab encola los demás).{% endif %}
+
+## Migración al repo `ci`
+
+Cuando exista el pipeline `e2e` del repo `ci` (docs/11-pipelines.md), los jobs
+de este archivo se reemplazan por la llamada al pipeline compartido con las
+mismas entradas (`ambiente`, `suites`, `grep`, `origen`) y los mismos
+artefactos; los disparadores de los servicios no cambian.

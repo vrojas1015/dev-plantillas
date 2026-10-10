@@ -125,6 +125,17 @@ cortos para nombres condicionales: rutas de Windows), `url_org` y `tipos_repo`
   `DOCS_HASH`), con `/salud` libre para el healthcheck.
 - **lychee sólo en la rama principal**; excluye `localhost`, `example.*` y los
   repos de la propia org (suelen ser privados).
+- **Estado de escenarios e2e (opcional, docs/12 §3)**: con `REGISTRO_E2E`
+  (ruta o URL al `registro.json` de la plantilla `e2e-tests`; token opcional
+  `REGISTRO_E2E_TOKEN`), `generar.py` escribe `_generado/escenarios.md` y
+  `validar.py` rechaza un issue `resuelto` con un escenario `CU-<id>-<n>` sin
+  test o que no está ✅ (`scripts/escenarios.py`, sólo stdlib). Esa página es
+  una foto de otro repo: está en `.gitignore`, `--comprobar` y el control de
+  generados del CI la ignoran, y sin `REGISTRO_E2E` no existe. **Sin la
+  variable no cambia nada**. Los ids `CU-…` dentro de comentarios HTML no
+  cuentan. Limitación: los deploys que reconstruyen el sitio (imagen de
+  Coolify, `deploy.yml` de GitHub) no incluyen la página salvo que corran
+  `make generar` con la variable antes del build.
 - El job que en `main` regenera y commitea solo (spec §5) **no** se incluye:
   necesita un token con permiso de push. El CI falla y se corre `make generar`.
 
