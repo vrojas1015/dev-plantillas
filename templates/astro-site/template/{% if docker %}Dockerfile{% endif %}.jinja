@@ -1,0 +1,87 @@
+# syntax=docker/dockerfile:1
+#
+# Imagen de {{ repo_name }}{% if hib %} (render híbrido: server de Node de Astro con compresión,
+# que sirve también los archivos estáticos y las rutas prerenderizadas){% else %} (sitio estático servido por Caddy){% endif %}.
+#
+#   docker build --build-arg PUBLIC_ENTORNO=qa   -t {{ repo_name }}:qa   .
+#   docker build --build-arg PUBLIC_ENTORNO=prod -t {{ repo_name }}:prod .
+#
+# Las variables PUBLIC_* se hornean en el HTML/JS al compilar: hay UNA IMAGEN POR
+# AMBIENTE y el ambiente se elige en el build, no en runtime. QA lleva noindex y
+# robots.txt cerrado; sólo prod indexa.
+
+# ---------------------------------------------------------------- build
+FROM node:24-alpine AS build
+WORKDIR /app
+
+# Primero sólo las dependencias: esta capa se reutiliza mientras no cambie el lock.
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+COPY . .
+
+ARG PUBLIC_ENTORNO=prod
+{%- if ent %}
+ARG PUBLIC_API_FUENTE=api
+ARG PUBLIC_API_BASE_URL={{ api_base_url }}
+{%- endif %}
+{%- if ga4 %}
+ARG PUBLIC_GA4_ID=
+{%- elif analytics == 'plausible' %}
+ARG PUBLIC_PLAUSIBLE_DOMAIN=
+{%- endif %}
+RUN case "$PUBLIC_ENTORNO" in \
+      qa|prod) ;; \
+      *) echo "PUBLIC_ENTORNO inválido: '$PUBLIC_ENTORNO' (usar qa o prod)" >&2; exit 1 ;; \
+    esac \
+{%- if analytics == 'plausible' %}
+ && if [ -z "$PUBLIC_PLAUSIBLE_DOMAIN" ]; then unset PUBLIC_PLAUSIBLE_DOMAIN; fi \
+{%- endif %}
+ && npx astro build
+{%- if hib %}
+
+# Dependencias de runtime (el server de Astro las importa de node_modules).
+RUN npm ci --omit=dev --no-audit --no-fund
+
+# ---------------------------------------------------------------- runtime
+FROM node:24-alpine
+ARG PUBLIC_ENTORNO=prod
+LABEL org.opencontainers.image.title="{{ repo_name }}" \
+      app.env="$PUBLIC_ENTORNO"
+ENV NODE_ENV=production \
+    HOST=0.0.0.0 \
+    PORT=8080
+WORKDIR /app
+
+COPY --from=build /app/package.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/servidor.mjs ./
+
+USER node
+# Cloud Run y Coolify mandan el tráfico a $PORT (8080). El TLS lo termina el proxy.
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget -q --spider "http://127.0.0.1:${PORT}/" || exit 1
+# servidor.mjs: el handler de Astro con compresión gzip/brotli.
+CMD ["node", "servidor.mjs"]
+{%- else %}
+
+# redirects.json → reglas 301 de Caddy.
+RUN node scripts/redirecciones.mjs caddy > /app/redirecciones.caddy
+
+# ---------------------------------------------------------------- runtime
+FROM caddy:2-alpine
+ARG PUBLIC_ENTORNO=prod
+LABEL org.opencontainers.image.title="{{ repo_name }}" \
+      app.env="$PUBLIC_ENTORNO"
+
+COPY Caddyfile /etc/caddy/Caddyfile
+COPY --from=build /app/redirecciones.caddy /etc/caddy/redirecciones.caddy
+COPY --from=build /app/dist /srv
+
+# Caddy escucha HTTP plano en :80. El TLS lo termina el proxy de Coolify (Traefik).
+EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD wget -q --spider http://127.0.0.1/ || exit 1
+{%- endif %}

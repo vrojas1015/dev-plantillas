@@ -1,0 +1,21 @@
+---
+// Datos estructurados tipados con schema-dts: un objeto que no cumple el tipo
+// de schema.org no compila. Varios nodos van en un @graph.
+import type { Graph, WithContext } from 'schema-dts'
+
+import type { Nodo } from '@/lib/seo'
+
+export interface Props {
+  datos: Nodo | Nodo[]
+}
+
+const { datos } = Astro.props
+const documento: WithContext<Nodo> | Graph = Array.isArray(datos)
+  ? { '@context': 'https://schema.org', '@graph': datos }
+  : ({ '@context': 'https://schema.org', ...datos } as WithContext<Nodo>)
+
+// `<` escapado: un texto con "</script>" no puede cortar el bloque.
+const json = JSON.stringify(documento).replace(/</g, '\\u003c')
+---
+
+<script type="application/ld+json" is:inline set:html={json} />

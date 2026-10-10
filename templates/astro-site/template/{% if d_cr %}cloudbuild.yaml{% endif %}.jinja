@@ -1,0 +1,34 @@
+# Cloud Build para {{ repo_name }}: build de la imagen (Dockerfile) y push a
+# Artifact Registry. _IMAGE y _ENTORNO los inyecta el CI con --substitutions.
+# logging: CLOUD_LOGGING_ONLY evita depender de un bucket de logs cuando el
+# build corre bajo un service account impersonado (WIF).
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - --build-arg
+      - PUBLIC_ENTORNO=${_ENTORNO}
+{%- if ga4 %}
+      - --build-arg
+      - PUBLIC_GA4_ID=${_GA4_ID}
+{%- endif %}
+      - -t
+      - ${_IMAGE}
+      - .
+
+images:
+  - ${_IMAGE}
+
+substitutions:
+  _ENTORNO: prod
+{%- if ga4 %}
+  _GA4_ID: ''
+{%- endif %}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s

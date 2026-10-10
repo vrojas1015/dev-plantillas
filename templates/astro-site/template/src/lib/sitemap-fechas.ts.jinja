@@ -1,0 +1,76 @@
+// lastmod real para el sitemap (lo usa astro.config.mjs): fecha de
+// actualización de cada post y de cada entidad, no la fecha del build.
+// Se importa desde la config, así que no puede usar astro:content ni astro:env.
+{%- if blog %}
+import { readFile, readdir } from 'node:fs/promises'
+import { join } from 'node:path'
+{%- endif %}
+
+{%- if blog or ent %}
+import { sitio } from '../../sitio.config.mjs'
+{%- endif %}
+{%- if ent %}
+import { crearCatalogo, type OpcionesCatalogo } from './api/catalogo'
+{%- endif %}
+
+{%- if blog or ent %}
+
+const conPrefijo = (idioma: string, camino: string) =>
+  idioma === sitio.idiomaDefault ? camino : `/${idioma}${camino}`
+{%- endif %}
+
+let cache: Promise<Map<string, Date>> | undefined
+
+/** Mapa ruta → fecha de última modificación. Se calcula una sola vez por build. */
+export function fechasDelSitemap({% if ent %}api: OpcionesCatalogo{% endif %}): Promise<Map<string, Date>> {
+  cache ??= calcular({% if ent %}api{% endif %}).catch((error: unknown) => {
+    // Sin fechas el sitemap igual se genera (sin lastmod); el build no se corta acá.
+    console.warn(`[sitemap] no se pudieron calcular las fechas de lastmod: ${String(error)}`)
+    return new Map<string, Date>()
+  })
+  return cache
+}
+
+async function calcular({% if ent %}api: OpcionesCatalogo{% endif %}): Promise<Map<string, Date>> {
+  const fechas = new Map<string, Date>()
+{%- if blog %}
+
+  // Posts: src/content/blog/<idioma>/<slug>.md(x) → updatedDate ?? publishDate.
+  for (const idioma of sitio.idiomas) {
+    const dir = join(process.cwd(), 'src', 'content', 'blog', idioma)
+    const archivos = await readdir(dir).catch(() => [] as string[])
+    for (const archivo of archivos.filter((a) => /\.mdx?$/.test(a))) {
+      const texto = await readFile(join(dir, archivo), 'utf8')
+      const fecha =
+        /^updatedDate:\s*(\S+)/m.exec(texto)?.[1] ?? /^publishDate:\s*(\S+)/m.exec(texto)?.[1]
+      if (fecha)
+        fechas.set(conPrefijo(idioma, `/blog/${archivo.replace(/\.mdx?$/, '')}/`), new Date(fecha))
+    }
+  }
+{%- endif %}
+{%- if ent %}
+
+  // Entidades: la misma lista que usa getStaticPaths.
+  const catalogo = crearCatalogo(api)
+  for (const idioma of sitio.idiomas) {
+    for (const p of await catalogo.listarTodos(idioma)) {
+      fechas.set(conPrefijo(idioma, `/catalogo/${p.slug}/`), new Date(p.actualizado))
+    }
+  }
+{%- endif %}
+  return fechas
+}
+{%- if ent and hib %}
+
+/** URLs absolutas de las entidades (SSR: no salen del build) para el sitemap. */
+export async function rutasDeEntidades(api: OpcionesCatalogo): Promise<string[]> {
+  const catalogo = crearCatalogo(api)
+  const rutas: string[] = []
+  for (const idioma of sitio.idiomas) {
+    for (const p of await catalogo.listarTodos(idioma)) {
+      rutas.push(new URL(conPrefijo(idioma, `/catalogo/${p.slug}/`), sitio.url).href)
+    }
+  }
+  return rutas
+}
+{%- endif %}

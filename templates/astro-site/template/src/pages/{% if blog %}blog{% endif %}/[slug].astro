@@ -1,0 +1,16 @@
+---
+import type { GetStaticPaths } from 'astro'
+
+import { postsDe, slugDe, type Post as Entrada } from '@/lib/blog'
+import { idiomaDefault } from '@/lib/i18n'
+import Post from '@/vistas/Post.astro'
+
+export const getStaticPaths = (async () => {
+  const posts = await postsDe(idiomaDefault)
+  return posts.map((post) => ({ params: { slug: slugDe(post) }, props: { post } }))
+}) satisfies GetStaticPaths
+
+const { post } = Astro.props as { post: Entrada }
+---
+
+<Post idioma={idiomaDefault} post={post} />

@@ -1,0 +1,17 @@
+# Generados / dependencias
+dist/
+.astro/
+node_modules/
+.lighthouseci/
+package-lock.json
+.copier-answers.yml
+
+# Docs y contenido: se formatean a mano.
+*.md
+*.mdx
+
+# Configs que arma la plantilla según las respuestas (y firebase.json, que
+# reescribe scripts/redirecciones.mjs en el deploy).
+lighthouserc.json
+firebase.json
+.firebaserc

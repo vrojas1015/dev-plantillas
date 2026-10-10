@@ -1,0 +1,31 @@
+// Colecciones de contenido (Content Layer de Astro 6+). El esquema zod hace que
+// un post sin title, description o publishDate —o con un título o una
+// descripción que rompen las reglas de SEO— NO compile.
+//
+// Fuente: Markdown/MDX en src/content/blog/<idioma>/<slug>.md(x). El id es
+// "<idioma>/<slug>". Para cambiar a un CMS headless se reemplaza el loader.
+import { defineCollection } from 'astro:content'
+import { glob } from 'astro/loaders'
+import { z } from 'astro/zod'
+
+import { sitio } from '../sitio.config.mjs'
+
+// «Título · Sitio» tiene que entrar en 60 caracteres.
+const largoMaximoTitulo = 60 - ` · ${sitio.nombre}`.length
+
+const blog = defineCollection({
+  loader: glob({ base: './src/content/blog', pattern: '**/*.{md,mdx}' }),
+  schema: ({ image }) =>
+    z.object({
+      title: z.string().min(10).max(largoMaximoTitulo),
+      description: z.string().min(70).max(160),
+      publishDate: z.coerce.date(),
+      updatedDate: z.coerce.date().optional(),
+      /** Imagen junto al Markdown; también se usa (recortada a 1200×630) en Open Graph. */
+      image: image().optional(),
+      imageAlt: z.string().optional(),
+      draft: z.boolean().default(false),
+    }),
+})
+
+export const collections = { blog }

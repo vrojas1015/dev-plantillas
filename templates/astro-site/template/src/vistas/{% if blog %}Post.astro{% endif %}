@@ -1,0 +1,88 @@
+---
+import { getImage, Image } from 'astro:assets'
+import { render } from 'astro:content'
+import type { BlogPosting } from 'schema-dts'
+
+import Migas from '@/components/Migas.astro'
+import { t } from '@/i18n/textos'
+import Base from '@/layouts/Base.astro'
+import { alternativasDe, slugDe, type Post } from '@/lib/blog'
+import { ruta, type Idioma } from '@/lib/i18n'
+import { migas, urlAbsoluta } from '@/lib/seo'
+
+interface Props {
+  idioma: Idioma
+  post: Post
+}
+
+const { idioma, post } = Astro.props
+const { title, description, publishDate, updatedDate, image, imageAlt } = post.data
+const { Content } = await render(post)
+const slug = slugDe(post)
+const camino = ruta(idioma, `/blog/${slug}/`)
+
+// Open Graph: la imagen del post recortada a 1200×630 (o la default del sitio).
+const og = image
+  ? (await getImage({ src: image, width: 1200, height: 630, format: 'jpg', fit: 'cover' })).src
+  : undefined
+
+const fecha = new Intl.DateTimeFormat(idioma, { dateStyle: 'long', timeZone: 'UTC' })
+const items = [
+  { nombre: t(idioma, 'nav.inicio'), camino: ruta(idioma, '/') },
+  { nombre: t(idioma, 'blog.titulo'), camino: ruta(idioma, '/blog/') },
+  { nombre: title, camino },
+]
+
+const articulo: BlogPosting = {
+  '@type': 'BlogPosting',
+  headline: title,
+  description,
+  inLanguage: idioma,
+  datePublished: publishDate.toISOString(),
+  dateModified: (updatedDate ?? publishDate).toISOString(),
+  mainEntityOfPage: urlAbsoluta(camino),
+  url: urlAbsoluta(camino),
+  ...(og && { image: urlAbsoluta(og) }),
+  author: { '@id': urlAbsoluta('/#organizacion') },
+  publisher: { '@id': urlAbsoluta('/#organizacion') },
+}
+---
+
+<Base
+  titulo={title}
+  descripcion={description}
+  camino={camino}
+  idioma={idioma}
+  alternativas={await alternativasDe(slug)}
+  tipo="article"
+  publicado={publishDate}
+  {...(og && { imagen: og })}
+  {...(updatedDate && { actualizado: updatedDate })}
+  jsonLd={[articulo, migas(items)]}
+>
+  <article class="contenedor prosa">
+    <Migas items={items} />
+    <h1>{title}</h1>
+    <p class="meta">
+      {t(idioma, 'blog.publicado')}
+      <time datetime={publishDate.toISOString()}>{fecha.format(publishDate)}</time>
+      {updatedDate && (
+        <>
+          · {t(idioma, 'blog.actualizado')}
+          <time datetime={updatedDate.toISOString()}>{fecha.format(updatedDate)}</time>
+        </>
+      )}
+    </p>
+    {image && (
+      <Image
+        src={image}
+        alt={imageAlt ?? ''}
+        widths={[480, 800, 1200]}
+        sizes="(min-width: 44rem) 44rem, 100vw"
+        loading="eager"
+        fetchpriority="high"
+      />
+    )}
+    <Content />
+  </article>
+</Base>

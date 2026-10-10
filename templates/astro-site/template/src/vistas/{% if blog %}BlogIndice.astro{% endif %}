@@ -1,0 +1,58 @@
+---
+import Migas from '@/components/Migas.astro'
+import { t } from '@/i18n/textos'
+import Base from '@/layouts/Base.astro'
+import { idiomasConPosts, postsDe, urlDe } from '@/lib/blog'
+import { ruta, type Idioma } from '@/lib/i18n'
+import { migas } from '@/lib/seo'
+
+interface Props {
+  idioma: Idioma
+}
+
+const { idioma } = Astro.props
+const posts = await postsDe(idioma)
+const alternativas = (await idiomasConPosts()).map((i) => ({
+  idioma: i,
+  camino: ruta(i, '/blog/'),
+}))
+const fecha = new Intl.DateTimeFormat(idioma, { dateStyle: 'long', timeZone: 'UTC' })
+const items = [
+  { nombre: t(idioma, 'nav.inicio'), camino: ruta(idioma, '/') },
+  { nombre: t(idioma, 'blog.titulo'), camino: ruta(idioma, '/blog/') },
+]
+---
+
+<Base
+  titulo={t(idioma, 'blog.titulo')}
+  descripcion={t(idioma, 'blog.descripcion')}
+  camino={ruta(idioma, '/blog/')}
+  idioma={idioma}
+  alternativas={alternativas}
+  jsonLd={[migas(items)]}
+>
+  <div class="contenedor">
+    <Migas items={items} />
+    <h1>{t(idioma, 'blog.titulo')}</h1>
+    <p>{t(idioma, 'blog.descripcion')}</p>
+    {posts.length === 0 ? (
+      <p>{t(idioma, 'blog.vacio')}</p>
+    ) : (
+      <ul class="tarjetas" role="list">
+        {posts.map((post) => (
+          <li class="tarjeta">
+            <h2>
+              <a href={urlDe(post)}>{post.data.title}</a>
+            </h2>
+            <p class="meta">
+              <time datetime={post.data.publishDate.toISOString()}>
+                {fecha.format(post.data.publishDate)}
+              </time>
+            </p>
+            <p>{post.data.description}</p>
+          </li>
+        ))}
+      </ul>
+    )}
+  </div>
+</Base>

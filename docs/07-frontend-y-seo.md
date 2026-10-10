@@ -1,7 +1,7 @@
 # Frontend y SEO
 
 Cómo elegir la plantilla de front según el proyecto, y especificación de la
-plantilla `astro-site` (pendiente de construir), orientada a sitios públicos
+plantilla `astro-site` (construida), orientada a sitios públicos
 que tienen que posicionar en buscadores.
 
 ## 1. Qué plantilla usar

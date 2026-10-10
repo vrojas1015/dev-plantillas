@@ -1,0 +1,226 @@
+{%- if d_fb -%}
+# Deploy a Firebase Hosting{% if hib %} + rutas SSR en Cloud Run{% endif %}, KEYLESS (Workload Identity Federation).
+#
+#   push a main      → production ({{ gcp_project_prod }})
+#   tag qa-vX.Y.Z    → qa ({{ gcp_project_qa }}): noindex + robots.txt cerrado
+#
+# Configuración en cada GitHub Environment (`production` y `qa`),
+# Settings › Environments › <env> › Variables (no son secretos):
+#   GCP_WIF_PROVIDER  projects/<NÚMERO>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+#   GCP_SA_EMAIL      <service-account>@<proyecto>.iam.gserviceaccount.com
+{%- if ga4 %}
+#   PUBLIC_GA4_ID     G-XXXXXXXXXX (sólo production; en qa no se carga analítica)
+{%- endif %}
+#
+# Setup de una vez: docs/deploy.md
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    tags: ['qa-v*.*.*']
+
+permissions:
+  contents: read
+  id-token: write # token OIDC para WIF
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+{%- raw %}
+    environment:
+      name: ${{ github.ref_type == 'tag' && 'qa' || 'production' }}
+    # Nunca dos deploys al mismo ambiente a la vez, y sin cancelar el que corre.
+    concurrency:
+      group: deploy-${{ github.ref_type == 'tag' && 'qa' || 'production' }}
+      cancel-in-progress: false
+    env:
+      TARGET: ${{ github.ref_type == 'tag' && 'qa' || 'production' }}
+      PUBLIC_ENTORNO: ${{ github.ref_type == 'tag' && 'qa' || 'prod' }}
+{%- endraw %}
+{%- if ga4 %}
+      PUBLIC_GA4_ID: {% raw %}${{ vars.PUBLIC_GA4_ID }}{% endraw %}
+{%- endif %}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Test de SEO del ambiente (qa → noindex, prod → indexable)
+        run: npm run test:seo
+
+      - name: Autenticar en GCP (WIF, sin claves)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: {% raw %}${{ vars.GCP_WIF_PROVIDER }}{% endraw %}
+          service_account: {% raw %}${{ vars.GCP_SA_EMAIL }}{% endraw %}
+{%- if hib %}
+
+      # Rutas SSR: la misma imagen que en cloud-run/coolify, en Cloud Run del
+      # mismo proyecto. Hosting le reenvía /catalogo/** (rewrites de firebase.json).
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Cloud Run (build en Cloud Build + deploy)
+        run: |
+          if [ "$TARGET" = qa ]; then GCP_PROJECT={{ gcp_project_qa }}; else GCP_PROJECT={{ gcp_project_prod }}; fi
+          REGION={{ gcp_region }}
+          IMAGE_TAG="${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}"
+          IMAGE="$REGION-docker.pkg.dev/$GCP_PROJECT/{{ repo_name }}/{{ repo_name }}:$IMAGE_TAG"
+          gcloud builds submit --config=cloudbuild.yaml --project="$GCP_PROJECT" \
+            --substitutions=_IMAGE="$IMAGE",_ENTORNO="$PUBLIC_ENTORNO"{% if ga4 %},_GA4_ID="$PUBLIC_GA4_ID"{% endif %} .
+          ARCHIVO=cloudrun.$([ "$TARGET" = qa ] && echo qa || echo prod).yaml
+          sed -e "s|__PROJECT_ID__|$GCP_PROJECT|g" -e "s|__REGION__|$REGION|g" \
+              -e "s|__IMAGE_TAG__|$IMAGE_TAG|g" -e "s|__DEPLOY_TIME__|$(date -u +%Y%m%dT%H%M%SZ)|g" \
+              "$ARCHIVO" > "$RUNNER_TEMP/cloudrun.yaml"
+          gcloud run services replace "$RUNNER_TEMP/cloudrun.yaml" --region="$REGION" --project="$GCP_PROJECT"
+{%- endif %}
+
+      - name: Redirecciones 301 (redirects.json → firebase.json)
+        run: npm run redirecciones:firebase
+      - name: Deploy a Firebase Hosting
+        run: npx --yes firebase-tools@15 deploy --only hosting --project "$TARGET" --non-interactive
+{%- elif d_cy -%}
+# Deploy a Coolify v4: imagen Docker en GHCR + webhook de deploy.
+#
+#   tag qa-vX.Y.Z    → imagen PUBLIC_ENTORNO=qa   → ghcr.io/<owner>/<repo>:qa   → Coolify QA
+#   tag prod-vX.Y.Z  → imagen PUBLIC_ENTORNO=prod → ghcr.io/<owner>/<repo>:prod → Coolify producción
+#
+# Cada imagen se publica con dos tags: el del git tag (inmutable, para rollback)
+# y el del ambiente (`qa` / `prod`, móvil), que es el que sigue el recurso de Coolify.
+#
+# Configuración en cada GitHub Environment (`qa` y `production`):
+#   Variables  COOLIFY_URL            https://coolify.example.com (sin barra final)
+#              COOLIFY_RESOURCE_UUID  UUID del recurso de ese ambiente en Coolify
+{%- if ga4 %}
+#              PUBLIC_GA4_ID          G-XXXXXXXXXX (sólo production)
+{%- endif %}
+#   Secrets    COOLIFY_TOKEN          API token de Coolify con permiso de deploy
+#
+# El push a GHCR usa el GITHUB_TOKEN del job (permiso packages: write).
+# Setup de una vez: docs/deploy.md
+name: Deploy
+
+on:
+  push:
+    tags: ['qa-v*.*.*', 'prod-v*.*.*']
+
+permissions:
+  contents: read
+  packages: write # push de la imagen a GHCR
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+{%- raw %}
+    environment:
+      name: ${{ startsWith(github.ref_name, 'prod-v') && 'production' || 'qa' }}
+    concurrency:
+      group: deploy-${{ startsWith(github.ref_name, 'prod-v') && 'production' || 'qa' }}
+      cancel-in-progress: false
+    env:
+      PUBLIC_ENTORNO: ${{ startsWith(github.ref_name, 'prod-v') && 'prod' || 'qa' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Nombre de la imagen (GHCR exige minúsculas)
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build + push de la imagen (PUBLIC_ENTORNO=${{ env.PUBLIC_ENTORNO }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          build-args: |
+            PUBLIC_ENTORNO=${{ env.PUBLIC_ENTORNO }}
+{%- endraw %}
+{%- if ga4 %}
+            PUBLIC_GA4_ID={% raw %}${{ vars.PUBLIC_GA4_ID }}{% endraw %}
+{%- endif %}
+{%- raw %}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.ref_name }}
+            ${{ env.IMAGE }}:${{ env.PUBLIC_ENTORNO }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Disparar deploy en Coolify
+        env:
+          COOLIFY_URL: ${{ vars.COOLIFY_URL }}
+          COOLIFY_RESOURCE_UUID: ${{ vars.COOLIFY_RESOURCE_UUID }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          for v in COOLIFY_URL COOLIFY_RESOURCE_UUID COOLIFY_TOKEN; do
+            test -n "${!v}" || { echo "Falta $v en el GitHub Environment de este ambiente"; exit 1; }
+          done
+          curl -fsS "$COOLIFY_URL/api/v1/deploy?uuid=$COOLIFY_RESOURCE_UUID&force=false" \
+            -H "Authorization: Bearer $COOLIFY_TOKEN"
+{%- endraw %}
+{%- else -%}
+# Deploy a Cloud Run (render híbrido: el server de Node sirve todo el sitio),
+# KEYLESS con Workload Identity Federation. Build en Cloud Build.
+#
+#   tag qa-vX.Y.Z    → qa   ({{ gcp_project_qa }}):  noindex + robots.txt cerrado
+#   tag prod-vX.Y.Z  → prod ({{ gcp_project_prod }})
+#
+# Variables en cada GitHub Environment (`qa` y `production`):
+#   GCP_WIF_PROVIDER  projects/<NÚMERO>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+#   GCP_SA_EMAIL      <service-account>@<proyecto>.iam.gserviceaccount.com
+{%- if ga4 %}
+#   PUBLIC_GA4_ID     G-XXXXXXXXXX (sólo production)
+{%- endif %}
+#
+# Setup de una vez: docs/deploy.md
+name: Deploy
+
+on:
+  push:
+    tags: ['qa-v*.*.*', 'prod-v*.*.*']
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+{%- raw %}
+    environment:
+      name: ${{ startsWith(github.ref_name, 'prod-v') && 'production' || 'qa' }}
+    concurrency:
+      group: deploy-${{ startsWith(github.ref_name, 'prod-v') && 'production' || 'qa' }}
+      cancel-in-progress: false
+    env:
+      PUBLIC_ENTORNO: ${{ startsWith(github.ref_name, 'prod-v') && 'prod' || 'qa' }}
+{%- endraw %}
+{%- if ga4 %}
+      PUBLIC_GA4_ID: {% raw %}${{ vars.PUBLIC_GA4_ID }}{% endraw %}
+{%- endif %}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: {% raw %}${{ vars.GCP_WIF_PROVIDER }}{% endraw %}
+          service_account: {% raw %}${{ vars.GCP_SA_EMAIL }}{% endraw %}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build (Cloud Build) + deploy (Cloud Run)
+        run: |
+          if [ "$PUBLIC_ENTORNO" = qa ]; then GCP_PROJECT={{ gcp_project_qa }}; else GCP_PROJECT={{ gcp_project_prod }}; fi
+          REGION={{ gcp_region }}
+          IMAGE="$REGION-docker.pkg.dev/$GCP_PROJECT/{{ repo_name }}/{{ repo_name }}:$GITHUB_REF_NAME"
+          gcloud builds submit --config=cloudbuild.yaml --project="$GCP_PROJECT" \
+            --substitutions=_IMAGE="$IMAGE",_ENTORNO="$PUBLIC_ENTORNO"{% if ga4 %},_GA4_ID="$PUBLIC_GA4_ID"{% endif %} .
+          sed -e "s|__PROJECT_ID__|$GCP_PROJECT|g" -e "s|__REGION__|$REGION|g" \
+              -e "s|__IMAGE_TAG__|$GITHUB_REF_NAME|g" -e "s|__DEPLOY_TIME__|$(date -u +%Y%m%dT%H%M%SZ)|g" \
+              "cloudrun.$PUBLIC_ENTORNO.yaml" > "$RUNNER_TEMP/cloudrun.yaml"
+          gcloud run services replace "$RUNNER_TEMP/cloudrun.yaml" --region="$REGION" --project="$GCP_PROJECT"
+          gcloud run services describe {{ repo_name }} --region="$REGION" --project="$GCP_PROJECT" --format='value(status.url)'
+{%- endif %}

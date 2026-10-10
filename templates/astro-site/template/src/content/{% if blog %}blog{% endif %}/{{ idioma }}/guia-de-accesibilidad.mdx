@@ -1,0 +1,26 @@
+---
+title: "Guía rápida de accesibilidad"
+description: "Los controles mínimos antes de publicar una página nueva: encabezados, textos alternativos, contraste, foco visible y navegación con teclado."
+publishDate: 2026-08-12
+---
+
+export const controles = [
+  'Un solo h1 por página y encabezados en orden',
+  'Texto alternativo en toda imagen con contenido',
+  'Contraste AA entre texto y fondo',
+  'Foco visible en enlaces, botones y campos',
+  'Todo se puede usar con el teclado',
+]
+
+La accesibilidad cuenta para el SEO y, sobre todo, para las personas. Esta
+entrada está escrita en **MDX**: el listado de abajo sale de una variable.
+
+## Lista de control
+
+<ul>
+  {controles.map((control) => <li>{control}</li>)}
+</ul>
+
+Lighthouse CI exige un puntaje de accesibilidad de 95 o más, pero ninguna
+herramienta automática reemplaza probar la página con el teclado y con un
+lector de pantalla.
