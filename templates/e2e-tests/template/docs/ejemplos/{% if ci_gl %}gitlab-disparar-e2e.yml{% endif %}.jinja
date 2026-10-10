@@ -1,0 +1,21 @@
+# Ejemplo para el .gitlab-ci.yml de un SERVICIO (no de este repo): después del
+# deploy a QA, dispara el pipeline de {{ repo_name }} y ESPERA su resultado
+# (`strategy: depend`). Si el e2e falla, este job falla y el pipeline del
+# servicio no llega al deploy a prod. Copiar al .gitlab-ci.yml del servicio.
+#
+# Permisos: quien dispara (el usuario del pipeline del servicio) necesita rol
+# Developer en <grupo>/{{ repo_name }} (pipelines multi-proyecto). Sin tokens.
+
+e2e-qa:
+  stage: e2e            # después de deploy-qa, antes de deploy-prod
+  # needs: [deploy-qa]
+  variables:
+    E2E_AMBIENTE: qa
+    E2E_SUITES: "e2e{{ ',robustez' if robustez }}"
+    E2E_ORIGEN: $CI_PROJECT_PATH@$CI_COMMIT_SHORT_SHA
+  trigger:
+    project: <grupo>/{{ repo_name }}
+    branch: main
+    strategy: depend    # el estado de este job = el del pipeline de e2e
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^qa-v/

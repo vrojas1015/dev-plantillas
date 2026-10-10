@@ -1,0 +1,30 @@
+# Schemathesis {{ v_schemathesis }}: robustez del API contra el OpenAPI del gateway.
+# Lo corre robustez/robustez.ts una vez por rol (npm run robustez). Referencia
+# de la configuración: https://schemathesis.readthedocs.io/en/stable/reference/configuration/
+
+# La credencial del rol la pone robustez.ts en E2E_CREDENCIAL (vacía = anónimo).
+headers = { {{ auth_header }} = "${E2E_CREDENCIAL}" }
+
+# Por debajo del rate limit del gateway (600/min por usuario, ráfaga 100): un
+# 429 no es un error, pero desperdicia casos de prueba.
+rate-limit = "8/s"
+wait-for-schema = 30
+max-failures = 50
+
+[checks]
+enabled = false
+# 5xx = el servicio no controló una entrada: siempre es un bug.
+not_a_server_error.enabled = true
+# El cuerpo y el Content-Type de cada respuesta cumplen lo que dice el OpenAPI.
+response_schema_conformance.enabled = true
+content_type_conformance.enabled = true
+# status_code_conformance queda APAGADO: el OpenAPI que genera grpc-gateway
+# desde los protos sólo documenta el 200, así que cada 400/401/403/404/409/429
+# (correctos) saldrían como "status no documentado". Prenderlo cuando los protos
+# documenten las respuestas de error (openapiv2_operation › responses).
+# Tiempo máximo por respuesta (segundos).
+max_response_time = 2.0
+
+[generation]
+# Casos por operación y fase; subir para corridas nocturnas largas.
+max-examples = 25

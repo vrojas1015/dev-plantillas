@@ -1,0 +1,71 @@
+# {{ repo_name }}
+
+{{ descripcion }}
+
+Suite de punta a punta contra la plataforma **desplegada** (ambientes:
+{{ ambientes | join(', ') }}): Playwright para {{ 'UI y ' if web }}API (autorización por rol,
+flujos, smoke){{ ', Schemathesis para robustez del API' if robustez }}{{ ' y k6 para carga y rate limit' if carga }}.
+Cada corrida produce un **registro de casos de uso** (`registro.json`) que el
+repo de documentación muestra por escenario.
+
+## Requisitos
+
+- Node 24 (`node --version`).
+{%- if robustez or carga %}
+- Docker (Schemathesis y k6 corren en contenedores; nada que instalar).
+{%- endif %}
+- Credenciales de los usuarios de prueba del ambiente (docs/usuarios-de-prueba.md).
+
+## Primeros pasos
+
+```bash
+npm install
+npx playwright install{{ (' ' ~ navegadores | join(' ')) if web }}
+cp ambientes/{{ ambientes[0] }}.env.example ambientes/{{ ambientes[0] }}.env    # completar credenciales (ignorado por git)
+npm run typecheck && npm run listar
+E2E_AMBIENTE={{ ambientes[0] }} npm run e2e
+```
+
+Commitear el `package-lock.json` que genera el primer `npm install` (el CI usa
+`npm ci` si existe).
+
+## Comandos
+
+| Comando | Qué hace |
+|---|---|
+| `npm run e2e` | Playwright + `registro.json` + decisión de bloqueo (como el CI) |
+| `npm test` | Sólo Playwright (su código de salida incluye los `@inestable`) |
+| `npm run test:api` / {% if web %}`npm run test:web` / {% endif %}`npm run test:smoke` | Subconjuntos |
+| `npm run listar` | Lista los tests sin correrlos |
+| `npm run reporte` | Abre el reporte HTML (`reportes/html/`) |
+| `npm run registro` | Regenera `reportes/registro.json` desde el último reporte |
+{%- if robustez %}
+| `npm run robustez` | Schemathesis por rol contra el OpenAPI del gateway |
+{%- endif %}
+{%- if carga %}
+| `npm run carga` | k6: umbrales y rate limit |
+{%- endif %}
+| `npm run token -- <rol>` | Prueba la credencial de un rol (no la imprime) |
+| `npm run typecheck` | `tsc --noEmit` |
+
+Ambiente: `E2E_AMBIENTE` ({{ ambientes | join(' | ') }}; default {{ ambientes[0] }}). En prod sólo corre
+`@smoke`.
+
+## Documentación
+
+| Tema | Archivo |
+|---|---|
+| Cómo escribir un test (escenarios, etiquetas, datos) | `CLAUDE.md` |
+| Usuarios de prueba y tokens por rol | `docs/usuarios-de-prueba.md` |
+| `registro.json` y cómo lo lee `docs` | `docs/registro.md` |
+| Disparo (manual, nocturno, desde otro repo) y bloqueo de la promoción | `docs/disparo.md` |
+| Variables y secretos del CI, versiones fijadas | `docs/ci.md` |
+{%- if robustez or carga %}
+| Schemathesis{{ ' y k6' if carga }} | `docs/robustez-y-carga.md` |
+{%- endif %}
+
+## Actualizar desde la plantilla
+
+```bash
+copier update --trust     # revisar el diff; .copier-answers.yml no se edita a mano
+```

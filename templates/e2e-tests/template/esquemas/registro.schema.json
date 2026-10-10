@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dev-plantillas/e2e-tests/registro.schema.json",
+  "title": "Registro de casos de uso (registro.json)",
+  "description": "Lo escribe scripts/registro.ts desde el reporte JSON de Playwright; lo lee el repo docs (página de estado por escenario y regla de validar). Versión 1: sólo se agregan campos opcionales; un cambio incompatible sube `version`.",
+  "type": "object",
+  "required": ["version", "generado", "ambiente", "corrida", "resumen", "escenarios", "sin_escenario"],
+  "properties": {
+    "version": { "const": 1 },
+    "generado": { "type": "string", "format": "date-time", "description": "Cuándo se escribió el registro (UTC)." },
+    "ambiente": { "type": "string", "description": "E2E_AMBIENTE de la corrida (local, qa, prod)." },
+    "corrida": {
+      "type": "object",
+      "required": ["id", "inicio", "duracion_ms", "commit", "enlace"],
+      "properties": {
+        "id": { "type": ["string", "null"], "description": "Id de la corrida (run del CI o local)." },
+        "inicio": { "type": "string", "format": "date-time" },
+        "duracion_ms": { "type": "integer", "minimum": 0 },
+        "commit": { "type": ["string", "null"], "description": "Commit del repo e2e-tests." },
+        "enlace": { "type": ["string", "null"], "description": "URL del reporte HTML o del job del CI." }
+      }
+    },
+    "resumen": {
+      "type": "object",
+      "required": ["tests", "escenarios", "pasa", "falla", "inestable", "pendiente", "tasa_inestables"],
+      "properties": {
+        "tests": { "type": "integer", "minimum": 0 },
+        "escenarios": { "type": "integer", "minimum": 0 },
+        "pasa": { "type": "integer", "minimum": 0 },
+        "falla": { "type": "integer", "minimum": 0 },
+        "inestable": { "type": "integer", "minimum": 0 },
+        "pendiente": { "type": "integer", "minimum": 0 },
+        "tasa_inestables": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "escenarios": {
+      "type": "object",
+      "description": "Clave: id del escenario en mayúsculas (CU-<issue>-<n>, el número de issue tal como está en la etiqueta).",
+      "propertyNames": { "pattern": "^CU-[0-9]+-[0-9]+$" },
+      "additionalProperties": {
+        "type": "object",
+        "required": ["estado", "icono", "ultima_corrida", "enlace", "tests"],
+        "properties": {
+          "estado": { "$ref": "#/$defs/estado" },
+          "icono": { "enum": ["✅", "❌", "⚠️", "🔧"] },
+          "ultima_corrida": { "type": "string", "format": "date-time" },
+          "enlace": { "type": ["string", "null"] },
+          "tests": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/test" } }
+        }
+      }
+    },
+    "sin_escenario": {
+      "type": "array",
+      "description": "Tests sin etiqueta @CU-… (smoke, regresión general).",
+      "items": { "$ref": "#/$defs/test" }
+    }
+  },
+  "$defs": {
+    "estado": {
+      "enum": ["pasa", "falla", "inestable", "pendiente"],
+      "description": "pasa ✅ · falla ❌ · inestable ⚠️ (@inestable o pasó sólo al reintentar) · pendiente 🔧 (fixme/skip)"
+    },
+    "test": {
+      "type": "object",
+      "required": ["titulo", "archivo", "proyecto", "estado", "etiquetas", "intentos", "duracion_ms"],
+      "properties": {
+        "titulo": { "type": "string" },
+        "archivo": { "type": "string", "description": "<ruta>:<línea> relativo a tests/." },
+        "proyecto": { "type": "string", "description": "Proyecto de Playwright (api, web-chromium, *-inestable)." },
+        "estado": { "$ref": "#/$defs/estado" },
+        "etiquetas": { "type": "array", "items": { "type": "string", "pattern": "^@" } },
+        "intentos": { "type": "integer", "minimum": 0 },
+        "duracion_ms": { "type": "number", "minimum": 0 }
+      }
+    }
+  }
+}

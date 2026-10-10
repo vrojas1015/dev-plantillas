@@ -1,0 +1,28 @@
+/**
+ * Flujos web del recurso de ejemplo. Los datos se preparan por API (rápido y
+ * estable) y se verifica lo que ve la persona usuaria en el navegador.
+ */
+import { expect, test } from '../fixtures/index.ts';
+import { ItemsPagina } from './paginas/items.pagina.ts';
+
+test('la lista de ítems carga', { tag: ['@smoke'] }, async ({ page }) => {
+  const items = new ItemsPagina(page);
+  await items.abrir();
+  await expect(items.titulo).toBeVisible();
+  await expect(items.error).toHaveCount(0);
+});
+
+test(
+  'un ítem creado por API aparece en la lista web',
+  { tag: ['@regresion', '@CU-001-3'] },
+  async ({ page, apiComo, datos }) => {
+    const nombre = datos.nombre('web');
+    const api = await apiComo('{{ "anonimo" if a_none else "escritor" }}');
+    const res = await api.post('v1/items', { data: { name: nombre, description: 'Ítem sintético e2e' } });
+    expect(res.status(), await res.text()).toBe(200);
+
+    const items = new ItemsPagina(page);
+    await items.abrir();
+    await expect(items.fila(nombre)).toBeVisible();
+  },
+);

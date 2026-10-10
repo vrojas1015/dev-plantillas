@@ -9,6 +9,11 @@ rollout.md. La salida es determinista (orden estable, sin fecha de generación):
 el CI corre `make generar` + `git diff --exit-code` y falla si alguien editó un
 generado a mano o se olvidó de regenerar.
 
+Con REGISTRO_E2E (registro de la suite e2e; ver scripts/escenarios.py) además
+escribe escenarios.md: estado por escenario. Ese archivo es una foto de otro
+repo, cambia en cada corrida y está en .gitignore: `--comprobar` lo ignora y,
+sin REGISTRO_E2E, no se genera (y si quedó uno viejo, se borra).
+
 Lee sólo documentos con frontmatter válido; los inválidos los reporta
 `make validar`.
 """
@@ -18,6 +23,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+import escenarios
 from comun import (
     ESTADOS_ABIERTOS,
     GENERADO,
@@ -325,6 +331,67 @@ def rollout(ctx: Contexto) -> str:
     return "\n".join(salida)
 
 
+def pagina_escenarios(ctx: Contexto, reg: escenarios.Registro) -> str:
+    salida = encabezado(
+        "Estado de los escenarios (e2e)",
+        "Sale del registro de la suite e2e (`REGISTRO_E2E`) y de los escenarios "
+        "`CU-<issue>-<n>` de cada issue. No se versiona: se regenera en cada build.",
+    )
+    corrida = reg.datos.get("corrida") or {}
+    resumen = reg.datos.get("resumen") or {}
+    enlace = corrida.get("enlace")
+    salida += [
+        f"Ambiente: **{celda(reg.datos.get('ambiente'))}** · corrida {celda(corrida.get('id'))} · "
+        f"{celda(corrida.get('inicio'))}" + (f" · [reporte]({enlace})" if enlace else ""),
+        "",
+        "✅ pasa · ❌ falla · ⚠️ inestable (cuarentena) · 🔧 pendiente o sin test",
+        "",
+        f"Tests: {resumen.get('tests', 0)} · ✅ {resumen.get('pasa', 0)} · ❌ {resumen.get('falla', 0)} · "
+        f"⚠️ {resumen.get('inestable', 0)} · 🔧 {resumen.get('pendiente', 0)} · "
+        f"tasa de inestables: {float(resumen.get('tasa_inestables', 0)):.1%}",
+        "",
+    ]
+    filas = []
+    en_issues: set[tuple[int, int]] = set()
+    for d in ctx.issues:
+        for c in escenarios.de_issue(d):
+            en_issues.add(c)
+            est = escenarios.estado(reg, c)
+            entrada = reg.por_clave.get(c) or {}
+            tests = entrada.get("tests") or []
+            filas.append(
+                [
+                    escenarios.nombre(c),
+                    f"{escenarios.icono(est)} {'sin test' if est == escenarios.SIN_TEST else est}",
+                    f"{enlace_issue(d)} {celda(d.meta.get('titulo'))}",
+                    celda(d.meta.get("estado")),
+                    celda(sorted({str(t.get('proyecto')) for t in tests if isinstance(t, dict)})),
+                    f"[ver]({entrada['enlace']})" if entrada.get("enlace") else VACIO,
+                ]
+            )
+    salida += ["## Por issue", ""]
+    if filas:
+        salida += tabla(["Escenario", "Estado", "Issue", "Estado del issue", "Proyectos", "Reporte"], filas)
+    else:
+        salida += ["_Ningún issue tiene escenarios `CU-<issue>-<n>` todavía._", ""]
+    huerfanos = sorted(c for c in reg.por_clave if c not in en_issues)
+    salida += ["## En el registro sin issue", ""]
+    if huerfanos:
+        salida += [
+            "Escenarios con test que no aparecen en ningún issue (¿etiqueta mal escrita o issue sin escenarios?).",
+            "",
+        ]
+        salida += tabla(
+            ["Escenario (etiqueta)", "Estado"],
+            [[reg.ids[c], f"{escenarios.icono(reg.por_clave[c]['estado'])} {reg.por_clave[c]['estado']}"] for c in huerfanos],
+        )
+    else:
+        salida += ["_Ninguno._", ""]
+    return "\n".join(salida)
+
+
+ESCENARIOS = "escenarios.md"
+
 GENERADORES = {
     "issues-por-estado.md": issues_por_estado,
     "issues-por-repo.md": issues_por_repo,
@@ -342,7 +409,24 @@ def main() -> int:
 
     ctx = Contexto(cargar_documentos())
     nuevos = {nombre: gen(ctx).rstrip("\n") + "\n" for nombre, gen in GENERADORES.items()}
-    sobrantes = sorted(p for p in GENERADO.glob("*.md") if p.name not in nuevos) if GENERADO.is_dir() else []
+    fuente = escenarios.origen()
+    if fuente and not args.comprobar:
+        try:
+            reg = escenarios.cargar(fuente)
+        except escenarios.ErrorRegistro as e:
+            print(f"generar: REGISTRO_E2E: {e}", file=sys.stderr)
+            return 1
+        nuevos[ESCENARIOS] = pagina_escenarios(ctx, reg).rstrip("\n") + "\n"
+    # escenarios.md no se versiona: --comprobar no lo cuenta como sobrante.
+    sobrantes = (
+        sorted(
+            p
+            for p in GENERADO.glob("*.md")
+            if p.name not in nuevos and not (args.comprobar and p.name == ESCENARIOS)
+        )
+        if GENERADO.is_dir()
+        else []
+    )
 
     distintos = []
     for nombre, texto in nuevos.items():

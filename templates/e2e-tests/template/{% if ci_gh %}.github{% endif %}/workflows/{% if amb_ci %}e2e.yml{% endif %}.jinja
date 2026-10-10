@@ -1,0 +1,238 @@
+{%- set def_suites = 'e2e' ~ (',robustez' if robustez else '') -%}
+{%- macro entorno() %}
+      E2E_AMBIENTE: {% raw %}${{ needs.preparar.outputs.ambiente }}{% endraw %}
+      CI: "true"
+      # Variables del environment (Settings > Environments > <ambiente>). Vacías =
+      # se usa ambientes/<ambiente>.env.example del repo.
+      API_BASE_URL: {% raw %}${{ vars.API_BASE_URL }}{% endraw %}
+{%- if web %}
+      WEB_BASE_URL: {% raw %}${{ vars.WEB_BASE_URL }}{% endraw %}
+{%- endif %}
+      OPENAPI_URL: {% raw %}${{ vars.OPENAPI_URL }}{% endraw %}
+{%- if a_fb %}
+      FIREBASE_API_KEY: {% raw %}${{ vars.FIREBASE_API_KEY }}{% endraw %}
+{%- elif a_oidc %}
+      OIDC_ISSUER: {% raw %}${{ vars.OIDC_ISSUER }}{% endraw %}
+      OIDC_CLIENT_ID: {% raw %}${{ vars.OIDC_CLIENT_ID }}{% endraw %}
+      OIDC_GRANT: {% raw %}${{ vars.OIDC_GRANT }}{% endraw %}
+      OIDC_SCOPE: {% raw %}${{ vars.OIDC_SCOPE }}{% endraw %}
+      OIDC_AUDIENCE: {% raw %}${{ vars.OIDC_AUDIENCE }}{% endraw %}
+      OIDC_TOKEN_URL: {% raw %}${{ vars.OIDC_TOKEN_URL }}{% endraw %}
+      OIDC_CAMPO_TOKEN: {% raw %}${{ vars.OIDC_CAMPO_TOKEN }}{% endraw %}
+      OIDC_CLIENT_SECRET: {% raw %}${{ secrets.OIDC_CLIENT_SECRET }}{% endraw %}
+{%- endif %}
+{%- if not a_none %}
+      # Secretos del environment: un usuario de prueba por rol (docs/usuarios-de-prueba.md).
+{%- for rol in ['SIN_ROL', 'LECTOR', 'ESCRITOR', 'ADMIN'] %}
+{%- if a_key %}
+      E2E_{{ rol }}_API_KEY: {% raw %}${{ secrets.{% endraw %}E2E_{{ rol }}_API_KEY {% raw %}}}{% endraw %}
+{%- else %}
+      E2E_{{ rol }}_USUARIO: {% raw %}${{ secrets.{% endraw %}E2E_{{ rol }}_USUARIO {% raw %}}}{% endraw %}
+      E2E_{{ rol }}_CLAVE: {% raw %}${{ secrets.{% endraw %}E2E_{{ rol }}_CLAVE {% raw %}}}{% endraw %}
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+{%- endmacro -%}
+# =============================================================================
+# e2e de {{ repo_name }} — suites contra un ambiente desplegado
+# =============================================================================
+#
+# Disparos (docs/disparo.md):
+#   - Manual: Actions > e2e > Run workflow (ambiente, suites, grep).
+#   - Desde otro repo (el deploy a QA de un servicio):
+#       gh workflow run e2e.yml -R <org>/{{ repo_name }} -f ambiente=qa -f origen=<repo>@<sha>
+#     o repository_dispatch (event_type "e2e", client_payload {ambiente, suites,
+#     grep, origen}). El que dispara espera el resultado con `gh run watch`
+#     (docs/ejemplos/github-disparar-e2e.yml): así el e2e bloquea su promoción.
+#   - Nocturno: e2e{{ ' + robustez' if robustez }} en {{ amb_ci[0] }}.{% if carga %} Semanal (lunes): + carga.{% endif %}
+#
+# Suites: e2e (Playwright: UI + API + smoke){{ ', robustez (Schemathesis)' if robustez }}{{ ', carga (k6)' if carga }}.
+# En prod sólo corre e2e con @smoke (lo fuerza playwright.config.ts).
+# Bloquea: un test que falla y NO es @inestable (scripts/registro.ts --bloquear).
+# Los @inestable corren, salen en el reporte y en registro.json (⚠️), y no bloquean.
+#
+# Artefactos: e2e-reporte-<ambiente> (reportes/: HTML, JSON, JUnit, trazas) y
+# registro-e2e (registro.json, lo lee el repo docs: docs/registro.md).
+# Credenciales: secretos del environment de GitHub con el nombre del ambiente.
+#
+# Migración al repo `ci` (docs/11-pipelines.md): este archivo se reemplaza por
+# `uses: <org>/ci/.github/workflows/e2e.yml@v1` con las mismas entradas.
+# =============================================================================
+
+name: e2e
+run-name: >-
+  e2e {% raw %}${{ inputs.ambiente || github.event.client_payload.ambiente || '{% endraw %}{{ amb_ci[0] }}{% raw %}' }}
+  · ${{ inputs.origen || github.event.client_payload.origen || github.event_name }}{% endraw %}
+
+on:
+  workflow_dispatch:
+    inputs:
+      ambiente:
+        description: Ambiente
+        type: choice
+        options: [{{ amb_ci | join(', ') }}]
+        default: {{ amb_ci[0] }}
+      suites:
+        description: "Suites separadas por coma: e2e{{ ',robustez' if robustez }}{{ ',carga' if carga }}"
+        type: string
+        default: "{{ def_suites }}"
+      grep:
+        description: "Filtro de Playwright (ej. @smoke, @CU-042-1); vacío = todo"
+        type: string
+        default: ""
+      origen:
+        description: "Quién dispara (repo@sha); va al título de la corrida"
+        type: string
+        default: ""
+  repository_dispatch:
+    types: [e2e]
+  schedule:
+    - cron: "0 6 * * *"   # nocturno
+{%- if carga %}
+    - cron: "0 7 * * 1"   # semanal, con carga
+{%- endif %}
+
+permissions:
+  contents: read
+
+concurrency:
+  # Una corrida por ambiente a la vez (comparten usuarios de prueba y rate limit).
+  group: {% raw %}e2e-${{ inputs.ambiente || github.event.client_payload.ambiente || '{% endraw %}{{ amb_ci[0] }}{% raw %}' }}{% endraw %}
+  cancel-in-progress: false
+
+jobs:
+  preparar:
+    runs-on: ubuntu-latest
+    outputs:
+      ambiente: {% raw %}${{ steps.p.outputs.ambiente }}{% endraw %}
+      suites: {% raw %}${{ steps.p.outputs.suites }}{% endraw %}
+      grep: {% raw %}${{ steps.p.outputs.grep }}{% endraw %}
+    steps:
+      - id: p
+        name: Ambiente y suites
+        env:
+          EVENTO: {% raw %}${{ github.event_name }}{% endraw %}
+          CRON: {% raw %}${{ github.event.schedule }}{% endraw %}
+          IN_AMBIENTE: {% raw %}${{ inputs.ambiente || github.event.client_payload.ambiente }}{% endraw %}
+          IN_SUITES: {% raw %}${{ inputs.suites || github.event.client_payload.suites }}{% endraw %}
+          IN_GREP: {% raw %}${{ inputs.grep || github.event.client_payload.grep }}{% endraw %}
+        run: |
+          ambiente="${IN_AMBIENTE:-{{ amb_ci[0] }}}"
+          case " {{ amb_ci | join(' ') }} " in
+            *" $ambiente "*) ;;
+            *) echo "::error::ambiente '$ambiente' no válido (opciones: {{ amb_ci | join(' ') }})"; exit 1 ;;
+          esac
+          suites="${IN_SUITES:-{{ def_suites }}}"
+{%- if carga %}
+          if [ "$EVENTO" = schedule ] && [ "$CRON" = "0 7 * * 1" ]; then suites="{{ def_suites }},carga"; fi
+{%- endif %}
+          for s in ${suites//,/ }; do
+            case "$s" in
+              e2e{{ '|robustez' if robustez }}{{ '|carga' if carga }}) ;;
+              *) echo "::error::suite '$s' desconocida (e2e{{ ', robustez' if robustez }}{{ ', carga' if carga }})"; exit 1 ;;
+            esac
+          done
+          if [ "$ambiente" = prod ]; then suites=e2e; fi   # prod: sólo @smoke
+          {
+            echo "ambiente=$ambiente"
+            echo "suites=,$suites,"
+            echo "grep=$IN_GREP"
+          } >> "$GITHUB_OUTPUT"
+          echo "ambiente=$ambiente suites=$suites grep=${IN_GREP:-(todo)}"
+
+  e2e:
+    needs: preparar
+    if: {% raw %}contains(needs.preparar.outputs.suites, ',e2e,'){% endraw %}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: {% raw %}${{ needs.preparar.outputs.ambiente }}{% endraw %}
+    env:{{ entorno() }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Dependencias
+        run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+{%- if web %}
+      - name: Navegadores
+        run: npx playwright install --with-deps {{ navegadores | join(' ') }}
+{%- endif %}
+      # No bloquea: su código incluye los @inestable. Bloquea el paso siguiente.
+      - name: Playwright
+        continue-on-error: true
+        env:
+          E2E_GREP: {% raw %}${{ needs.preparar.outputs.grep }}{% endraw %}
+        run: npx playwright test ${E2E_GREP:+--grep "$E2E_GREP"}
+      - name: Registro de casos de uso (bloquea si falló algo que no es @inestable)
+        run: |
+          set -o pipefail
+          node scripts/registro.ts --bloquear | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Reporte
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: {% raw %}e2e-reporte-${{ needs.preparar.outputs.ambiente }}{% endraw %}
+          path: reportes/
+          retention-days: 30
+      - name: registro.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: registro-e2e
+          path: reportes/registro.json
+          retention-days: 90
+          if-no-files-found: ignore
+{%- if robustez %}
+
+  robustez:
+    needs: [preparar, e2e]
+    # Después del e2e (aunque falle) y en serie: comparten el rate limit.
+    if: {% raw %}always() && needs.preparar.result == 'success' && contains(needs.preparar.outputs.suites, ',robustez,'){% endraw %}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: {% raw %}${{ needs.preparar.outputs.ambiente }}{% endraw %}
+    env:{{ entorno() }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Dependencias
+        run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+      - name: Schemathesis (Docker) por rol
+        run: node robustez/robustez.ts
+      - name: Reporte
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: {% raw %}robustez-${{ needs.preparar.outputs.ambiente }}{% endraw %}
+          path: reportes/robustez/
+          if-no-files-found: ignore
+{%- endif %}
+{%- if carga %}
+
+  carga:
+    needs: [preparar, {{ 'robustez' if robustez else 'e2e' }}]
+    if: {% raw %}always() && needs.preparar.result == 'success' && contains(needs.preparar.outputs.suites, ',carga,'){% endraw %}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: {% raw %}${{ needs.preparar.outputs.ambiente }}{% endraw %}
+    env:{{ entorno() }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Dependencias
+        run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+      - name: k6 (Docker)
+        run: node carga/carga.ts
+      - name: Reporte
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: {% raw %}carga-${{ needs.preparar.outputs.ambiente }}{% endraw %}
+          path: reportes/carga/
+          if-no-files-found: ignore
+{%- endif %}

@@ -1,0 +1,27 @@
+{#- Se llama .gitignore.jinja para que git no lo aplique dentro del repo de la plantilla. -#}
+# Dependencias
+node_modules/
+
+# Reportes y artefactos de cada corrida (los publica el CI como artefactos)
+reportes/
+test-results/
+playwright-report/
+blob-report/
+schemathesis-report/
+.hypothesis/
+schema-coverage.html
+
+# Credenciales de prueba por ambiente (nunca commitear: van en el CI)
+ambientes/*.env
+!ambientes/*.env.example
+.env
+.env.*
+
+# Claude Code: settings personales (los compartidos van en .claude/settings.json)
+.claude/settings.local.json
+
+# IDEs / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

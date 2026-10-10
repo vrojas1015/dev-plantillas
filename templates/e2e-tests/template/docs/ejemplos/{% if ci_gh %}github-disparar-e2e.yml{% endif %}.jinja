@@ -1,0 +1,44 @@
+# Ejemplo para el workflow de deploy de un SERVICIO (no de este repo): después
+# del deploy a QA, dispara el e2e de {{ repo_name }} y ESPERA su resultado. Si el
+# e2e falla, este job falla y el tag prod-v* de ese commit no debería crearse
+# (o el job de prod `needs:` este job). Copiar al workflow del servicio.
+#
+# Secreto en el repo del servicio (o de la organización):
+#   E2E_DISPARO_TOKEN  token con permiso "Actions: read and write" SÓLO sobre
+#                      <org>/{{ repo_name }} (fine-grained PAT o GitHub App).
+name: deploy-qa-con-e2e
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # deploy-qa: ... (el deploy del servicio)
+
+  e2e-qa:
+    # needs: deploy-qa
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+{%- raw %}
+      GH_TOKEN: ${{ secrets.E2E_DISPARO_TOKEN }}
+      E2E_REPO: ${{ github.repository_owner }}/{% endraw %}{{ repo_name }}{% raw %}
+      ORIGEN: ${{ github.repository }}@${{ github.sha }}-${{ github.run_id }}
+{%- endraw %}
+    steps:
+      - name: Disparar e2e en QA y esperar el resultado
+        run: |
+          gh workflow run e2e.yml -R "$E2E_REPO" -f ambiente=qa -f origen="$ORIGEN"
+          # La corrida se reconoce por su título (run-name incluye `origen`).
+          id=""
+          for _ in $(seq 1 30); do
+            id=$(gh run list -R "$E2E_REPO" -w e2e.yml -L 20 --json databaseId,displayTitle \
+                 -q "[.[] | select(.displayTitle | contains(\"$ORIGEN\"))][0].databaseId")
+            [ -n "$id" ] && break
+            sleep 5
+          done
+          [ -n "$id" ] || { echo "::error::no apareció la corrida del e2e"; exit 1; }
+          echo "e2e: https://github.com/$E2E_REPO/actions/runs/$id"
+          gh run watch "$id" -R "$E2E_REPO" --exit-status --interval 30

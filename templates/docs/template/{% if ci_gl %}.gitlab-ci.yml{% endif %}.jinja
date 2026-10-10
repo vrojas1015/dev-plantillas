@@ -49,6 +49,9 @@ variables:
   PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
 
 # Frontmatter (esquemas, ids, fichas), generados al día y sitio con --strict.
+# Opcional: variables CI/CD REGISTRO_E2E (+ REGISTRO_E2E_TOKEN, sólo lectura)
+# con el registro de la suite e2e -> página de escenarios y regla de validar
+# (README › Estado de escenarios e2e). Sin ellas, nada cambia.
 sitio:
   stage: verificar
   image: python:3.12

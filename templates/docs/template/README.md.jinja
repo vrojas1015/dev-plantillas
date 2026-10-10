@@ -75,6 +75,35 @@ Markdown relativos (no wikilinks, para que funcionen en el sitio y en
 (frontmatter) visibles. Lo personal (`workspace.json`) no se commitea.
 {%- endif %}
 
+## Estado de escenarios e2e (opcional)
+
+Si la plataforma tiene el repo de pruebas `e2e-tests` (plantilla `e2e-tests`),
+cada corrida publica un `registro.json` (escenario → estado → última corrida →
+enlace). Este repo lo **lee** (modelo pull) cuando la variable `REGISTRO_E2E`
+apunta a él (ruta local o URL; `REGISTRO_E2E_TOKEN` opcional: `Authorization:
+Bearer`, o `PRIVATE-TOKEN` si la URL es de la API de GitLab). **Sin
+`REGISTRO_E2E` no cambia nada.** Con él:
+
+- `make generar` escribe `contenido/_generado/escenarios.md`: estado de cada
+  escenario `CU-<issue>-<n>` de los issues (✅ pasa · ❌ falla · ⚠️ inestable ·
+  🔧 pendiente o sin test) y los del registro que no están en ningún issue. Es
+  una foto de otro repo: está en `.gitignore`, se regenera en cada build y el
+  control «generados al día» no lo mira. El índice de Casos de uso lo enlaza.
+- `make validar` marca error si un issue `resuelto` tiene un escenario sin test
+  o que no está ✅ (⚠️ inestable tampoco cuenta como verde).
+
+Los escenarios se escriben en «Criterios de aceptación» del issue con su id:
+`- **CU-042-1** Dado …, cuando …, entonces …`.
+
+```bash
+REGISTRO_E2E=../e2e-tests/reportes/registro.json make generar validar construir
+```
+
+En el CI, `REGISTRO_E2E` (y `REGISTRO_E2E_TOKEN`, de **sólo lectura**) van como
+variables del proyecto. Cómo apuntar al registro de la última corrida (GitLab:
+artefacto del último job `e2e`; GitHub: `gh run download` del artefacto
+`registro-e2e`): `docs/registro.md` del repo `e2e-tests`.
+
 ## CI
 
 | Paso | Falla si |
@@ -83,6 +112,7 @@ Markdown relativos (no wikilinks, para que funcionen en el sitio y en
 | `make generar` + `git diff --exit-code` | `contenido/_generado/` desactualizado o editado a mano |
 | `make construir` | Enlace interno roto |
 | lychee (`lychee.toml`, sólo en la rama principal) | Enlace externo roto |
+| `make validar` con `REGISTRO_E2E` (opcional) | Issue `resuelto` con un escenario `CU-<id>-<n>` sin test o que no está ✅ |
 {%- if deploy_target == 'firebase-hosting' %}
 | Deploy (push a `main`) | — : `site/` a Firebase Hosting (`{{ firebase_project }}`) |
 

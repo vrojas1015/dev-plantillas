@@ -31,6 +31,9 @@ releases. No hay código de producto acá. Lo que cambia junto con el código
 4. Un issue pasa a `resuelto` **sólo** con la sección **Verificación**
    completa (fecha, comandos, resultado y commits; la escribe `/verificar`) y
    con `resuelto: <fecha>` en el frontmatter.
+   Los escenarios de aceptación llevan id `**CU-<id>-<n>**` (el test e2e que
+   lo cubre tiene la etiqueta `@CU-<id>-<n>`); con el registro e2e configurado
+   (`REGISTRO_E2E`), `validar` exige que estén todos en verde.
 5. `repos` del issue va **en orden de ejecución** y con nombres exactos de
    repo (los que tienen ficha en `servicios/`). Orden típico: protos →
    servicio → api-gateway → front.
