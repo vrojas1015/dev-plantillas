@@ -1,0 +1,43 @@
+# Catálogo de plantillas de dev-plantillas. Lo leen `dp list` y `dp new`.
+# La última versión de cada plantilla NO va acá: sale de los tags de su repo.
+# Formato: docs/08-cli-dp.md §3.
+version: 1
+plantillas:
+  - nombre: go-grpc-service
+    repo: gh:vrojas1015/template-go-grpc-service
+    tipo: backend
+    lenguaje: go
+    descripcion: Microservicio Go gRPC hexagonal + Postgres (Cloud Run o Coolify)
+    destino_por_defecto: backend/{nombre}-service
+    atajos:
+      deploy: deploy_target
+      ci: ci_provider
+
+  - nombre: protos
+    repo: gh:vrojas1015/template-protos
+    tipo: contratos
+    lenguaje: proto
+    descripcion: Contratos gRPC con buf; código para Go, Python, TS/JS, Java, Kotlin y Swift
+    destino_por_defecto: backend/{nombre}
+    atajos:
+      ci: ci_provider
+
+  - nombre: angular-app
+    repo: gh:vrojas1015/template-angular-app
+    tipo: front
+    lenguaje: typescript
+    descripcion: App Angular standalone + signals (Firebase Hosting o Coolify)
+    destino_por_defecto: frontend/{nombre}
+    atajos:
+      deploy: deploy_target
+      ci: ci_provider
+
+  - nombre: docs
+    repo: gh:vrojas1015/template-docs
+    tipo: docs
+    lenguaje: markdown
+    descripcion: Repo de documentación con issues, ADRs, runbooks y MkDocs Material
+    destino_por_defecto: "{nombre}"
+    atajos:
+      deploy: deploy_target
+      ci: ci_provider
