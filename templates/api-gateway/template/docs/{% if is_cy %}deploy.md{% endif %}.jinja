@@ -64,7 +64,7 @@ docker login ghcr.io -u <usuario> --password-stdin
 Settings > CI/CD > Variables: `COOLIFY_URL` (sin `/` final), `COOLIFY_TOKEN`
 (masked), `COOLIFY_RESOURCE_UUID_QA`, `COOLIFY_RESOURCE_UUID_PROD`.
 Protected tags: `prod-v*` → Maintainers; `qa-v*` → Developers + Maintainers.
-Los jobs `image` y `release` usan Docker-in-Docker (runner con `privileged`).
+Los jobs `build-image` y `release` usan Docker-in-Docker (runner con `privileged`).
 {%- if protos_module %}
 Repo de protos: allowlist del `CI_JOB_TOKEN` de este proyecto.
 {%- endif %}

@@ -117,7 +117,7 @@ govulncheck:
 # -----------------------------------------------------------------------------
 # IMAGEN + TRIVY
 # -----------------------------------------------------------------------------
-image:
+build-image:
   stage: image
   image: docker:27
   services:
@@ -139,7 +139,7 @@ trivy:
   image:
     name: $TRIVY_IMAGE
     entrypoint: [""]
-  needs: [image]
+  needs: [build-image]
   variables:
     TRIVY_CACHE_DIR: .trivycache/
   cache:
@@ -229,7 +229,7 @@ release:prod:
   image: docker:27
   services:
     - docker:27-dind
-  needs: [govulncheck, image, trivy]
+  needs: [govulncheck, build-image, trivy]
   variables:
     DOCKER_TLS_CERTDIR: "/certs"
   script:

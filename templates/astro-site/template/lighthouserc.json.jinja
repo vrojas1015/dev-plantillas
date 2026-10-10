@@ -19,12 +19,13 @@
         "http://localhost/catalogo/lampara-de-escritorio-nordica/"{% endif %}
       ],
 {%- endif %}
-      "numberOfRuns": 1,
+      "numberOfRuns": 3,
       "settings": {
         "chromeFlags": "--headless=new --no-sandbox"
       }
     },
     "assert": {
+      "aggregationMethod": "median",
       "assertMatrix": [
         {
           "matchingUrlPattern": ".*",
