@@ -144,7 +144,7 @@ Secret `PROTOS_TOKEN`: token de solo lectura al repo de protos.
 
 1. `test`: `go mod verify`, gofmt, `go vet`, `go test` (con los tests de
    autorización generados desde `routes.yaml`), `govulncheck`, `go mod vendor`.
-2. `image` + Trivy: `docker build` del mismo commit y `vendor/`; falla con
+2. Imagen (`{% if ci_gl %}build-image{% else %}image{% endif %}`) + Trivy: `docker build` del mismo commit y `vendor/`; falla con
    vulnerabilidades HIGH/CRITICAL que tengan fix.
 3. Release (tag): Cloud Build construye y publica en Artifact Registry con el
    mismo Dockerfile y `vendor/`, y `gcloud run services replace`. Recomendado:
