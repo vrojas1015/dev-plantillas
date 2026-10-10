@@ -1,0 +1,33 @@
+{#- Primera versión del generado (igual a la salida de scripts/generar.py). copier update no lo pisa (_skip_if_exists). -#}
+{%- set depende = [] -%}
+{%- for r in repos_iniciales | sort -%}
+{%- if tipos_repo[r] in ['gateway', 'servicio-go'] and 'protos' in repos_iniciales %}{% set _ = depende.append(r) %}{% endif -%}
+{%- endfor -%}
+<!-- Archivo generado por scripts/generar.py: no editar. Regenerar con `make generar`. -->
+
+# Mapa de servicios
+
+> **Archivo generado: no editar.** Sale de las fichas de `servicios/<repo>.md` (`depende_de` y `consumido_por`). Se regenera con `make generar`.
+{% if repos_iniciales %}
+| Repo | Tipo | Estado | Dueño | Depende de | Consumido por | Plantilla |
+|---|---|---|---|---|---|---|
+{%- for r in repos_iniciales | sort %}
+| [{{ r }}](../servicios/{{ r }}.md) | {{ tipos_repo[r] }} | activo | completar | {{ '[protos](../servicios/protos.md)' if r in depende else '—' }} | — | — |
+{%- endfor %}
+
+## Dependencias
+
+Una flecha `A --> B` significa «A depende de B».
+
+```mermaid
+graph LR
+{%- for r in repos_iniciales | sort %}
+  s_{{ r | replace('-', '_') }}["{{ r }}"]
+{%- endfor %}
+{%- for r in depende %}
+  s_{{ r | replace('-', '_') }} --> s_protos
+{%- endfor %}
+```
+{% else %}
+_Todavía no hay fichas de servicios._
+{% endif -%}

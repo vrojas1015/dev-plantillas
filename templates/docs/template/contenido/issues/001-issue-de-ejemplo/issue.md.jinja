@@ -1,0 +1,52 @@
+---
+id: 1
+titulo: "Issue de ejemplo: cómo se escribe un issue"
+estado: abierto
+tipo: investigacion
+prioridad: baja
+area: {{ repos_iniciales[0] if repos_iniciales else 'null' }}
+repos: [{{ repos_iniciales | join(', ') }}]
+creado: {{ fecha_inicio }}
+resuelto: null
+relacionados: []
+---
+
+# Issue de ejemplo: cómo se escribe un issue
+
+## Contexto
+
+Este issue muestra la forma de un issue. Se puede borrar (o pasar a
+`descartado`) cuando exista el primero real.
+
+El **contexto** cuenta qué pasa hoy y por qué importa, con datos concretos:
+rutas, comandos, ids, mediciones con su fecha absoluta. Quien lo lea dentro de
+seis meses (o un agente sin memoria) tiene que poder entenderlo sin preguntar.
+
+## Comportamiento esperado
+
+Qué tiene que pasar cuando esté resuelto, visto desde quien lo usa.
+
+## Criterios de aceptación
+
+- [ ] Cada criterio se puede verificar con un test, un comando o una respuesta
+      HTTP concreta.
+- [ ] `make validar` pasa.
+
+## Repos y orden
+
+En el mismo orden que `repos` del frontmatter. Orden típico de un cambio que
+cruza capas: protos → servicio → api-gateway → front.
+{% for repo in repos_iniciales %}
+{{ loop.index }}. `{{ repo }}`: qué cambia en este repo.
+{%- else %}
+1. `repo`: qué cambia en este repo (completar `repos` en el frontmatter).
+{%- endfor %}
+
+## Notas
+
+Plan detallado para el agente: [plan.md](plan.md)
+
+## Verificación
+
+<!-- La escribe /verificar: fecha absoluta, comandos, resultado y commits.
+     Sin esta sección completa el issue no puede pasar a `resuelto`. -->

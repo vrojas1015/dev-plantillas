@@ -1,0 +1,6 @@
+# Lo copia entrypoint.sh a auth.caddy cuando DOCS_USUARIO y DOCS_HASH están
+# definidas. Caddy reemplaza {$VAR} con las variables de entorno al arrancar.
+@privado not path /salud
+basic_auth @privado {
+	{$DOCS_USUARIO} {$DOCS_HASH}
+}

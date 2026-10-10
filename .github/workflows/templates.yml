@@ -170,3 +170,60 @@ jobs:
       - name: make check
         working-directory: ${{ runner.temp }}/protos
         run: make check
+
+  # Repo de documentación: frontmatter válido, generados al día (generar + diff),
+  # sitio con --strict, `make nuevo` y que validar detecte errores. Con coolify,
+  # además, la imagen Caddy sirve el sitio.
+  docs:
+    name: docs (${{ matrix.ci }}, ${{ matrix.deploy }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { ci: github, deploy: firebase-hosting, obsidian: true,  repos: "[protos, api-gateway, orders-service]" }
+          - { ci: gitlab, deploy: coolify,          obsidian: false, repos: "[protos, api-gateway]" }
+          - { ci: gitlab, deploy: ninguno,          obsidian: true,  repos: "[]" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - run: pip install copier
+      - name: Generar
+        run: |
+          copier copy --defaults --trust \
+            -d org_name=demo -d ci_provider=${{ matrix.ci }} -d deploy_target=${{ matrix.deploy }} \
+            -d obsidian=${{ matrix.obsidian }} -d 'repos_iniciales=${{ matrix.repos }}' \
+            templates/docs "$RUNNER_TEMP/docs"
+          cd "$RUNNER_TEMP/docs"
+          git init -q -b main && git add -A
+          git -c user.name=ci -c user.email=ci@example.com commit -qm base
+      - name: validar, generar sin diff y construir
+        working-directory: ${{ runner.temp }}/docs
+        run: |
+          pip install -r requirements.txt
+          make validar
+          make generar
+          git diff --exit-code -- contenido/_generado
+          test -z "$(git status --porcelain --untracked-files=all -- contenido/_generado)"
+          make construir
+      - name: make nuevo y errores detectados
+        working-directory: ${{ runner.temp }}/docs
+        run: |
+          make nuevo TIPO=issue TITULO="Primer issue" && make nuevo TIPO=issue TITULO="Segundo issue"
+          test -f contenido/issues/002-primer-issue/issue.md && test -f contenido/issues/003-segundo-issue/issue.md
+          make validar-frontmatter
+          sed -i 's/^estado: abierto/estado: cerrado/' contenido/issues/002-primer-issue/issue.md
+          if make validar-frontmatter; then echo "validar no detectó estado: cerrado"; exit 1; fi
+      - name: Imagen Docker (coolify)
+        if: matrix.deploy == 'coolify'
+        working-directory: ${{ runner.temp }}/docs
+        run: |
+          docker build -t docs:ci .
+          docker run -d --name docs -p 8080:80 docs:ci
+          for _ in $(seq 1 20); do curl -fsS -o /dev/null http://localhost:8080/ && break; sleep 1; done
+          curl -fsS http://localhost:8080/ | grep -q 'Documentación de demo'
+          curl -fsS http://localhost:8080/issues/001-issue-de-ejemplo/issue/ | grep -q 'class="metadatos"'
+          curl -fsS http://localhost:8080/_generado/servicios/ | grep -q 'class="mermaid"'

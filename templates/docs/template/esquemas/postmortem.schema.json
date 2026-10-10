@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "postmortem.schema.json",
+  "title": "postmortem",
+  "description": "Frontmatter de contenido/postmortems/AAAA-MM-DD-<slug>.md",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "titulo",
+    "fecha",
+    "severidad",
+    "servicios",
+    "issues"
+  ],
+  "properties": {
+    "titulo": {
+      "type": "string",
+      "minLength": 3
+    },
+    "fecha": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Fecha absoluta AAAA-MM-DD"
+    },
+    "severidad": {
+      "enum": [
+        "critica",
+        "alta",
+        "media",
+        "baja"
+      ]
+    },
+    "servicios": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+      },
+      "uniqueItems": true,
+      "minItems": 1
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "uniqueItems": true,
+      "description": "Un issue por acción correctiva"
+    }
+  }
+}

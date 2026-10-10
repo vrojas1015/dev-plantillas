@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "adr.schema.json",
+  "title": "adr",
+  "description": "Frontmatter de contenido/adr/NNNN-<titulo>.md",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "titulo",
+    "estado",
+    "fecha",
+    "reemplaza",
+    "reemplazado_por"
+  ],
+  "properties": {
+    "id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Número del ADR; igual al del archivo"
+    },
+    "titulo": {
+      "type": "string",
+      "minLength": 3
+    },
+    "estado": {
+      "enum": [
+        "propuesto",
+        "aceptado",
+        "reemplazado",
+        "descartado"
+      ]
+    },
+    "fecha": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Fecha absoluta AAAA-MM-DD"
+    },
+    "reemplaza": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reemplazado_por": {
+      "oneOf": [
+        {
+          "type": "integer",
+          "minimum": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "if": {
+    "properties": {
+      "estado": {
+        "const": "reemplazado"
+      }
+    },
+    "required": [
+      "estado"
+    ]
+  },
+  "then": {
+    "properties": {
+      "reemplazado_por": {
+        "type": "integer",
+        "minimum": 1
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "reemplazado_por": {
+        "type": "null"
+      }
+    }
+  }
+}

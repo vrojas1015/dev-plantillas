@@ -1,0 +1,13 @@
+# lychee: enlaces externos rotos. Corre sólo en la rama principal (ver CI) para
+# no depender de la red en cada MR/PR. Los internos los valida mkdocs --strict.
+exclude = [
+  '^https?://(localhost|127\.0\.0\.1)',
+  '^https?://([a-z0-9-]+\.)?example\.(com|org|net)',
+  # Repos propios: suelen ser privados (lychee no tiene credenciales).
+  '^{{ url_org | regex_escape }}([/?#]|$)',
+]
+exclude_path = ["site", ".venv", "venv", "node_modules"]
+accept = ["200..=299", "429"]
+max_retries = 2
+timeout = 20
+no_progress = true

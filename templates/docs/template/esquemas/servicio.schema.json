@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "servicio.schema.json",
+  "title": "servicio",
+  "description": "Frontmatter de contenido/servicios/<repo>.md",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "repo",
+    "tipo",
+    "plantilla",
+    "dueño",
+    "url_repo",
+    "depende_de",
+    "consumido_por",
+    "estado"
+  ],
+  "properties": {
+    "repo": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$",
+      "description": "Nombre exacto del repo; igual al nombre del archivo"
+    },
+    "tipo": {
+      "enum": [
+        "servicio-go",
+        "gateway",
+        "protos",
+        "front",
+        "movil",
+        "libreria",
+        "otro"
+      ]
+    },
+    "plantilla": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*@v[0-9]+\\.[0-9]+\\.[0-9]+$"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "<plantilla>@vX.Y.Z de la que salió, o null"
+    },
+    "dueño": {
+      "type": "string",
+      "minLength": 1
+    },
+    "url_repo": {
+      "type": "string",
+      "pattern": "^https?://"
+    },
+    "depende_de": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+      },
+      "uniqueItems": true
+    },
+    "consumido_por": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+      },
+      "uniqueItems": true
+    },
+    "estado": {
+      "enum": [
+        "activo",
+        "deprecado",
+        "retirado"
+      ]
+    }
+  }
+}

@@ -1,0 +1,50 @@
+---
+id: 1
+titulo: Registrar decisiones de arquitectura
+estado: aceptado
+fecha: {{ fecha_inicio }}
+reemplaza: null
+reemplazado_por: null
+---
+
+# 0001. Registrar decisiones de arquitectura
+
+## Contexto
+
+Las decisiones de arquitectura (qué base de datos, cómo se autentica, cómo se
+despliega, qué se descartó y por qué) quedan en conversaciones, MRs y la memoria
+de quien estuvo. Meses después nadie sabe por qué algo es como es, y la misma
+discusión se repite o se deshace una decisión sin conocer su motivo.
+
+## Opciones
+
+### Opción A: no registrar (estado actual)
+
+- A favor: cero costo.
+- En contra: el porqué se pierde; agentes y personas nuevas no tienen contexto.
+
+### Opción B: una wiki o documento libre
+
+- A favor: fácil de empezar.
+- En contra: sin estructura ni historial claro; se edita encima y se pierde qué
+  cambió y cuándo.
+
+### Opción C: ADRs en este repo
+
+- A favor: un archivo por decisión, con formato fijo, historial en git, revisado
+  en MR como el código y visible en el sitio.
+- En contra: requiere disciplina para escribirlos.
+
+## Decisión
+
+Opción C. Toda decisión que afecte a más de un repo, o que sea difícil de
+revertir, se registra como ADR en `adr/NNNN-<titulo>.md`, creado con
+`make nuevo TIPO=adr TITULO="..."`, con las secciones Contexto, Opciones,
+Decisión y Consecuencias.
+
+## Consecuencias
+
+- Un ADR `aceptado` no se edita. Si la decisión cambia se escribe otro con
+  `reemplaza: <n>`, y el viejo pasa a `reemplazado` con `reemplazado_por`.
+- Los MRs que implementan una decisión enlazan su ADR.
+- El índice de ADRs con su estado se genera solo (`make generar`).

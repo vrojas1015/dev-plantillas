@@ -1,0 +1,31 @@
+---
+issue: 1
+titulo: "Plan del issue 001: issue de ejemplo"
+actualizado: {{ fecha_inicio }}
+---
+
+# Plan del issue 001: issue de ejemplo
+
+Plan (o prompt) para el agente que trabaja el [issue](issue.md). El qué y el
+porqué están en `issue.md`; acá va el cómo. Reemplaza a los `Prompt-*.md`
+sueltos: el plan vive en la carpeta de su issue.
+
+## Objetivo
+
+Que el issue quede resuelto según sus criterios de aceptación.
+
+## Pasos
+{% for repo in repos_iniciales %}
+{{ loop.index }}. `{{ repo }}`: archivos, funciones y comandos.
+{%- else %}
+1. `repo`: archivos, funciones y comandos.
+{%- endfor %}
+
+## Cómo verificar
+
+Comandos exactos (tests, curl, consultas) y el resultado esperado. `/verificar`
+deja la evidencia en la sección Verificación de `issue.md`.
+
+## Fuera de alcance
+
+Lo que no hay que tocar en este issue.

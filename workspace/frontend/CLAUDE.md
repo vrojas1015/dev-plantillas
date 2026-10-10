@@ -22,7 +22,7 @@ vitest (unit) · Playwright (e2e) · prettier (printWidth 100, singleQuote).
 - Estado: `signal`/`computed` en un store por feature; los componentes no llaman HTTP directo.
 - Estilos: BEM (`bloque__elemento--modificador`), variables en `src/styles`.
 - **Si el gateway no expone lo que hace falta, no se inventa en el front:** se abre
-  un issue en `docs\issues` describiendo el endpoint, y se sigue el orden
+  un issue en `docs\contenido\issues` describiendo el endpoint, y se sigue el orden
   protos → micro → api-gateway → front.
 - Nada de secretos en `environments/`: sólo URLs públicas y config de cliente.
 

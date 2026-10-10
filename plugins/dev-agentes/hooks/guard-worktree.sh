@@ -5,7 +5,9 @@
 #
 # Permitido:
 #   - todo dentro de worktrees/issue-<n>/
-#   - el archivo del propio issue: <workspace>/docs/issues/<n>-*.md
+#   - la carpeta del propio issue en el repo de documentación (plantilla docs):
+#     <workspace>/docs/contenido/issues/<n>-*/**  (con o sin ceros a la izquierda)
+#   - el archivo del propio issue en el formato anterior: <workspace>/docs/issues/<n>-*.md
 #   - todo lo que esté fuera del workspace (temporales, memoria, ~/.claude)
 # Fuera de un worktree de issue no hace nada.
 #
@@ -36,15 +38,27 @@ f=$(lc "$file")
 
 [[ $f == "$(lc "$issue_dir")"/* ]] && exit 0                      # dentro del issue
 [[ $f == "$(lc "$workspace")"/* ]] || exit 0                      # fuera del workspace
-issues_dir="$(lc "$workspace")/docs/issues/"
-if [[ $f == "$issues_dir"* ]]; then                                # su issue
-  rest=${f#"$issues_dir"}
-  [[ $rest != */* && $rest =~ ^0*${issue}-.+\.md$ ]] && exit 0
+# Nada de `..` ni `.` como segmento: no se resuelven y permitirían salir de la carpeta.
+if [[ $f != */../* && $f != */./* && $f != */.. && $f != */. ]]; then
+  docs="$(lc "$workspace")/docs"
+  # Carpeta del issue (plantilla docs): contenido/issues/<n>-<slug>/<cualquier archivo>
+  dir_new="$docs/contenido/issues/"
+  if [[ $f == "$dir_new"* ]]; then
+    rest=${f#"$dir_new"}
+    [[ $rest =~ ^0*${issue}-[^/]+/.+$ ]] && exit 0
+  fi
+  # Formato anterior: un archivo por issue en docs/issues/<n>-<slug>.md
+  dir_old="$docs/issues/"
+  if [[ $f == "$dir_old"* ]]; then
+    rest=${f#"$dir_old"}
+    [[ $rest != */* && $rest =~ ^0*${issue}-.+\.md$ ]] && exit 0
+  fi
 fi
 
 cat >&2 <<EOF
 Bloqueado por dev-agentes: esta sesión trabaja en el issue $issue y sólo puede
-editar dentro de $issue_dir (y su archivo en docs/issues/).
+editar dentro de $issue_dir y la carpeta de su issue en
+docs/contenido/issues/ (o su archivo en docs/issues/). Nunca otros issues ni _generado/.
 
 Intentaste editar: $file
 

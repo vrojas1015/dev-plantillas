@@ -30,6 +30,7 @@ Cada plantilla pregunta `deploy_target`:
 |---|---|
 | `go-grpc-service` | `cloud-run` (default) · `coolify` · `ninguno` |
 | `angular-app` | `firebase-hosting` (default) · `coolify` · `ninguno` |
+| `docs` | `ninguno` (default) · `firebase-hosting` · `coolify` (con basic auth opcional) |
 
 | | Google (Cloud Run / Firebase Hosting) | Coolify en un VPS propio |
 |---|---|---|

@@ -1,0 +1,28 @@
+/* Bloque de metadatos que agrega scripts/hook_mkdocs.py a issues y ADRs. */
+.metadatos {
+  margin: 0 0 1.5em;
+  padding: 0.6em 0.9em;
+  border-left: 0.25em solid var(--md-primary-fg-color);
+  background: var(--md-code-bg-color);
+  border-radius: 0.2em;
+  font-size: 0.8rem;
+  line-height: 1.8;
+}
+
+.metadatos__chip {
+  display: inline-block;
+  padding: 0 0.6em;
+  border-radius: 1em;
+  font-weight: 700;
+  background: var(--md-default-fg-color--lightest);
+}
+
+.metadatos__chip--estado-abierto,
+.metadatos__chip--estado-propuesto { background: #1e88e5; color: #fff; }
+.metadatos__chip--estado-en-curso { background: #fb8c00; color: #fff; }
+.metadatos__chip--estado-bloqueado,
+.metadatos__chip--prioridad-alta { background: #e53935; color: #fff; }
+.metadatos__chip--estado-resuelto,
+.metadatos__chip--estado-aceptado { background: #43a047; color: #fff; }
+.metadatos__chip--estado-descartado,
+.metadatos__chip--estado-reemplazado { background: #757575; color: #fff; }

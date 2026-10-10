@@ -1,0 +1,27 @@
+{#- Primera versión del generado (igual a la salida de scripts/generar.py). copier update no lo pisa (_skip_if_exists). -#}
+{%- macro ficha(r) %}[{{ r }}](../servicios/{{ r }}.md){% endmacro -%}
+<!-- Archivo generado por scripts/generar.py: no editar. Regenerar con `make generar`. -->
+
+# Issues por estado
+
+> **Archivo generado: no editar.** Sale del frontmatter de `issues/<n>-<slug>/issue.md`. Se regenera con `make generar`.
+
+Total: 1 · abierto: 1 · en-curso: 0 · bloqueado: 0 · resuelto: 0 · descartado: 0
+
+## Abiertos (1)
+
+| # | Título | Prioridad | Tipo | Área | Repos (en orden) | Creado |
+|---|---|---|---|---|---|---|
+| [001](../issues/001-issue-de-ejemplo/issue.md) | Issue de ejemplo: cómo se escribe un issue | baja | investigacion | {{ ficha(repos_iniciales[0]) if repos_iniciales else '—' }} | {% for r in repos_iniciales %}{{ ficha(r) }}{{ ' → ' if not loop.last }}{% else %}—{% endfor %} | {{ fecha_inicio }} |
+
+## En curso (0)
+
+_Ninguno._
+
+## Bloqueados (0)
+
+_Ninguno._
+
+## Resueltos recientes (últimos 20)
+
+_Ninguno._
