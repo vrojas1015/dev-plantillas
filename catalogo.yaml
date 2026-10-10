@@ -4,7 +4,7 @@
 version: 1
 plantillas:
   - nombre: go-grpc-service
-    repo: gh:vrojas1015/template-go-grpc-service
+    repo: gh:dev-plantillas/template-go-grpc-service
     tipo: backend
     lenguaje: go
     descripcion: Microservicio Go gRPC hexagonal + Postgres (Cloud Run o Coolify)
@@ -14,7 +14,7 @@ plantillas:
       ci: ci_provider
 
   - nombre: protos
-    repo: gh:vrojas1015/template-protos
+    repo: gh:dev-plantillas/template-protos
     tipo: contratos
     lenguaje: proto
     descripcion: Contratos gRPC con buf; código para Go, Python, TS/JS, Java, Kotlin y Swift
@@ -23,7 +23,7 @@ plantillas:
       ci: ci_provider
 
   - nombre: api-gateway
-    repo: gh:vrojas1015/template-api-gateway
+    repo: gh:dev-plantillas/template-api-gateway
     tipo: gateway
     lenguaje: go
     descripcion: API gateway REST→gRPC con auth, autorización por ruta y rate limit
@@ -34,7 +34,7 @@ plantillas:
       auth: auth
 
   - nombre: angular-app
-    repo: gh:vrojas1015/template-angular-app
+    repo: gh:dev-plantillas/template-angular-app
     tipo: front
     lenguaje: typescript
     descripcion: App Angular standalone + signals (Firebase Hosting o Coolify)
@@ -44,7 +44,7 @@ plantillas:
       ci: ci_provider
 
   - nombre: docs
-    repo: gh:vrojas1015/template-docs
+    repo: gh:dev-plantillas/template-docs
     tipo: docs
     lenguaje: markdown
     descripcion: Repo de documentación con issues, ADRs, runbooks y MkDocs Material
@@ -54,7 +54,7 @@ plantillas:
       ci: ci_provider
 
   - nombre: astro-site
-    repo: gh:vrojas1015/template-astro-site
+    repo: gh:dev-plantillas/template-astro-site
     tipo: front
     lenguaje: typescript
     descripcion: Sitio público con Astro e islas de React, SEO técnico y Lighthouse CI
@@ -64,7 +64,7 @@ plantillas:
       ci: ci_provider
 
   - nombre: android-app
-    repo: gh:vrojas1015/template-android-app
+    repo: gh:dev-plantillas/template-android-app
     tipo: movil
     lenguaje: kotlin
     descripcion: App Android nativa con Kotlin, Compose, Hilt, Room y publicación en Google Play
@@ -73,7 +73,7 @@ plantillas:
       ci: ci_provider
 
   - nombre: e2e-tests
-    repo: gh:vrojas1015/template-e2e-tests
+    repo: gh:dev-plantillas/template-e2e-tests
     tipo: pruebas
     lenguaje: typescript
     descripcion: Pruebas end-to-end con Playwright, Schemathesis y k6, con registro de casos de uso
