@@ -26,6 +26,7 @@ guías de cómo se organizan carpetas, repos y trabajo con agentes.
 | `docs/06-documentacion.md` | Diseño del repo de documentación (issues, ADRs, runbooks, MkDocs): especificación de la plantilla |
 | `docs/07-frontend-y-seo.md` | Qué plantilla de front usar y especificación de `astro-site` (SEO técnico, Core Web Vitals, Lighthouse CI) |
 | `docs/08-cli-dp.md` | Especificación de la CLI `dp`: catálogo, `new`, `update`, workspace e issues; hitos en modo pair |
+| `docs/09-movil-android.md` | Decisión de móvil (Android nativo primero, camino a iOS con KMP) y especificación de `android-app` |
 
 ## Requisitos
 
