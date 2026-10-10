@@ -1,0 +1,64 @@
+# Firebase
+
+Dos proyectos de Firebase: **QA** y **producción** (cada flavor habla con el suyo).
+
+## google-services.json (no se commitea)
+
+En cada proyecto de Firebase → Configuración → Tus apps → Android, registrar los
+applicationId de ese ambiente (debug incluido):
+
+| Archivo | Proyecto | Paquetes |
+|---|---|---|
+| `app/src/qa/google-services.json` | QA | `{{ application_id }}.qa`, `{{ application_id }}.qa.debug` |
+| `app/src/prod/google-services.json` | Producción | `{{ application_id }}`, `{{ application_id }}.debug` |
+
+Bajar el JSON de cada proyecto (incluye todos los paquetes registrados) y
+copiarlo ahí. Están en `.gitignore`; en el CI salen de los secretos
+`GOOGLE_SERVICES_JSON_QA/_PROD` (docs/ci-cd.md).
+
+- **Sin los dos archivos**: el build debug compila y la app funciona con la
+  sesión de desarrollo (token fijo, ver abajo); los plugins de Google Services y
+  Crashlytics no se aplican. El build de **release falla** con un mensaje que
+  dice qué falta.
+- **Con los dos**: se aplican los plugins y la app usa Firebase.
+
+## Auth
+
+`core:auth/FirebaseAuthRepository`: email y contraseña. El ID token va en
+`Authorization: Bearer` a cada request (el gateway con `auth=firebase` lo
+verifica); Firebase lo renueva solo y, si el gateway responde 401, se fuerza una
+renovación y se reintenta una vez. Si sigue en 401 la UI pide volver a iniciar
+sesión. Para login con Google: Credential Manager +
+`GoogleAuthProvider.getCredential(idToken)` en el mismo repositorio.
+
+Sesión de desarrollo (sin Firebase configurado): token fijo de
+`~/.gradle/gradle.properties` → `devAuthToken=<token>` (solo en debug; vacío =
+sin Authorization, sirve contra un gateway con `auth=ninguno`).
+
+## App Check
+
+- **release**: Play Integrity. En Firebase → App Check → registrar la app con
+  Play Integrity; en Play Console vincular el proyecto de Cloud (Integridad de
+  la app). El SHA-256 que pide es el de la **clave de firma de la app** de Play
+  App Signing (Play Console → Integridad de la app), no el de la upload key.
+- **debug**: proveedor de debug. La primera vez la app escribe en logcat
+  `Enter this debug secret into the allow list...: <token>`: cargarlo en Firebase
+  → App Check → Apps → Administrar tokens de depuración.
+- El token va en la cabecera `X-Firebase-AppCheck`. Qué hace el gateway con él:
+  `docs/app-check-gateway.md`.
+
+## FCM (notificaciones)
+
+- Canal `general` creado al iniciar (`push/Notifications.kt`); el permiso de
+  Android 13+ se pide al abrir la app (`MainActivity`, moverlo a un momento con
+  contexto cuando haya un caso real).
+- `AppMessagingService.onNewToken`: registrar el token en el backend con un
+  endpoint propio autenticado (pedirlo al backend; no existe en la plantilla).
+
+## Crashlytics
+
+Desactivado en debug. En release el plugin sube el mapping de R8 al construir el
+bundle (necesita los `google-services.json`), así los stack traces llegan legibles.
+
+Analytics (con consentimiento) y Remote Config no vienen en la plantilla: agregar
+`firebase-analytics`/`firebase-config` al catálogo cuando haya un caso.

@@ -1,0 +1,32 @@
+package {{ application_id }}.core.model
+
+/**
+ * Errores que la UI sabe mostrar. La red, la base y la autenticación traducen
+ * sus excepciones a uno de estos tipos; ninguna excepción de librería
+ * (Ktor, gRPC, Firebase...) sale de la capa de datos.
+ */
+sealed interface AppError {
+    /** Sin conexión o el servidor no responde (timeout). */
+    data object Offline : AppError
+
+    /** 401: el token no sirve ni renovado. La UI pide volver a iniciar sesión. */
+    data object Unauthorized : AppError
+
+    /** 403: autenticado pero sin permiso para esa operación. */
+    data object Forbidden : AppError
+
+    /** 404. */
+    data object NotFound : AppError
+
+    /** 400/422: datos inválidos (mensaje del servidor si lo hay). */
+    data class Invalid(val detail: String?) : AppError
+
+    /** 5xx u otra respuesta inesperada del servidor. */
+    data class Server(val status: Int?) : AppError
+}
+
+/** Excepción que transporta un [AppError] entre capas (repositorio -> ViewModel). */
+class AppException(
+    val error: AppError,
+    cause: Throwable? = null,
+) : Exception(error.toString(), cause)

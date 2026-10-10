@@ -1,0 +1,161 @@
+package {{ application_id }}.core.network
+
+import com.google.protobuf.timestamp
+import io.grpc.ManagedChannel
+import io.grpc.Metadata
+import io.grpc.Server
+import io.grpc.ServerCall
+import io.grpc.ServerCallHandler
+import io.grpc.ServerInterceptor
+import io.grpc.ServerInterceptors
+import io.grpc.Status
+import io.grpc.StatusException
+import io.grpc.inprocess.InProcessChannelBuilder
+import io.grpc.inprocess.InProcessServerBuilder
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.fail
+import org.junit.Before
+import org.junit.Test
+import kotlin.time.Instant
+import {{ protos_paquete }}.CreateItemRequest
+import {{ protos_paquete }}.CreateItemResponse
+import {{ protos_paquete }}.GetItemRequest
+import {{ protos_paquete }}.GetItemResponse
+import {{ protos_paquete }}.ItemServiceGrpcKt.ItemServiceCoroutineImplBase
+import {{ protos_paquete }}.ListItemsRequest
+import {{ protos_paquete }}.ListItemsResponse
+import {{ protos_paquete }}.createItemResponse
+import {{ protos_paquete }}.getItemResponse
+import {{ protos_paquete }}.item
+import {{ protos_paquete }}.listItemsResponse
+import {{ protos_paquete }}.pageResponse
+import {{ application_id }}.core.domain.AppCheckTokenProvider
+import {{ application_id }}.core.domain.SessionState
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+import {{ application_id }}.core.testing.FakeAuthRepository
+
+/** Cliente gRPC contra un servidor gRPC en proceso que implementa ItemService. */
+class GrpcItemsDataSourceTest {
+    private val name = InProcessServerBuilder.generateName()
+    private val auth = FakeAuthRepository()
+    private val seenTokens = mutableListOf<String?>()
+    private var validToken = "Bearer token-1"
+    private lateinit var server: Server
+    private lateinit var channel: ManagedChannel
+    private lateinit var dataSource: GrpcItemsDataSource
+
+    @Before
+    fun setUp() {
+        server = InProcessServerBuilder.forName(name).directExecutor()
+            .addService(ServerInterceptors.intercept(FakeItemService(), AuthCheck()))
+            .build()
+            .start()
+        channel = InProcessChannelBuilder.forName(name).directExecutor().build()
+        dataSource = GrpcItemsDataSource(channel, GrpcCallConfig(5_000, auth, AppCheckTokenProvider { null }))
+    }
+
+    @After
+    fun tearDown() {
+        channel.shutdownNow()
+        server.shutdownNow()
+    }
+
+    @Test
+    fun listaConTokenYPaginacion() = runTest {
+        val page = dataSource.list(cursor = null, limit = 50)
+
+        assertEquals(listOf("1", "2"), page.items.map { it.id })
+        assertEquals(Instant.parse("2026-01-02T03:04:05Z"), page.items[0].createdAt)
+        assertEquals("c2", page.nextCursor)
+        assertEquals(listOf<String?>("Bearer token-1"), seenTokens)
+    }
+
+    @Test
+    fun detalleNoEncontradoEsNotFound() = runTest {
+        assertError(AppError.NotFound) { dataSource.get("9") }
+    }
+
+    @Test
+    fun crearDevuelveElItem() = runTest {
+        assertEquals("Silla", dataSource.create("Silla", "Pino").name)
+    }
+
+    @Test
+    fun unauthenticatedRenuevaElTokenYReintenta() = runTest {
+        validToken = "Bearer token-2"
+
+        assertEquals("1", dataSource.get("1").id)
+        assertEquals(listOf<String?>("Bearer token-1", "Bearer token-2"), seenTokens)
+        assertEquals(1, auth.forcedRefreshes)
+    }
+
+    @Test
+    fun unauthenticatedConTokenRenovadoPideVolverAIniciarSesion() = runTest {
+        validToken = "Bearer otro"
+
+        assertError(AppError.Unauthorized) { dataSource.list(cursor = null, limit = 10) }
+        assertEquals(SessionState.Expired, auth.session.value)
+    }
+
+    private suspend fun assertError(expected: AppError, block: suspend () -> Unit) {
+        try {
+            block()
+            fail("Se esperaba AppException($expected)")
+        } catch (e: AppException) {
+            assertEquals(expected, e.error)
+        }
+    }
+
+    /** Rechaza con UNAUTHENTICATED si el token no es el válido (como el gateway). */
+    private inner class AuthCheck : ServerInterceptor {
+        override fun <Q, R> interceptCall(
+            call: ServerCall<Q, R>,
+            headers: Metadata,
+            next: ServerCallHandler<Q, R>,
+        ): ServerCall.Listener<Q> {
+            val token = headers.get(Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER))
+            seenTokens += token
+            if (token != validToken) {
+                call.close(Status.UNAUTHENTICATED.withDescription("token inválido"), Metadata())
+                return object : ServerCall.Listener<Q>() {}
+            }
+            return next.startCall(call, headers)
+        }
+    }
+
+    private class FakeItemService : ItemServiceCoroutineImplBase() {
+        private val lampara = item {
+            id = "1"
+            name = "Lámpara"
+            createdAt = timestamp { seconds = Instant.parse("2026-01-02T03:04:05Z").epochSeconds }
+        }
+        private val mesa = item {
+            id = "2"
+            name = "Mesa"
+        }
+
+        override suspend fun listItems(request: ListItemsRequest): ListItemsResponse = listItemsResponse {
+            items += listOf(lampara, mesa)
+            page = pageResponse {
+                nextCursor = "c2"
+                hasNext = true
+            }
+        }
+
+        override suspend fun getItem(request: GetItemRequest): GetItemResponse {
+            if (request.id != lampara.id) throw StatusException(Status.NOT_FOUND)
+            return getItemResponse { item = lampara }
+        }
+
+        override suspend fun createItem(request: CreateItemRequest): CreateItemResponse = createItemResponse {
+            item = item {
+                id = "3"
+                name = request.name
+                description = request.description
+            }
+        }
+    }
+}

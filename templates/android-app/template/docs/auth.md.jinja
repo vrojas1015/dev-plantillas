@@ -1,0 +1,24 @@
+# Autenticación sin Firebase
+
+La plantilla se generó con `firebase=false`: `core:auth` usa
+`DevTokenAuthRepository`, una sesión **de desarrollo** que manda siempre el mismo
+token en `Authorization: Bearer`.
+
+- Token: `~/.gradle/gradle.properties` → `devAuthToken=<token>` (nunca en el repo).
+  Solo se usa en debug; en release va vacío.
+- Vacío: no se manda Authorization (sirve contra un api-gateway con `auth=ninguno`).
+- Un 401 del gateway lleva a la pantalla "Volver a iniciar sesión"; el login de
+  desarrollo acepta cualquier email/contraseña.
+
+## Conectar un proveedor real
+
+Implementar `AuthRepository` (`core:domain`) en `core:auth` con el proveedor
+elegido (OIDC con AppAuth, Firebase, etc.) y cambiar el binding de `AuthModule`.
+El contrato que espera el resto de la app:
+
+- `idToken(forceRefresh)`: token vigente; con `true`, uno nuevo (lo pide la red
+  ante un 401).
+- `session`: `SignedIn` / `SignedOut` / `Expired`; `onUnauthorized()` pasa a
+  `Expired`.
+
+Para pasar a Firebase con todo resuelto: `copier update --data firebase=true`.

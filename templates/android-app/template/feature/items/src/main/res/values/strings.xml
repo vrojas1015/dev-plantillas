@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="feature_items_title">Items</string>
+    <string name="feature_items_detail_title">Detalle</string>
+    <string name="feature_items_refresh">Actualizar</string>
+    <string name="feature_items_empty">Todavía no hay items.</string>
+    <string name="feature_items_open">Ver detalle</string>
+    <string name="feature_items_back">Volver</string>
+    <string name="feature_items_sign_in">Volver a iniciar sesión</string>
+    <!-- %1$s: el motivo (p. ej. "Sin conexión...") -->
+    <string name="feature_items_stored_data">Mostrando lo guardado. %1$s</string>
+</resources>

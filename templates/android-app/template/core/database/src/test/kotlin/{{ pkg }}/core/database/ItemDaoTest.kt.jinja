@@ -1,0 +1,50 @@
+package {{ application_id }}.core.database
+
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class ItemDaoTest {
+    private lateinit var database: AppDatabase
+    private lateinit var dao: ItemDao
+
+    @Before
+    fun setUp() {
+        database = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        dao = database.itemDao()
+    }
+
+    @After
+    fun tearDown() = database.close()
+
+    @Test
+    fun replaceAllDejaSoloLoQueVinoDeLaRed() = runTest {
+        dao.upsert(listOf(entity("1", "Viejo"), entity("2", "Borrado")))
+
+        dao.replaceAll(listOf(entity("1", "Nuevo"), entity("3", "Agregado")))
+
+        assertEquals(listOf("Agregado", "Nuevo"), dao.observeAll().first().map { it.name })
+    }
+
+    @Test
+    fun replaceAllVacioBorraTodo() = runTest {
+        dao.upsert(listOf(entity("1", "Uno")))
+
+        dao.replaceAll(emptyList())
+
+        assertEquals(emptyList<ItemEntity>(), dao.observeAll().first())
+    }
+
+    private fun entity(id: String, name: String) =
+        ItemEntity(id = id, name = name, description = "", createdAtMillis = null, updatedAtMillis = null)
+}

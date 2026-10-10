@@ -1,0 +1,47 @@
+package {{ application_id }}.feature.items
+
+import androidx.lifecycle.SavedStateHandle
+import app.cash.turbine.test
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Rule
+import org.junit.Test
+import {{ application_id }}.core.domain.ObserveItemUseCase
+import {{ application_id }}.core.domain.RefreshItemUseCase
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.testing.FakeItemsRepository
+import {{ application_id }}.core.testing.MainDispatcherRule
+import {{ application_id }}.core.testing.TestData
+
+class ItemDetailViewModelTest {
+    @get:Rule val mainDispatcher = MainDispatcherRule()
+
+    private fun viewModel(repository: FakeItemsRepository, id: String) = ItemDetailViewModel(
+        SavedStateHandle(mapOf("id" to id)),
+        ObserveItemUseCase(repository),
+        RefreshItemUseCase(repository),
+    )
+
+    @Test
+    fun muestraElItemActualizado() = runTest {
+        val repository = FakeItemsRepository(stored = emptyList(), remote = TestData.items)
+
+        viewModel(repository, TestData.lampara.id).uiState.test {
+            val state = expectMostRecentItem()
+            assertEquals(TestData.lampara, state.item)
+            assertNull(state.error)
+        }
+    }
+
+    @Test
+    fun noEncontrado() = runTest {
+        val repository = FakeItemsRepository(stored = emptyList(), remote = emptyList())
+
+        viewModel(repository, "9").uiState.test {
+            val state = expectMostRecentItem()
+            assertNull(state.item)
+            assertEquals(AppError.NotFound, state.error)
+        }
+    }
+}

@@ -1,0 +1,84 @@
+package {{ application_id }}.core.ui
+
+import androidx.annotation.StringRes
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.tooling.preview.Preview
+import androidx.compose.ui.unit.dp
+import {{ application_id }}.core.designsystem.AppTheme
+import {{ application_id }}.core.model.AppError
+
+/** Texto que ve el usuario para cada error de dominio. */
+@StringRes
+fun AppError.messageRes(): Int = when (this) {
+    AppError.Offline -> R.string.core_ui_error_offline
+    AppError.Unauthorized -> R.string.core_ui_error_unauthorized
+    AppError.Forbidden -> R.string.core_ui_error_forbidden
+    AppError.NotFound -> R.string.core_ui_error_not_found
+    is AppError.Invalid -> R.string.core_ui_error_invalid
+    is AppError.Server -> R.string.core_ui_error_server
+}
+
+/**
+ * Error a pantalla completa con la acción que corresponde: volver a iniciar
+ * sesión si es 401, reintentar en el resto.
+ */
+@Composable
+fun ErrorMessage(
+    error: AppError,
+    onRetry: () -> Unit,
+    onSignIn: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Text(
+            text = stringResource(error.messageRes()),
+            style = MaterialTheme.typography.bodyLarge,
+            textAlign = TextAlign.Center,
+        )
+        if (error == AppError.Unauthorized) {
+            Button(onClick = onSignIn) { Text(stringResource(R.string.core_ui_action_sign_in)) }
+        } else {
+            Button(onClick = onRetry) { Text(stringResource(R.string.core_ui_action_retry)) }
+        }
+    }
+}
+
+/** Aviso angosto arriba de contenido que sí se puede mostrar (p. ej. datos guardados sin conexión). */
+@Composable
+fun ErrorBanner(
+    text: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(color = MaterialTheme.colorScheme.errorContainer, modifier = modifier.fillMaxWidth()) {
+        Text(
+            text = text,
+            color = MaterialTheme.colorScheme.onErrorContainer,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+        )
+    }
+}
+
+@Preview
+@Composable
+private fun ErrorMessagePreview() {
+    AppTheme(dynamicColor = false) {
+        Surface { ErrorMessage(error = AppError.Unauthorized, onRetry = {}, onSignIn = {}) }
+    }
+}

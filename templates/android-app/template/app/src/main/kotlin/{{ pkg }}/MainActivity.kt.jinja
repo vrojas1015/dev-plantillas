@@ -1,0 +1,52 @@
+package {{ application_id }}
+
+{% if fb -%}
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+{% endif -%}
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+{%- if fb %}
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+{%- endif %}
+import dagger.hilt.android.AndroidEntryPoint
+import {{ application_id }}.core.designsystem.AppTheme
+import {{ application_id }}.navigation.AppNavHost
+
+@AndroidEntryPoint
+class MainActivity : ComponentActivity() {
+{%- if fb %}
+    // Android 13+: las notificaciones necesitan permiso explícito. Si la app tiene un
+    // momento mejor para pedirlo (después de explicar para qué), movelo ahí.
+    private val notificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+{%- endif %}
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+{%- if fb %}
+        requestNotificationPermission()
+{%- endif %}
+        setContent {
+            AppTheme {
+                AppNavHost()
+            }
+        }
+    }
+{%- if fb %}
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+{%- endif %}
+}

@@ -1,0 +1,13 @@
+plugins {
+    alias(libs.plugins.app.android.library)
+    alias(libs.plugins.app.hilt)
+}
+
+android {
+    namespace = "{{ application_id }}.core.datastore"
+}
+
+dependencies {
+    api(libs.kotlinx.coroutines.core)
+    implementation(libs.androidx.datastore.preferences)
+}

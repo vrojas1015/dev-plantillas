@@ -1,0 +1,27 @@
+package {{ application_id }}.core.auth
+
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+import {{ application_id }}.core.domain.SessionState
+
+class DevTokenAuthRepositoryTest {
+    @Test
+    fun mandaElTokenFijoMientrasLaSesionEsValida() = runTest {
+        val auth = DevTokenAuthRepository("abc")
+        assertEquals("abc", auth.idToken())
+
+        auth.onUnauthorized()
+        assertEquals(SessionState.Expired, auth.session.value)
+        assertNull(auth.idToken())
+
+        auth.signIn("ana@example.com", "x")
+        assertEquals(SessionState.SignedIn("ana@example.com"), auth.session.value)
+    }
+
+    @Test
+    fun tokenVacioNoMandaAuthorization() = runTest {
+        assertNull(DevTokenAuthRepository("").idToken())
+    }
+}

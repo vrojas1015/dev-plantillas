@@ -1,0 +1,33 @@
+package {{ application_id }}.core.database
+
+import androidx.room.ColumnInfo
+import androidx.room.Entity
+import androidx.room.PrimaryKey
+import kotlin.time.Instant
+import {{ application_id }}.core.model.Item
+
+/** Fila de la tabla items: la copia local (fuente de verdad) de /v1/items. */
+@Entity(tableName = "items")
+data class ItemEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val description: String,
+    @ColumnInfo(name = "created_at") val createdAtMillis: Long?,
+    @ColumnInfo(name = "updated_at") val updatedAtMillis: Long?,
+)
+
+fun ItemEntity.asModel(): Item = Item(
+    id = id,
+    name = name,
+    description = description,
+    createdAt = createdAtMillis?.let(Instant::fromEpochMilliseconds),
+    updatedAt = updatedAtMillis?.let(Instant::fromEpochMilliseconds),
+)
+
+fun Item.asEntity(): ItemEntity = ItemEntity(
+    id = id,
+    name = name,
+    description = description,
+    createdAtMillis = createdAt?.toEpochMilliseconds(),
+    updatedAtMillis = updatedAt?.toEpochMilliseconds(),
+)

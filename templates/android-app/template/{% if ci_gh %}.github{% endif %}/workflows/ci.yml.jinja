@@ -1,0 +1,49 @@
+{% raw -%}
+# PR y main: estilo, análisis estático, lint, tests (JVM + Robolectric) y build debug.
+# Sin emulador. Los tags de release los maneja release.yml.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest   # trae el Android SDK (ANDROID_HOME); AGP baja la plataforma que falte
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      # Caché de Gradle (dependencias, wrapper, build cache) y validación del wrapper.
+      - uses: gradle/actions/setup-gradle@v6
+      - name: ktlint, detekt, lint, tests y assembleDebug
+{%- endraw %}
+{%- if grpc %}
+        env:
+          # Registry Maven del repo protos (docs/protos.md).
+          PROTOS_MAVEN_URL: ${{ '{{' }} vars.PROTOS_MAVEN_URL {{ '}}' }}
+          PROTOS_MAVEN_TOKEN: ${{ '{{' }} secrets.PROTOS_MAVEN_TOKEN {{ '}}' }}
+{%- endif %}
+{%- raw %}
+        run: ./gradlew ktlintCheck detekt lint testDebugUnitTest assembleDebug
+      - name: Reportes (tests, lint, detekt)
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reportes
+          path: |
+            **/build/reports/
+            **/build/test-results/
+          retention-days: 7
+{%- endraw %}

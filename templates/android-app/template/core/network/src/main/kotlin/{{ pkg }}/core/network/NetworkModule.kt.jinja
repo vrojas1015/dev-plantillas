@@ -1,0 +1,50 @@
+package {{ application_id }}.core.network
+
+import dagger.Binds
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+{%- if rest %}
+import io.ktor.client.HttpClient
+import io.ktor.client.engine.okhttp.OkHttp
+{%- else %}
+import io.grpc.Channel
+import io.grpc.ManagedChannel
+{%- endif %}
+import javax.inject.Singleton
+import {{ application_id }}.core.domain.AppCheckTokenProvider
+import {{ application_id }}.core.domain.AuthRepository
+
+@Module
+@InstallIn(SingletonComponent::class)
+internal abstract class NetworkModule {
+    @Binds
+    abstract fun itemsNetworkDataSource(impl: {% if rest %}Rest{% else %}Grpc{% endif %}ItemsDataSource): ItemsNetworkDataSource
+
+    companion object {
+{%- if rest %}
+        @Provides
+        @Singleton
+        fun httpClient(
+            config: NetworkConfig,
+            auth: AuthRepository,
+            appCheck: AppCheckTokenProvider,
+        ): HttpClient = createHttpClient(OkHttp.create(), config, auth, appCheck)
+{%- else %}
+        @Provides
+        @Singleton
+        fun managedChannel(config: NetworkConfig): ManagedChannel = createChannel(config)
+
+        @Provides
+        fun channel(managed: ManagedChannel): Channel = managed
+
+        @Provides
+        fun grpcCallConfig(
+            config: NetworkConfig,
+            auth: AuthRepository,
+            appCheck: AppCheckTokenProvider,
+        ): GrpcCallConfig = GrpcCallConfig(config.timeoutMillis, auth, appCheck)
+{%- endif %}
+    }
+}

@@ -1,0 +1,17 @@
+plugins {
+    alias(libs.plugins.app.android.library)
+    alias(libs.plugins.app.hilt)
+}
+
+android {
+    namespace = "{{ application_id }}.core.data"
+}
+
+dependencies {
+    api(projects.core.domain)
+    implementation(projects.core.database)
+    implementation(projects.core.datastore)
+    implementation(projects.core.network)
+
+    testImplementation(projects.core.testing)
+}

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="core_ui_error_offline">Sin conexión. Revisá tu red y volvé a intentar.</string>
+    <string name="core_ui_error_unauthorized">Tu sesión venció. Volvé a iniciar sesión para continuar.</string>
+    <string name="core_ui_error_forbidden">No tenés permiso para ver esto.</string>
+    <string name="core_ui_error_not_found">No lo encontramos. Puede que se haya borrado.</string>
+    <string name="core_ui_error_invalid">Revisá los datos ingresados.</string>
+    <string name="core_ui_error_server">Algo falló de nuestro lado. Probá de nuevo en un rato.</string>
+    <string name="core_ui_action_retry">Reintentar</string>
+    <string name="core_ui_action_sign_in">Volver a iniciar sesión</string>
+    <string name="core_ui_loading">Cargando</string>
+</resources>

@@ -1,0 +1,37 @@
+package {{ application_id }}.core.auth
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import {{ application_id }}.core.domain.AuthRepository
+import {{ application_id }}.core.domain.SessionState
+
+/**
+ * Sesión de desarrollo{% if fb %} (sin google-services.json){% endif %}: manda siempre el mismo token
+ * (`devAuthToken` en ~/.gradle/gradle.properties; vacío = sin Authorization).
+ * Sirve contra un gateway con auth=ninguno o con un token de prueba de QA.
+ * En release el token es siempre vacío.
+ */
+class DevTokenAuthRepository(private val token: String) : AuthRepository {
+    private val state = MutableStateFlow<SessionState>(SessionState.SignedIn(DEV_USER))
+    override val session: StateFlow<SessionState> = state.asStateFlow()
+
+    override suspend fun idToken(forceRefresh: Boolean): String? =
+        token.takeIf { it.isNotEmpty() && state.value is SessionState.SignedIn }
+
+    override suspend fun signIn(email: String, password: String) {
+        state.value = SessionState.SignedIn(email.ifBlank { DEV_USER })
+    }
+
+    override suspend fun signOut() {
+        state.value = SessionState.SignedOut
+    }
+
+    override fun onUnauthorized() {
+        state.value = SessionState.Expired
+    }
+
+    private companion object {
+        const val DEV_USER = "desarrollo"
+    }
+}

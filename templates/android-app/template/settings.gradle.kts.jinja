@@ -1,0 +1,94 @@
+pluginManagement {
+    // Convention plugins propios (configuración común de módulos): build-logic/.
+    includeBuild("build-logic")
+    repositories {
+        google {
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
+    repositories {
+        google {
+            content {
+                includeGroupByRegex("com\\.android.*")
+                includeGroupByRegex("com\\.google.*")
+                includeGroupByRegex("androidx.*")
+            }
+        }
+        mavenCentral()
+{%- if grpc %}
+        // Contratos ({{ protos_maven }}): registry Maven del repo protos (docs/protos.md).
+        // PROTOS_MAVEN_URL vacío -> solo mavenLocal (protos publicado con
+        // `./gradlew publishToMavenLocal` desde su gen/jvm, para co-desarrollo).
+        val protosGroup = "{{ protos_maven.split(':')[0] }}"
+        val protosUrl = providers.environmentVariable("PROTOS_MAVEN_URL")
+            .orElse(providers.gradleProperty("protosMavenUrl"))
+        if (protosUrl.isPresent) {
+            maven {
+                name = "protos"
+                url = uri(protosUrl.get())
+{%- if ci_gl %}
+                // GitLab: "Job-Token" en CI (CI_JOB_TOKEN), "Private-Token" o
+                // "Deploy-Token" en local (PROTOS_MAVEN_TOKEN).
+                credentials(HttpHeaderCredentials::class) {
+                    val jobToken = providers.environmentVariable("CI_JOB_TOKEN")
+                    name = if (jobToken.isPresent) "Job-Token" else "Private-Token"
+                    value = jobToken.orElse(providers.environmentVariable("PROTOS_MAVEN_TOKEN")).orNull
+                }
+                authentication { create<HttpHeaderAuthentication>("header") }
+{%- else %}
+                // GitHub Packages siempre pide token (read:packages).
+                credentials {
+                    username = providers.environmentVariable("GITHUB_ACTOR").orNull
+                    password = providers.environmentVariable("PROTOS_MAVEN_TOKEN")
+                        .orElse(providers.environmentVariable("GITHUB_TOKEN")).orNull
+                }
+{%- endif %}
+                content { includeGroup(protosGroup) }
+            }
+        }
+        mavenLocal { content { includeGroup(protosGroup) } }
+{%- endif %}
+    }
+}
+
+rootProject.name = "{{ slug }}"
+// projects.core.model en vez de project(":core:model").
+enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
+
+// Módulos Kotlin puro (sin Android): candidatos al módulo compartido de KMP.
+// Si alguien los convierte en módulos Android, el build falla acá (CLAUDE.md).
+// (La lista va dentro del lambda: con configuration cache no puede capturar el script.)
+gradle.lifecycle.afterProject {
+    if (path in setOf(":core:model", ":core:domain")) {
+        check(!pluginManager.hasPlugin("com.android.base")) {
+            "$path tiene que ser Kotlin puro (plugin app.jvm.library), no un módulo Android."
+        }
+        check(pluginManager.hasPlugin("app.jvm.library")) {
+            "$path tiene que aplicar el convention plugin app.jvm.library (Kotlin puro)."
+        }
+    }
+}
+
+include(":app")
+include(":baselineprofile")
+include(":core:model")
+include(":core:domain")
+include(":core:data")
+include(":core:network")
+include(":core:database")
+include(":core:datastore")
+include(":core:designsystem")
+include(":core:ui")
+include(":core:auth")
+include(":core:testing")
+include(":feature:items")

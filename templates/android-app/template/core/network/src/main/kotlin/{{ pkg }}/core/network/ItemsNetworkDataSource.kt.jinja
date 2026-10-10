@@ -1,0 +1,32 @@
+package {{ application_id }}.core.network
+
+import {{ application_id }}.core.model.Item
+import {{ application_id }}.core.model.ItemsPage
+
+/**
+ * Acceso remoto a /v1/items (ItemService). Implementación: {% if rest %}REST con Ktor
+ * contra el api-gateway{% else %}gRPC con los stubs de {{ protos_maven }}{% endif %}.
+ *
+ * Todos los métodos lanzan AppException (nunca excepciones de la librería de red).
+ */
+interface ItemsNetworkDataSource {
+    suspend fun list(cursor: String?, limit: Int): ItemsPage
+
+    suspend fun get(id: String): Item
+
+    suspend fun create(name: String, description: String): Item
+}
+
+/**
+ * Configuración de red; la provee :app según el flavor (qa/prod).
+ * Reintentos con backoff solo en operaciones idempotentes (lecturas).
+ */
+data class NetworkConfig(
+    val baseUrl: String,
+    val timeoutMillis: Long = 15_000,
+    val maxRetries: Int = 2,
+    val retryBaseDelayMillis: Long = 500,
+)
+
+/** Cabecera con el token de App Check (la verifica el gateway: docs/app-check-gateway.md). */
+const val APP_CHECK_HEADER = "X-Firebase-AppCheck"

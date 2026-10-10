@@ -1,0 +1,50 @@
+package {{ application_id }}.signin
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+import {{ application_id }}.core.domain.AuthRepository
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+
+data class SignInUiState(
+    val email: String = "",
+    val password: String = "",
+    val isLoading: Boolean = false,
+    val error: AppError? = null,
+    val signedIn: Boolean = false,
+) {
+    val canSubmit: Boolean get() = email.isNotBlank() && password.isNotBlank() && !isLoading
+}
+
+@HiltViewModel
+class SignInViewModel @Inject constructor(
+    private val auth: AuthRepository,
+) : ViewModel() {
+    private val state = MutableStateFlow(SignInUiState())
+    val uiState: StateFlow<SignInUiState> = state.asStateFlow()
+
+    fun onEmailChange(value: String) = state.update { it.copy(email = value.trim(), error = null) }
+
+    fun onPasswordChange(value: String) = state.update { it.copy(password = value, error = null) }
+
+    fun signIn() {
+        val current = state.value
+        if (!current.canSubmit) return
+        viewModelScope.launch {
+            state.update { it.copy(isLoading = true, error = null) }
+            try {
+                auth.signIn(current.email, current.password)
+                state.update { it.copy(isLoading = false, signedIn = true) }
+            } catch (e: AppException) {
+                state.update { it.copy(isLoading = false, error = e.error) }
+            }
+        }
+    }
+}

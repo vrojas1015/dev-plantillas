@@ -1,0 +1,40 @@
+package {{ application_id }}.signin
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import {{ application_id }}.core.domain.SessionState
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.testing.FakeAuthRepository
+import {{ application_id }}.core.testing.MainDispatcherRule
+
+class SignInViewModelTest {
+    @get:Rule val mainDispatcher = MainDispatcherRule()
+
+    @Test
+    fun iniciaSesionConCredenciales() {
+        val auth = FakeAuthRepository(initial = SessionState.Expired)
+        val viewModel = SignInViewModel(auth)
+        assertFalse(viewModel.uiState.value.canSubmit)
+
+        viewModel.onEmailChange(" ana@example.com ")
+        viewModel.onPasswordChange("secreta")
+        viewModel.signIn()
+
+        assertTrue(viewModel.uiState.value.signedIn)
+        assertEquals(SessionState.SignedIn("ana@example.com"), auth.session.value)
+    }
+
+    @Test
+    fun credencialesInvalidasMuestranError() {
+        val viewModel = SignInViewModel(FakeAuthRepository(initial = SessionState.SignedOut))
+        viewModel.onEmailChange("ana@example.com")
+        viewModel.onPasswordChange(FakeAuthRepository.WRONG_PASSWORD)
+        viewModel.signIn()
+
+        assertEquals(AppError.Unauthorized, viewModel.uiState.value.error)
+        assertFalse(viewModel.uiState.value.signedIn)
+    }
+}

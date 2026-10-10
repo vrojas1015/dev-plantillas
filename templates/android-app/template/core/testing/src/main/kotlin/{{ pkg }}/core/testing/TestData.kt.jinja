@@ -1,0 +1,17 @@
+package {{ application_id }}.core.testing
+
+import kotlin.time.Instant
+import {{ application_id }}.core.model.Item
+
+/** Datos de ejemplo para los tests. */
+object TestData {
+    val lampara = Item(
+        id = "1",
+        name = "Lámpara",
+        description = "De pie, luz cálida",
+        createdAt = Instant.parse("2026-01-02T03:04:05Z"),
+        updatedAt = Instant.parse("2026-01-02T03:04:05Z"),
+    )
+    val mesa = Item(id = "2", name = "Mesa", description = "Roble")
+    val items = listOf(lampara, mesa)
+}

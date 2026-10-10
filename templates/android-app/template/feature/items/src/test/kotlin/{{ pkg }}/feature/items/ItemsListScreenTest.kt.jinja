@@ -1,0 +1,57 @@
+package {{ application_id }}.feature.items
+
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.junit4.v2.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import {{ application_id }}.core.designsystem.AppTheme
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.testing.TestData
+
+/** UI de la lista en la JVM (Robolectric), sin emulador. */
+@RunWith(AndroidJUnit4::class)
+class ItemsListScreenTest {
+    @get:Rule val compose = createComposeRule()
+
+    private fun show(state: ItemsListUiState, onItemClick: (String) -> Unit = {}, onSignIn: () -> Unit = {}) {
+        compose.setContent {
+            AppTheme(dynamicColor = false) {
+                ItemsListScreen(state = state, onItemClick = onItemClick, onRefresh = {}, onSignIn = onSignIn)
+            }
+        }
+    }
+
+    @Test
+    fun muestraLosItemsYAbreElDetalle() {
+        var opened: String? = null
+        show(ItemsListUiState(items = TestData.items), onItemClick = { opened = it })
+
+        compose.onNodeWithText("Mesa").assertIsDisplayed()
+        compose.onNodeWithText("Lámpara").performClick()
+        assertEquals(TestData.lampara.id, opened)
+    }
+
+    @Test
+    fun sinConexionMuestraLoGuardadoConAviso() {
+        show(ItemsListUiState(items = TestData.items, error = AppError.Offline))
+
+        compose.onNodeWithText("Lámpara").assertIsDisplayed()
+        compose.onNodeWithText("Mostrando lo guardado", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun unauthorizedPideVolverAIniciarSesion() {
+        var signIn = false
+        show(ItemsListUiState(error = AppError.Unauthorized), onSignIn = { signIn = true })
+
+        compose.onNodeWithText("Tu sesión venció", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Volver a iniciar sesión").performClick()
+        assertTrue(signIn)
+    }
+}

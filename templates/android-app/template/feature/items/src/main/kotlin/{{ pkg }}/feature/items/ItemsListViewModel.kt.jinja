@@ -1,0 +1,82 @@
+package {{ application_id }}.feature.items
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+import {{ application_id }}.core.domain.ObserveItemsUseCase
+import {{ application_id }}.core.domain.RefreshItemsUseCase
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+import {{ application_id }}.core.model.Item
+
+/** Estado de la lista. La UI solo dibuja esto (flujo unidireccional). */
+data class ItemsListUiState(
+    val items: List<Item> = emptyList(),
+    val isRefreshing: Boolean = false,
+    val error: AppError? = null,
+) {
+    /** 401: la pantalla ofrece volver a iniciar sesión. */
+    val requiresSignIn: Boolean get() = error == AppError.Unauthorized
+
+    /** Hay datos guardados para mostrar aunque la red falló. */
+    val showingStoredData: Boolean get() = error != null && items.isNotEmpty()
+}
+
+/** Eventos de la UI hacia el ViewModel. */
+sealed interface ItemsListEvent {
+    data object Refresh : ItemsListEvent
+}
+
+@HiltViewModel
+class ItemsListViewModel @Inject constructor(
+    observeItems: ObserveItemsUseCase,
+    private val refreshItems: RefreshItemsUseCase,
+) : ViewModel() {
+    private val refresh = MutableStateFlow(RefreshState(isRefreshing = true))
+
+    // La lista sale de Room (observeItems); la red solo actualiza Room.
+    val uiState: StateFlow<ItemsListUiState> =
+        combine(observeItems(), refresh) { items, r ->
+            ItemsListUiState(items = items, isRefreshing = r.isRefreshing, error = r.error)
+        }.stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
+            initialValue = ItemsListUiState(isRefreshing = true),
+        )
+
+    init {
+        refresh()
+    }
+
+    fun onEvent(event: ItemsListEvent) {
+        when (event) {
+            ItemsListEvent.Refresh -> refresh()
+        }
+    }
+
+    private fun refresh() {
+        viewModelScope.launch {
+            refresh.value = RefreshState(isRefreshing = true)
+            val error = try {
+                refreshItems()
+                null
+            } catch (e: AppException) {
+                e.error
+            }
+            refresh.value = RefreshState(isRefreshing = false, error = error)
+        }
+    }
+
+    private data class RefreshState(val isRefreshing: Boolean, val error: AppError? = null)
+
+    private companion object {
+        const val STOP_TIMEOUT_MILLIS = 5_000L
+    }
+}

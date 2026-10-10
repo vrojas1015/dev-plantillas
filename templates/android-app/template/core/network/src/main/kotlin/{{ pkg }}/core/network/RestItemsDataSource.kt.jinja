@@ -1,0 +1,41 @@
+package {{ application_id }}.core.network
+
+import io.ktor.client.HttpClient
+import io.ktor.client.request.get
+import io.ktor.client.request.parameter
+import io.ktor.client.request.post
+import io.ktor.client.request.setBody
+import io.ktor.http.ContentType
+import io.ktor.http.contentType
+import io.ktor.http.encodeURLPathPart
+import javax.inject.Inject
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+import {{ application_id }}.core.model.Item
+import {{ application_id }}.core.model.ItemsPage
+
+/** /v1/items del api-gateway (rutas de las anotaciones google.api.http de ItemService). */
+internal class RestItemsDataSource @Inject constructor(
+    private val client: HttpClient,
+) : ItemsNetworkDataSource {
+    override suspend fun list(cursor: String?, limit: Int): ItemsPage =
+        client.callApi<ListItemsJson> {
+            get("v1/items") {
+                parameter("page.limit", limit)
+                if (cursor != null) parameter("page.cursor", cursor)
+            }
+        }.asModel()
+
+    override suspend fun get(id: String): Item =
+        client.callApi<ItemEnvelopeJson> { get("v1/items/${id.encodeURLPathPart()}") }.requireItem()
+
+    override suspend fun create(name: String, description: String): Item =
+        client.callApi<ItemEnvelopeJson> {
+            post("v1/items") {
+                contentType(ContentType.Application.Json)
+                setBody(CreateItemJson(name = name, description = description))
+            }
+        }.requireItem()
+
+    private fun ItemEnvelopeJson.requireItem(): Item = item?.asModel() ?: throw AppException(AppError.Server(null))
+}

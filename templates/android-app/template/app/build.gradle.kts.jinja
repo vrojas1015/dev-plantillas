@@ -1,0 +1,171 @@
+import com.github.triplet.gradle.androidpublisher.ReleaseStatus
+
+plugins {
+    alias(libs.plugins.app.android.application)
+    alias(libs.plugins.app.android.compose)
+    alias(libs.plugins.app.hilt)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.baselineprofile)
+    alias(libs.plugins.play.publisher)
+}
+
+// --- Versión: la pone el CI desde el tag (qa-v1.4.0 / prod-v1.4.0 -> 1.4.0) ----
+// versionCode derivado: 1.4.0 -> 1004000 (MAYOR*1_000_000 + MENOR*1_000 + PARCHE),
+// o VERSION_CODE explícito (p. ej. el número de build del CI). Nunca a mano.
+val appVersionName: String = providers.environmentVariable("VERSION_NAME")
+    .orElse(providers.gradleProperty("versionName"))
+    .get()
+val appVersionCode: Int = providers.environmentVariable("VERSION_CODE").orNull?.toInt()
+    ?: run {
+        val match = Regex("""^(\d+)\.(\d+)\.(\d+)$""").matchEntire(appVersionName)
+            ?: throw GradleException("versionName '$appVersionName' no es MAYOR.MENOR.PARCHE (ej. 1.4.0)")
+        val (major, minor, patch) = match.destructured
+        require(minor.toInt() < 1000 && patch.toInt() < 1000) { "MENOR y PARCHE tienen que ser < 1000" }
+        major.toInt() * 1_000_000 + minor.toInt() * 1_000 + patch.toInt()
+    }
+
+// --- Firma de release: upload key desde variables de entorno (CI) --------------
+// El repo NO tiene keystore. El CI decodifica el secreto ANDROID_UPLOAD_KEYSTORE_BASE64
+// a un archivo y exporta UPLOAD_KEYSTORE_FILE (docs/play-console.md). Sin esas
+// variables el release sale sin firmar (sirve para probar R8 en local).
+val uploadKeystore = providers.environmentVariable("UPLOAD_KEYSTORE_FILE")
+
+android {
+    namespace = "{{ application_id }}"
+
+    defaultConfig {
+        applicationId = "{{ application_id }}"
+        versionCode = appVersionCode
+        versionName = appVersionName
+    }
+
+    signingConfigs {
+        if (uploadKeystore.isPresent) {
+            create("upload") {
+                storeFile = file(uploadKeystore.get())
+                storePassword = providers.environmentVariable("UPLOAD_KEYSTORE_PASSWORD").orNull
+                keyAlias = providers.environmentVariable("UPLOAD_KEY_ALIAS").orNull
+                keyPassword = providers.environmentVariable("UPLOAD_KEY_PASSWORD").orNull
+            }
+        }
+    }
+
+    // qa y prod son apps distintas en el dispositivo y en Play (applicationId propio):
+    // se pueden tener las dos instaladas a la vez.
+    flavorDimensions += "ambiente"
+    productFlavors {
+        create("qa") {
+            dimension = "ambiente"
+            applicationIdSuffix = ".qa"
+            versionNameSuffix = "-qa"
+            buildConfigField("String", "API_BASE_URL", "\"{{ api_base_url_qa }}\"")
+            resValue("string", "app_name", "{{ app_name }} QA")
+        }
+        create("prod") {
+            dimension = "ambiente"
+            buildConfigField("String", "API_BASE_URL", "\"{{ api_base_url_prod }}\"")
+            resValue("string", "app_name", "{{ app_name }}")
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+        }
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("upload")
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
+        resValues = true
+    }
+}
+
+{%- if fb %}
+
+// --- Firebase: google-services.json por ambiente, NUNCA en el repo -------------
+// app/src/qa/google-services.json y app/src/prod/google-services.json (el CI los
+// escribe desde secretos; en local se bajan de la consola: docs/firebase.md).
+// Sin ellos: debug compila y funciona con la sesión de desarrollo; release falla.
+val googleServicesFiles = listOf("qa", "prod").map { layout.projectDirectory.file("src/$it/google-services.json").asFile }
+if (googleServicesFiles.all { it.exists() }) {
+    pluginManager.apply("com.google.gms.google-services")
+    // Crashlytics sube el mapping de R8 en cada build de release.
+    pluginManager.apply("com.google.firebase.crashlytics")
+} else {
+    val faltan = googleServicesFiles.filterNot { it.exists() }.joinToString { it.relativeTo(projectDir).path }
+    val exigirGoogleServices = tasks.register("exigirGoogleServices") {
+        description = "Falla si falta google-services.json (los builds de release lo necesitan)."
+        doLast {
+            throw GradleException(
+                "Falta google-services.json ($faltan). El build de release necesita Firebase " +
+                    "(Auth, App Check, FCM, Crashlytics). Bajalo de la consola de Firebase o, en el CI, " +
+                    "definí los secretos GOOGLE_SERVICES_JSON_QA / GOOGLE_SERVICES_JSON_PROD. Ver docs/firebase.md.",
+            )
+        }
+    }
+    tasks.matching { it.name.startsWith("pre") && it.name.endsWith("ReleaseBuild") }.configureEach {
+        dependsOn(exigirGoogleServices)
+    }
+}
+{%- endif %}
+
+// --- Publicación en Google Play (Gradle Play Publisher) ------------------------
+// Credenciales: ANDROID_PUBLISHER_CREDENTIALS (JSON de la cuenta de servicio) solo
+// en el CI. qa-v* -> pista interna de la app QA; prod-v* -> interna de prod y,
+// con aprobación manual, promoción a producción escalonada (docs/play-console.md).
+play {
+    track = "internal"
+    defaultToAppBundles = true
+    releaseStatus = ReleaseStatus.COMPLETED
+}
+
+// Baseline profile: se genera en un dispositivo (./gradlew :app:generateBaselineProfile).
+baselineProfile {
+    automaticGenerationDuringBuild = false
+    dexLayoutOptimization = true
+}
+
+// Mismo comando en todos los módulos (./gradlew testDebugUnitTest): en :app, con
+// flavors, la tarea se llama test<Flavor>DebugUnitTest. Alcanza con un flavor.
+tasks.register("testDebugUnitTest") {
+    group = "verification"
+    description = "Tests de la JVM de :app (variante prodDebug)."
+    dependsOn("testProdDebugUnitTest")
+}
+
+dependencies {
+    implementation(projects.core.data)
+    implementation(projects.core.auth)
+    implementation(projects.core.network)
+    implementation(projects.core.designsystem)
+    implementation(projects.core.ui)
+    implementation(projects.feature.items)
+
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.hilt.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.navigation.compose)
+    implementation(libs.androidx.profileinstaller)
+    implementation(libs.kotlinx.serialization.json)
+    baselineProfile(projects.baselineprofile)
+{%- if fb %}
+
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.appcheck.playintegrity)
+    implementation(libs.firebase.messaging)
+    implementation(libs.firebase.crashlytics)
+    // Proveedor de App Check de debug: solo se instala con BuildConfig.DEBUG (constante),
+    // así que R8 lo elimina del release. Está en implementation para que los build types
+    // que agrega baselineprofile (nonMinifiedRelease, benchmarkRelease) también compilen.
+    implementation(libs.firebase.appcheck.debug)
+{%- endif %}
+
+    testImplementation(projects.core.testing)
+}

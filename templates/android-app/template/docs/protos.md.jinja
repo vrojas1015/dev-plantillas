@@ -1,0 +1,41 @@
+# Contratos: {{ protos_maven }}
+
+El cliente gRPC usa el artefacto Maven que publica el repo de contratos
+(plantilla `protos` con `languages` que incluya `kotlin`): clases de mensajes,
+DSL de Kotlin y stubs de corrutinas (`ItemServiceGrpcKt`), paquete
+`{{ protos_paquete }}`. Trae como dependencias `protobuf-java`, `grpc-stub`,
+`grpc-kotlin-stub` y `kotlinx-coroutines-core`; el transporte lo pone la app
+(`grpc-okhttp`, alineado con `grpc-bom` en el catálogo).
+
+## De dónde se baja
+
+`settings.gradle.kts` agrega, solo para el grupo `{{ protos_maven.split(':')[0] }}`:
+
+1. El registry definido en `PROTOS_MAVEN_URL` (variable de entorno o
+   `protosMavenUrl` en `~/.gradle/gradle.properties`):
+{%- if ci_gl %}
+   - GitLab: `https://<host>/api/v4/projects/<id-del-repo-protos>/packages/maven`.
+     En CI autentica con `CI_JOB_TOKEN` (agregar este proyecto a la *job token
+     allowlist* del repo protos); en local con `PROTOS_MAVEN_TOKEN` = token
+     personal o de deploy con `read_api` (cabecera `Private-Token`).
+{%- else %}
+   - GitHub Packages: `https://maven.pkg.github.com/<owner>/<repo-protos>`.
+     Siempre pide token: `PROTOS_MAVEN_TOKEN` con `read:packages` (en CI, si el
+     repo protos es otro, un token con ese permiso como secreto).
+{%- endif %}
+2. `mavenLocal()` (filtrado al mismo grupo): para co-desarrollo, publicar un
+   protos local con `./gradlew publishToMavenLocal` desde su `gen/jvm`.
+
+## Subir de versión
+
+Cambiar la versión en `gradle/libs.versions.toml` (`protos = "grupo:artefacto:X.Y.Z"`),
+correr los tests (`GrpcItemsDataSourceTest` usa un servidor gRPC en proceso con
+el mismo `ItemService`) y adaptar el mapeo si cambiaron mensajes.
+
+## Notas
+
+- El transporte es gRPC sobre HTTP/2 con TLS (`https://` en la URL base). El
+  servicio (o un proxy) tiene que aceptar gRPC directo desde internet; si el
+  único punto público es el api-gateway REST, usar `cliente_api=rest`.
+- El artefacto usa `protobuf-java` completo (no lite): suma tamaño al APK; R8
+  quita lo que no se usa.

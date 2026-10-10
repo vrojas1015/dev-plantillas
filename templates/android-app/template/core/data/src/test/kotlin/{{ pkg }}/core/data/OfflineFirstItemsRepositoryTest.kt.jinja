@@ -1,0 +1,130 @@
+package {{ application_id }}.core.data
+
+import androidx.room.Room
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.cash.turbine.test
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.fail
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import kotlin.time.Clock
+import kotlin.time.Instant
+import {{ application_id }}.core.database.AppDatabase
+import {{ application_id }}.core.database.asEntity
+import {{ application_id }}.core.datastore.SyncPreferences
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+import {{ application_id }}.core.model.Item
+import {{ application_id }}.core.model.ItemsPage
+import {{ application_id }}.core.network.ItemsNetworkDataSource
+import {{ application_id }}.core.testing.TestData
+
+/** Repositorio con Room real (en memoria, Robolectric) y la red simulada. */
+@RunWith(AndroidJUnit4::class)
+class OfflineFirstItemsRepositoryTest {
+    private lateinit var database: AppDatabase
+    private val network = FakeNetwork()
+    private val preferences = FakeSyncPreferences()
+    private val now = Instant.parse("2026-03-04T05:06:07Z")
+    private lateinit var repository: OfflineFirstItemsRepository
+
+    @Before
+    fun setUp() {
+        database = Room.inMemoryDatabaseBuilder(ApplicationProvider.getApplicationContext(), AppDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        repository = OfflineFirstItemsRepository(
+            dao = database.itemDao(),
+            network = network,
+            preferences = preferences,
+            clock = FixedClock(now),
+        )
+    }
+
+    @After
+    fun tearDown() = database.close()
+
+    @Test
+    fun refrescarGuardaEnRoomYLaListaLoMuestra() = runTest {
+        network.pages = listOf(ItemsPage(listOf(TestData.mesa), nextCursor = "c2"), ItemsPage(listOf(TestData.lampara), null))
+
+        repository.refreshItems()
+
+        // Ordenado por nombre (consulta del DAO) y con las dos páginas.
+        assertEquals(listOf(TestData.lampara, TestData.mesa), repository.observeItems().first())
+        assertEquals(listOf(null, "c2"), network.requestedCursors)
+        assertEquals(now, repository.observeLastSync().first())
+    }
+
+    @Test
+    fun sinConexionLaListaMuestraLoGuardadoEnRoom() = runTest {
+        // Lo que quedó de la última vez que hubo red.
+        database.itemDao().upsert(TestData.items.map(Item::asEntity))
+        network.failWith = AppError.Offline
+
+        repository.observeItems().test {
+            assertEquals(listOf(TestData.lampara, TestData.mesa), awaitItem())
+            try {
+                repository.refreshItems()
+                fail("refreshItems tenía que fallar sin conexión")
+            } catch (e: AppException) {
+                assertEquals(AppError.Offline, e.error)
+            }
+            // Nada se borró ni cambió: la UI sigue mostrando lo guardado.
+            expectNoEvents()
+        }
+        assertNull(repository.observeLastSync().first())
+    }
+
+    @Test
+    fun itemBorradoEnElServidorDesapareceLocalmente() = runTest {
+        database.itemDao().upsert(listOf(TestData.mesa.asEntity()))
+        network.failWith = AppError.NotFound
+
+        try {
+            repository.refreshItem(TestData.mesa.id)
+            fail("refreshItem tenía que fallar con NotFound")
+        } catch (e: AppException) {
+            assertEquals(AppError.NotFound, e.error)
+        }
+        assertNull(repository.observeItem(TestData.mesa.id).first())
+    }
+
+    private class FakeNetwork : ItemsNetworkDataSource {
+        var pages: List<ItemsPage> = emptyList()
+        var failWith: AppError? = null
+        val requestedCursors = mutableListOf<String?>()
+
+        override suspend fun list(cursor: String?, limit: Int): ItemsPage {
+            failWith?.let { throw AppException(it) }
+            requestedCursors += cursor
+            return pages[requestedCursors.size - 1]
+        }
+
+        override suspend fun get(id: String): Item {
+            failWith?.let { throw AppException(it) }
+            return pages.flatMap { it.items }.first { it.id == id }
+        }
+
+        override suspend fun create(name: String, description: String): Item = Item(id = "n", name = name, description = description)
+    }
+
+    private class FakeSyncPreferences : SyncPreferences {
+        override val lastItemsSync = MutableStateFlow<Instant?>(null)
+
+        override suspend fun setLastItemsSync(at: Instant) {
+            lastItemsSync.value = at
+        }
+    }
+
+    private class FixedClock(private val instant: Instant) : Clock {
+        override fun now(): Instant = instant
+    }
+}

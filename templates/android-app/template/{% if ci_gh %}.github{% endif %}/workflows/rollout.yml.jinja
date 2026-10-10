@@ -1,0 +1,47 @@
+{% raw -%}
+# Avanza el rollout escalonado de producción (10 % lo hace release.yml):
+# Actions -> rollout -> Run workflow -> 0.5 o 1.0. Requiere aprobación (environment "produccion").
+# Para frenar un rollout: Play Console -> Producción -> Detener lanzamiento.
+name: rollout
+
+on:
+  workflow_dispatch:
+    inputs:
+      fraccion:
+        description: "Porcentaje de usuarios (1.0 = completar el lanzamiento)"
+        required: true
+        type: choice
+        options: ["0.5", "1.0"]
+
+permissions:
+  contents: read
+
+jobs:
+  rollout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: produccion
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6
+      - name: Actualizar la fracción en producción
+        env:
+          ANDROID_PUBLISHER_CREDENTIALS: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          FRACCION: ${{ inputs.fraccion }}
+{%- endraw %}
+{%- if grpc %}
+          PROTOS_MAVEN_URL: ${{ '{{' }} vars.PROTOS_MAVEN_URL {{ '}}' }}
+          PROTOS_MAVEN_TOKEN: ${{ '{{' }} secrets.PROTOS_MAVEN_TOKEN {{ '}}' }}
+{%- endif %}
+{%- raw %}
+        run: |
+          if [[ "$FRACCION" == "1.0" ]]; then
+            ./gradlew promoteProdReleaseArtifact --update production --release-status completed
+          else
+            ./gradlew promoteProdReleaseArtifact --update production --user-fraction "$FRACCION" --release-status inProgress
+          fi
+{%- endraw %}

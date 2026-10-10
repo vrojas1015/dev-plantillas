@@ -1,0 +1,26 @@
+package {{ application_id }}.push
+
+import android.annotation.SuppressLint
+import android.util.Log
+import com.google.firebase.messaging.FirebaseMessagingService
+import com.google.firebase.messaging.RemoteMessage
+
+/** Notificaciones push (FCM). Con la app en segundo plano, FCM muestra las de tipo "notification" solo. */
+// onRegistered reemplaza a onNewToken (deprecado en firebase-messaging 26); lint todavía pide el viejo.
+@SuppressLint("MissingFirebaseInstanceTokenRefresh")
+class AppMessagingService : FirebaseMessagingService() {
+    override fun onRegistered(token: String) {
+        // Registrar el token en el backend (endpoint propio, autenticado) para poder
+        // mandarle push a este dispositivo. No se loguea el token.
+        Log.i(TAG, "Token de FCM renovado")
+    }
+
+    override fun onMessageReceived(message: RemoteMessage) {
+        val notification = message.notification ?: return
+        Notifications.show(this, message.messageId.hashCode(), notification.title, notification.body)
+    }
+
+    private companion object {
+        const val TAG = "AppMessagingService"
+    }
+}

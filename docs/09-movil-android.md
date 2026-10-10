@@ -1,7 +1,7 @@
 # Móvil: Android nativo primero
 
 Decisión sobre cómo encarar móvil y especificación de la plantilla
-`android-app` (pendiente de construir).
+`android-app` (construida: `templates/android-app/`).
 
 ## 1. Decisión: Android nativo primero
 

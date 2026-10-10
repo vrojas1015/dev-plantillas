@@ -1,0 +1,39 @@
+# Camino a iOS: Kotlin Multiplatform
+
+La app está armada para que, cuando haga falta iOS, la lógica se comparta con
+**Kotlin Multiplatform (KMP)** sin reescribirla, manteniendo UI nativa (Compose
+en Android; SwiftUI o Compose Multiplatform en iOS).
+
+## Qué ya está listo
+
+| Módulo | Hoy | En KMP |
+|---|---|---|
+| `core:model` | `kotlin("jvm")`, Kotlin puro | `commonMain` tal cual |
+| `core:domain` | `kotlin("jvm")`, Kotlin puro (`Flow`, casos de uso) | `commonMain` tal cual |
+| `core:testing` | Kotlin puro (fakes) | `commonTest` |
+
+La regla está automatizada: `verificarKotlinPuro` falla si esos módulos dependen
+de algo de Android, y `settings.gradle.kts` falla si alguien les aplica un plugin
+Android. Usan `kotlin.time.Instant` (no `java.time`) y `kotlin.test` en los tests
+para no atarse a la JVM. La única dependencia JVM es la anotación
+`javax.inject.Inject` en los casos de uso (se reemplaza por un módulo de
+inyección por plataforma o por Koin/kotlin-inject).
+
+## Pasos cuando aparezca iOS
+
+1. Crear `shared/` con `kotlin("multiplatform")` y targets `androidTarget()`,
+   `iosArm64()`, `iosSimulatorArm64()`; mover `core:model` y `core:domain` a
+   `commonMain`.
+2. Datos multiplataforma, en este orden: red (Ktor ya es multiplataforma{% if grpc %};
+   para gRPC en iOS, Connect-Swift desde los mismos protos o Wire/Connect-Kotlin{% endif %}),
+   base (**Room** soporta KMP con el driver bundled de SQLite), preferencias
+   (**DataStore** también). `core:data` pasa a `commonMain` con `expect/actual`
+   solo donde haga falta.
+3. Presentación: los ViewModels (`androidx.lifecycle` es multiplataforma) pueden
+   moverse a `commonMain`; iOS observa el `StateFlow` (SKIE o KMP-NativeCoroutines).
+4. Auth: Firebase no tiene SDK KMP oficial; se abstrae detrás de `AuthRepository`
+   (ya es una interfaz) con implementación por plataforma.
+5. UI de iOS en SwiftUI (o Compose Multiplatform si el equipo prefiere una sola UI).
+
+Costo de iOS a tener en cuenta: cuenta de Apple Developer (US$99/año) y una Mac
+(o builds en la nube) para compilar y publicar.

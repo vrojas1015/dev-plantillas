@@ -1,0 +1,35 @@
+package {{ application_id }}.navigation
+
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import {{ application_id }}.feature.items.ItemsListRoute
+import {{ application_id }}.feature.items.itemsGraph
+import {{ application_id }}.feature.items.navigateToItemDetail
+import {{ application_id }}.signin.SignInRoute
+import {{ application_id }}.signin.SignInScreenRoute
+
+/** Navegación de la app: une las features (que no se conocen entre sí). */
+@Composable
+fun AppNavHost(modifier: Modifier = Modifier) {
+    val navController = rememberNavController()
+    NavHost(navController = navController, startDestination = ItemsListRoute, modifier = modifier) {
+        itemsGraph(
+            onItemClick = { id -> navController.navigateToItemDetail(id) },
+            onBack = { navController.popBackStack() },
+            onRequestSignIn = { navController.navigate(SignInRoute) },
+        )
+        composable<SignInRoute> {
+            SignInScreenRoute(
+                onSignedIn = {
+                    // Vuelve a la lista desde cero: se recarga con la sesión nueva.
+                    navController.navigate(ItemsListRoute) {
+                        popUpTo(navController.graph.id) { inclusive = true }
+                    }
+                },
+            )
+        }
+    }
+}

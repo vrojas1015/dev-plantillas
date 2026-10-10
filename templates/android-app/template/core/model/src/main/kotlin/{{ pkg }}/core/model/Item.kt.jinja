@@ -1,0 +1,23 @@
+package {{ application_id }}.core.model
+
+import kotlin.time.Instant
+
+/**
+ * Item de ejemplo: el mismo recurso que expone ItemService (repo protos) y el
+ * api-gateway en /v1/items. Reemplazalo por el primer modelo real.
+ *
+ * Kotlin puro: nada de android.* acá (regla de core:model, ver CLAUDE.md).
+ */
+data class Item(
+    val id: String,
+    val name: String,
+    val description: String,
+    val createdAt: Instant? = null,
+    val updatedAt: Instant? = null,
+)
+
+/** Una página del listado paginado por cursor. nextCursor == null en la última. */
+data class ItemsPage(
+    val items: List<Item>,
+    val nextCursor: String?,
+)

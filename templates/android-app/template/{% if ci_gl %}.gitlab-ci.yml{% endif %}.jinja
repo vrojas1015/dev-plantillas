@@ -1,0 +1,131 @@
+# CI/CD de {{ app_name }} (Android). Secretos y variables: docs/ci-cd.md.
+#   MR y main      -> ktlint, detekt, lint, tests (JVM + Robolectric) y assembleDebug
+#   tag qa-vX.Y.Z  -> lo anterior + AAB firmado de QA -> pista interna (app QA)
+#   tag prod-vX.Y.Z-> AAB firmado de prod -> pista interna; producción escalonada
+#                     10 % -> 50 % -> 100 % con jobs manuales (aprobación)
+# Imagen con solo JDK: scripts/android-sdk.sh instala el SDK (cacheado).
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG =~ /^(qa|prod)-v\d+\.\d+\.\d+$/
+
+stages: [verificar, publicar, produccion]
+
+default:
+  image: eclipse-temurin:21-jdk
+  interruptible: true
+
+variables:
+  ANDROID_HOME: $CI_PROJECT_DIR/.android-sdk
+  GRADLE_USER_HOME: $CI_PROJECT_DIR/.gradle-home
+  GRADLE_OPTS: "-Dorg.gradle.daemon=false"
+{%- if grpc %}
+  # PROTOS_MAVEN_URL: variable del proyecto (registry Maven del repo protos, docs/protos.md).
+{%- endif %}
+
+.android:
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq unzip > /dev/null
+    - bash scripts/android-sdk.sh
+  cache:
+    - key:
+        files: [gradle/libs.versions.toml, gradle/wrapper/gradle-wrapper.properties]
+      paths: [.gradle-home/caches/, .gradle-home/wrapper/]
+    - key: android-sdk-37
+      paths: [.android-sdk/]
+
+verificar:
+  extends: .android
+  stage: verificar
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - ./gradlew ktlintCheck detekt lint testDebugUnitTest assembleDebug
+  artifacts:
+    when: always
+    expire_in: 7 days
+    reports:
+      junit: "**/build/test-results/**/TEST-*.xml"
+    paths:
+      - "**/build/reports/"
+
+.publicar:
+  extends: .android
+  stage: publicar
+  interruptible: false
+  script:
+    - export VERSION_NAME="${CI_COMMIT_TAG#*-v}"
+    # Upload key: variable enmascarada y protegida con el keystore en base64.
+    - test -n "$ANDROID_UPLOAD_KEYSTORE_BASE64" || { echo "Falta ANDROID_UPLOAD_KEYSTORE_BASE64"; exit 1; }
+    - echo "$ANDROID_UPLOAD_KEYSTORE_BASE64" | base64 -d > "$CI_PROJECT_DIR/upload.jks"
+    - export UPLOAD_KEYSTORE_FILE="$CI_PROJECT_DIR/upload.jks"
+{%- if fb %}
+    # google-services.json: variables de tipo File (protegidas).
+    - mkdir -p app/src/qa app/src/prod
+    - cp "$GOOGLE_SERVICES_JSON_QA" app/src/qa/google-services.json
+    - cp "$GOOGLE_SERVICES_JSON_PROD" app/src/prod/google-services.json
+{%- endif %}
+    # Cuenta de servicio de Play (variable de tipo File): Gradle Play Publisher la lee de acá.
+    - export ANDROID_PUBLISHER_CREDENTIALS="$(cat "$PLAY_SERVICE_ACCOUNT_JSON")"
+    - bash scripts/release-notes.sh "$VERSION_NAME"
+    - ./gradlew ktlintCheck detekt lint testDebugUnitTest "bundle${FLAVOR}Release" "publish${FLAVOR}ReleaseBundle"
+  after_script:
+    - rm -f "$CI_PROJECT_DIR/upload.jks"
+  artifacts:
+    expire_in: 30 days
+    paths:
+      - app/build/outputs/bundle/
+      - app/build/outputs/mapping/
+
+publicar-qa:
+  extends: .publicar
+  variables:
+    FLAVOR: Qa
+  environment: qa
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^qa-v\d+\.\d+\.\d+$/
+
+publicar-prod:
+  extends: .publicar
+  variables:
+    FLAVOR: Prod
+  environment: prod
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^prod-v\d+\.\d+\.\d+$/
+
+# Rollout escalonado: cada paso es un job manual (aprobación). Para frenar un
+# lanzamiento: Play Console -> Producción -> Detener lanzamiento.
+.promover:
+  extends: .android
+  stage: produccion
+  interruptible: false
+  environment: produccion
+  needs: [publicar-prod]
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^prod-v\d+\.\d+\.\d+$/
+      when: manual
+  script:
+    - export ANDROID_PUBLISHER_CREDENTIALS="$(cat "$PLAY_SERVICE_ACCOUNT_JSON")"
+    - ./gradlew promoteProdReleaseArtifact $PROMOVER
+
+produccion-10:
+  extends: .promover
+  variables:
+    PROMOVER: "--from-track internal --promote-track production --user-fraction 0.1 --release-status inProgress"
+
+produccion-50:
+  extends: .promover
+  needs: [produccion-10]
+  variables:
+    PROMOVER: "--update production --user-fraction 0.5 --release-status inProgress"
+
+produccion-100:
+  extends: .promover
+  needs: [produccion-50]
+  variables:
+    PROMOVER: "--update production --release-status completed"

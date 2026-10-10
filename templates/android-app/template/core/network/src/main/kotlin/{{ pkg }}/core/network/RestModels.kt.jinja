@@ -1,0 +1,71 @@
+package {{ application_id }}.core.network
+
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+import kotlin.time.Instant
+import {{ application_id }}.core.model.Item
+import {{ application_id }}.core.model.ItemsPage
+
+// JSON del api-gateway (grpc-gateway con protojson): campos en lowerCamelCase,
+// timestamps RFC 3339 y todos los campos presentes (EmitUnpopulated).
+
+@Serializable
+internal data class ItemJson(
+    val id: String = "",
+    val name: String = "",
+    val description: String = "",
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+)
+
+@Serializable
+internal data class PageJson(
+    val nextCursor: String = "",
+    val hasNext: Boolean = false,
+)
+
+@Serializable
+internal data class ListItemsJson(
+    val items: List<ItemJson> = emptyList(),
+    val page: PageJson? = null,
+)
+
+/** GetItemResponse y CreateItemResponse: {"item": {...}}. */
+@Serializable
+internal data class ItemEnvelopeJson(
+    val item: ItemJson? = null,
+)
+
+@Serializable
+internal data class CreateItemJson(
+    val name: String,
+    val description: String,
+)
+
+/** Formato único de error del gateway: {"error": {"code", "message", "request_id"}}. */
+@Serializable
+internal data class ErrorJson(
+    val error: ErrorDetailJson? = null,
+)
+
+@Serializable
+internal data class ErrorDetailJson(
+    val code: String = "",
+    val message: String = "",
+    @SerialName("request_id") val requestId: String? = null,
+)
+
+internal fun ItemJson.asModel(): Item = Item(
+    id = id,
+    name = name,
+    description = description,
+    createdAt = createdAt.toInstantOrNull(),
+    updatedAt = updatedAt.toInstantOrNull(),
+)
+
+internal fun ListItemsJson.asModel(): ItemsPage = ItemsPage(
+    items = items.map(ItemJson::asModel),
+    nextCursor = page?.takeIf { it.hasNext && it.nextCursor.isNotEmpty() }?.nextCursor,
+)
+
+private fun String?.toInstantOrNull(): Instant? = this?.let { runCatching { Instant.parse(it) }.getOrNull() }

@@ -1,0 +1,18 @@
+package {{ application_id }}.di
+
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+import {{ application_id }}.BuildConfig
+import {{ application_id }}.core.network.NetworkConfig
+
+@Module
+@InstallIn(SingletonComponent::class)
+object AppModule {
+    /** URL del gateway según el flavor (qa/prod), definida en app/build.gradle.kts. */
+    @Provides
+    @Singleton
+    fun networkConfig(): NetworkConfig = NetworkConfig(baseUrl = BuildConfig.API_BASE_URL)
+}

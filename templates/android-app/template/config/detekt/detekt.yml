@@ -1,0 +1,55 @@
+# detekt: análisis estático. Se suma a la configuración por defecto
+# (buildUponDefaultConfig) y SIN baseline: el proyecto arranca limpio.
+# Las reglas de acá refuerzan lo que CLAUDE.md dice que nunca se hace.
+
+config:
+  validation: true
+  warningsAsErrors: true
+
+complexity:
+  LongParameterList:
+    functionThreshold: 8
+    constructorThreshold: 8
+    ignoreDefaultParameters: true
+    ignoreAnnotated: ['Composable']
+  LongMethod:
+    ignoreAnnotated: ['Composable']
+  CyclomaticComplexMethod:
+    ignoreAnnotated: ['Composable']
+
+coroutines:
+  # Nunca GlobalScope: cada corrutina vive en un scope con dueño (viewModelScope...).
+  GlobalCoroutineUsage:
+    active: true
+  InjectDispatcher:
+    active: false
+
+naming:
+  FunctionNaming:
+    ignoreAnnotated: ['Composable']
+  TopLevelPropertyNaming:
+    constantPattern: '[A-Z][A-Za-z0-9_]*'
+  MatchingDeclarationName:
+    active: false
+
+potential-bugs:
+  # Nunca `!!`: requireNotNull/checkNotNull con mensaje, o modelar el null.
+  UnsafeCallOnNullableType:
+    active: true
+
+style:
+  MagicNumber:
+    ignorePropertyDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+    ignoreAnnotated: ['Preview', 'Composable']
+    excludes: ['**/test/**', '**/androidTest/**']
+  UnusedPrivateMember:
+    ignoreAnnotated: ['Preview']
+  ForbiddenComment:
+    active: false
+  ReturnCount:
+    max: 3
+  ThrowsCount:
+    max: 3
+  MaxLineLength:
+    maxLineLength: 140

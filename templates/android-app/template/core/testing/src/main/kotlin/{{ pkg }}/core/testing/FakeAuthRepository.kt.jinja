@@ -1,0 +1,47 @@
+package {{ application_id }}.core.testing
+
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import {{ application_id }}.core.domain.AuthRepository
+import {{ application_id }}.core.domain.SessionState
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+
+/** Sesión en memoria: tokens contados para verificar la renovación. */
+class FakeAuthRepository(
+    initial: SessionState = SessionState.SignedIn("usuario-de-prueba"),
+    var tokens: List<String> = listOf("token-1", "token-2"),
+) : AuthRepository {
+    private val state = MutableStateFlow(initial)
+    override val session: StateFlow<SessionState> = state
+    var forcedRefreshes = 0
+        private set
+    private var index = 0
+
+    override suspend fun idToken(forceRefresh: Boolean): String? {
+        if (state.value !is SessionState.SignedIn) return null
+        if (forceRefresh) {
+            forcedRefreshes++
+            index = (index + 1).coerceAtMost(tokens.lastIndex)
+        }
+        return tokens[index]
+    }
+
+    override suspend fun signIn(email: String, password: String) {
+        if (password == WRONG_PASSWORD) throw AppException(AppError.Unauthorized)
+        state.value = SessionState.SignedIn(email)
+    }
+
+    override suspend fun signOut() {
+        state.value = SessionState.SignedOut
+    }
+
+    override fun onUnauthorized() {
+        state.value = SessionState.Expired
+    }
+
+    companion object {
+        /** Contraseña que el fake rechaza (credenciales inválidas). */
+        const val WRONG_PASSWORD = "incorrecta"
+    }
+}

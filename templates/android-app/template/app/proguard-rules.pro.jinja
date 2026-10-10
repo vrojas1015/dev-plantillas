@@ -1,0 +1,13 @@
+# Reglas de R8 propias de la app. Las librerías (kotlinx.serialization, Ktor,
+# Navigation, Room, Hilt, Firebase{% if grpc %}, gRPC{% endif %}) traen las suyas en el AAR/JAR.
+# Agregá acá solo lo que el build de release pida, con un comentario de por qué.
+#
+# Stack traces legibles en Crashlytics: el mapping se sube en el build de release.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+{%- if grpc %}
+
+# Contratos ({{ protos_maven }}): protobuf-java completo usa reflexión sobre los
+# mensajes generados (accessors, toString, descriptores). Sin esto R8 los renombra.
+-keep class {{ protos_paquete }}.** { *; }
+{%- endif %}

@@ -1,0 +1,53 @@
+# CI/CD
+
+{{ 'GitLab CI (`.gitlab-ci.yml`)' if ci_gl else 'GitHub Actions (`.github/workflows/`)' }}. Todo corre sin emulador.
+
+| Evento | Qué corre |
+|---|---|
+| {{ 'MR' if ci_gl else 'PR' }} y `main` | `./gradlew ktlintCheck detekt lint testDebugUnitTest assembleDebug` + reportes |
+| Tag `qa-vX.Y.Z` | Lo anterior + `bundleQaRelease` firmado -> pista **interna** de la app QA |
+| Tag `prod-vX.Y.Z` | Lo anterior + `bundleProdRelease` firmado -> pista **interna** de prod{% if fb %} + mapping a Crashlytics{% endif %} |
+| Aprobación manual | Producción al 10 % -> 50 % -> 100 % ({{ 'jobs manuales `produccion-10/50/100`' if ci_gl else 'job `produccion` de `release.yml` (10 %) y workflow `rollout` (50 % / 100 %), con el environment `produccion` con revisores obligatorios' }}) |
+
+La versión sale del tag: `prod-v1.4.0` -> `versionName` 1.4.0, `versionCode`
+1004000. Las notas de Play salen de la sección `## [1.4.0]` de `CHANGELOG.md`
+(`scripts/release-notes.sh`, falla si no existe). Los tags `qa-v*`/`prod-v*`
+tienen que estar **protegidos** (solo maintainers).
+
+## Secretos y variables
+
+Ninguno vive en el repo. {{ 'En GitLab: Settings → CI/CD → Variables, **protegidas** (solo tags protegidos) y enmascaradas cuando se puede.' if ci_gl else 'En GitHub: Settings → Environments `qa`, `prod` y `produccion` (este último con *required reviewers*), secretos por environment.' }}
+
+| Nombre | Tipo | Contenido |
+|---|---|---|
+| `ANDROID_UPLOAD_KEYSTORE_BASE64` | {{ 'variable (enmascarada)' if ci_gl else 'secreto' }} | Upload key: `base64 -w0 upload.jks` |
+| `UPLOAD_KEYSTORE_PASSWORD` | {{ 'variable (enmascarada)' if ci_gl else 'secreto' }} | Contraseña del keystore |
+| `UPLOAD_KEY_ALIAS` | {{ 'variable' if ci_gl else 'secreto' }} | Alias de la clave (ej. `upload`) |
+| `UPLOAD_KEY_PASSWORD` | {{ 'variable (enmascarada)' if ci_gl else 'secreto' }} | Contraseña de la clave |
+| `PLAY_SERVICE_ACCOUNT_JSON` | {{ 'variable tipo **File**' if ci_gl else 'secreto' }} | JSON de la cuenta de servicio con acceso a la app en Play Console |
+{%- if fb %}
+| `GOOGLE_SERVICES_JSON_QA` | {{ 'variable tipo **File**' if ci_gl else 'secreto' }} | `google-services.json` del proyecto Firebase de QA |
+| `GOOGLE_SERVICES_JSON_PROD` | {{ 'variable tipo **File**' if ci_gl else 'secreto' }} | `google-services.json` del proyecto Firebase de producción |
+{%- endif %}
+{%- if grpc %}
+| `PROTOS_MAVEN_URL` | {{ 'variable' if ci_gl else 'variable (`vars`)' }} | URL del registry Maven del repo protos (docs/protos.md) |
+{%- if ci_gl %}
+| — | `CI_JOB_TOKEN` | Lee el registry del repo protos: agregar este proyecto a su *job token allowlist* |
+{%- else %}
+| `PROTOS_MAVEN_TOKEN` | secreto | Token con `read:packages` (si protos está en otro repo; si no alcanza `GITHUB_TOKEN`) |
+{%- endif %}
+{%- endif %}
+
+Cómo se generan la upload key y la cuenta de servicio: `docs/play-console.md`.
+En el CI la upload key se decodifica a un archivo temporal y Gradle la lee de
+`UPLOAD_KEYSTORE_FILE`; sin esas variables el release sale sin firmar.
+{%- if fb %} Sin los `google-services.json`, el build de release falla con un mensaje claro.{% endif %}
+
+## Caché
+
+{{ 'Caché de GitLab para `.gradle-home` (clave: catálogo de versiones + wrapper) y `.android-sdk` (lo instala `scripts/android-sdk.sh`).' if ci_gl else '`gradle/actions/setup-gradle` cachea dependencias, wrapper y build cache (y valida el wrapper). El runner `ubuntu-latest` trae el Android SDK.' }}
+
+## Tests instrumentados
+
+No corren en el CI (emulador = lento y caro). Si hacen falta: job opcional con
+un emulador (p. ej. Gradle Managed Devices) disparado a mano.

@@ -1,0 +1,38 @@
+package {{ application_id }}
+
+import android.app.Application
+{%- if fb %}
+import com.google.firebase.FirebaseApp
+import com.google.firebase.appcheck.FirebaseAppCheck
+import com.google.firebase.appcheck.debug.DebugAppCheckProviderFactory
+import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
+import com.google.firebase.crashlytics.FirebaseCrashlytics
+{%- endif %}
+import dagger.hilt.android.HiltAndroidApp
+{%- if fb %}
+import {{ application_id }}.push.Notifications
+{%- endif %}
+
+@HiltAndroidApp
+class App : Application(){% if fb %} {
+    override fun onCreate() {
+        super.onCreate()
+        // Sin google-services.json (debug local, tests) Firebase no se inicializa:
+        // la app funciona con la sesión de desarrollo (docs/firebase.md).
+        if (FirebaseApp.getApps(this).isNotEmpty()) {
+            // App Check: Play Integrity en release; proveedor de debug en debug (su token
+            // se registra en la consola: docs/firebase.md). BuildConfig.DEBUG es constante:
+            // R8 elimina el proveedor de debug del release.
+            FirebaseAppCheck.getInstance().installAppCheckProviderFactory(
+                if (BuildConfig.DEBUG) {
+                    DebugAppCheckProviderFactory.getInstance()
+                } else {
+                    PlayIntegrityAppCheckProviderFactory.getInstance()
+                },
+            )
+            FirebaseCrashlytics.getInstance().isCrashlyticsCollectionEnabled = !BuildConfig.DEBUG
+        }
+        Notifications.createChannels(this)
+    }
+}
+{%- endif %}

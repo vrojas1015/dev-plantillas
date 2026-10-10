@@ -1,0 +1,133 @@
+package {{ application_id }}.core.network
+
+import io.ktor.client.engine.okhttp.OkHttp
+import kotlinx.coroutines.test.runTest
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Before
+import org.junit.Test
+import kotlin.time.Instant
+import {{ application_id }}.core.domain.AppCheckTokenProvider
+import {{ application_id }}.core.domain.SessionState
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+import {{ application_id }}.core.testing.FakeAuthRepository
+
+/** Cliente REST contra un servidor HTTP de prueba (MockWebServer) con las respuestas del gateway. */
+class RestItemsDataSourceTest {
+    private val server = MockWebServer()
+    private val auth = FakeAuthRepository()
+    private lateinit var dataSource: RestItemsDataSource
+
+    @Before
+    fun setUp() {
+        server.start()
+        val config = NetworkConfig(baseUrl = server.url("/").toString(), maxRetries = 1, retryBaseDelayMillis = 1)
+        val client = createHttpClient(OkHttp.create(), config, auth, AppCheckTokenProvider { "app-check" })
+        dataSource = RestItemsDataSource(client)
+    }
+
+    @After
+    fun tearDown() = server.close()
+
+    @Test
+    fun listaConTokenYPaginacion() = runTest {
+        server.enqueue(json(200, LIST_BODY))
+
+        val page = dataSource.list(cursor = "abc", limit = 50)
+
+        assertEquals(listOf("1", "2"), page.items.map { it.id })
+        assertEquals(Instant.parse("2026-01-02T03:04:05Z"), page.items[0].createdAt)
+        assertNull(page.items[1].createdAt)
+        assertEquals("c2", page.nextCursor)
+        val request = server.takeRequest()
+        assertEquals("/v1/items", request.url.encodedPath)
+        assertEquals("50", request.url.queryParameter("page.limit"))
+        assertEquals("abc", request.url.queryParameter("page.cursor"))
+        assertEquals("Bearer token-1", request.headers["Authorization"])
+        assertEquals("app-check", request.headers[APP_CHECK_HEADER])
+    }
+
+    @Test
+    fun detalleNoEncontradoEsNotFound() = runTest {
+        server.enqueue(json(404, """{"error":{"code":"NOT_FOUND","message":"no existe","request_id":"r1"}}"""))
+        assertError(AppError.NotFound) { dataSource.get("9") }
+        assertEquals("/v1/items/9", server.takeRequest().url.encodedPath)
+    }
+
+    @Test
+    fun crearMandaElCuerpoJson() = runTest {
+        server.enqueue(json(200, """{"item":{"id":"7","name":"Silla","description":"Pino"}}"""))
+
+        val item = dataSource.create("Silla", "Pino")
+
+        assertEquals("7", item.id)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("""{"name":"Silla","description":"Pino"}""", request.body?.utf8())
+    }
+
+    @Test
+    fun unauthorizedRenuevaElTokenYReintentaUnaVez() = runTest {
+        server.enqueue(json(401, UNAUTHENTICATED))
+        server.enqueue(json(200, LIST_BODY))
+
+        dataSource.list(cursor = null, limit = 10)
+
+        assertEquals("Bearer token-1", server.takeRequest().headers["Authorization"])
+        assertEquals("Bearer token-2", server.takeRequest().headers["Authorization"])
+        assertEquals(1, auth.forcedRefreshes)
+        assertTrue(auth.session.value is SessionState.SignedIn)
+    }
+
+    @Test
+    fun unauthorizedConTokenRenovadoPideVolverAIniciarSesion() = runTest {
+        server.enqueue(json(401, UNAUTHENTICATED))
+        server.enqueue(json(401, UNAUTHENTICATED))
+
+        assertError(AppError.Unauthorized) { dataSource.list(cursor = null, limit = 10) }
+        assertEquals(SessionState.Expired, auth.session.value)
+    }
+
+    @Test
+    fun errorDelServidorSeReintentaEnLecturas() = runTest {
+        server.enqueue(json(503, """{"error":{"code":"UNAVAILABLE","message":"x"}}"""))
+        server.enqueue(json(200, LIST_BODY))
+
+        assertEquals(2, dataSource.list(cursor = null, limit = 10).items.size)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun sinConexionEsOffline() = runTest {
+        server.close()
+        assertError(AppError.Offline) { dataSource.list(cursor = null, limit = 10) }
+    }
+
+    private suspend fun assertError(expected: AppError, block: suspend () -> Unit) {
+        try {
+            block()
+            fail("Se esperaba AppException($expected)")
+        } catch (e: AppException) {
+            assertEquals(expected, e.error)
+        }
+    }
+
+    private fun json(code: Int, body: String) =
+        MockResponse.Builder().code(code).addHeader("Content-Type", "application/json").body(body).build()
+
+    private companion object {
+        const val UNAUTHENTICATED = """{"error":{"code":"UNAUTHENTICATED","message":"token inválido"}}"""
+        const val LIST_BODY = """
+            {"items":[
+              {"id":"1","name":"Lámpara","description":"","createdAt":"2026-01-02T03:04:05Z","updatedAt":null},
+              {"id":"2","name":"Mesa","description":"Roble","createdAt":null,"updatedAt":null}
+            ],"page":{"nextCursor":"c2","hasNext":true}}
+        """
+    }
+}
