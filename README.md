@@ -5,6 +5,8 @@ guías de cómo se organizan carpetas, repos y trabajo con agentes.
 
 ## Contenido
 
+Estado y prioridades: [`ROADMAP.md`](ROADMAP.md).
+
 | Ruta | Qué es |
 |---|---|
 | `templates/go-grpc-service/` | Plantilla Copier: microservicio Go gRPC hexagonal + Postgres + Cloud Run |
@@ -27,6 +29,12 @@ guías de cómo se organizan carpetas, repos y trabajo con agentes.
 | `docs/06-documentacion.md` | Diseño del repo de documentación (issues, ADRs, runbooks, MkDocs): especificación de la plantilla |
 | `docs/07-frontend-y-seo.md` | Qué plantilla de front usar y especificación de `astro-site` (SEO técnico, Core Web Vitals, Lighthouse CI) |
 | `docs/08-cli-dp.md` | Especificación de la CLI `dp`: catálogo, `new`, `update`, workspace e issues; hitos en modo pair |
+| `docs/09-movil-android.md` | Decisión de móvil (Android nativo primero, camino a iOS con KMP) y especificación de `android-app` |
+| `docs/10-base-comun-de-repos.md` | Base común de todos los repos: seguridad, Renovate, protección de ramas, releases y conexión con el repo de documentación |
+| `docs/11-pipelines.md` | Repo `ci` de pipelines reutilizables (GitHub reusable workflows y GitLab CI/CD components) |
+| `docs/12-pruebas.md` | Pruebas dentro del flujo de desarrollo (controles por etapa, trazabilidad, bugs e inestables) y especificación de `e2e-tests` |
+| `docs/13-elegir-tecnologia.md` | Qué lenguaje de backend y qué herramienta de front o móvil usar según el problema, y el costo de sumar una tecnología |
+| `docs/14-observabilidad.md` | Trazas, métricas, logs correlacionados, SLOs y alertas con OpenTelemetry (Google o Grafana en Coolify) |
 
 ## Requisitos
 
