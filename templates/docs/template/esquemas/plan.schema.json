@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "plan.schema.json",
+  "title": "plan",
+  "description": "Frontmatter de contenido/issues/<n>-<slug>/plan.md",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "issue",
+    "titulo",
+    "actualizado"
+  ],
+  "properties": {
+    "issue": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Número del issue al que pertenece (el de la carpeta)"
+    },
+    "titulo": {
+      "type": "string",
+      "minLength": 3
+    },
+    "actualizado": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Fecha absoluta AAAA-MM-DD"
+    }
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(make nuevo:*)",
+      "Bash(make validar:*)",
+      "Bash(make validar-frontmatter:*)",
+      "Bash(make validar-markdown:*)",
+      "Bash(make generar:*)",
+      "Bash(make construir:*)",
+      "Bash(python scripts/nuevo.py:*)",
+      "Bash(python scripts/validar.py:*)",
+      "Bash(python scripts/generar.py:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git fetch:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git branch --show-current)",
+      "Bash(ls:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Edit(./contenido/_generado/**)",
+      "Write(./contenido/_generado/**)",
+      "Bash(firebase deploy:*)",
+      "Bash(npx firebase-tools deploy:*)",
+      "Bash(git push:*)",
+      "Bash(docker push:*)"
+    ]
+  }
+}

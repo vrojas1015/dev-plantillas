@@ -1,0 +1,18 @@
+# markdownlint (make validar-markdown): estilo consistente, configuración
+# permisiva. Reglas: https://github.com/DavidAnson/markdownlint#rules--aliases
+config:
+  default: true
+  MD013: false # largo de línea: libre
+  MD033: false # HTML inline (comentarios, <div markdown>)
+  MD036: false # énfasis usado como título
+  MD041: false # primera línea H1 (los generados empiezan con un comentario)
+  MD060: false # alineación de columnas en tablas
+  MD024:
+    siblings_only: true # mismo título permitido en secciones distintas
+globs:
+  - "**/*.md"
+ignores:
+  - "site/**"
+  - ".venv/**"
+  - "venv/**"
+  - "node_modules/**"

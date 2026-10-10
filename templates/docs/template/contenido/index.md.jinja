@@ -1,0 +1,22 @@
+# {{ titulo_sitio }}
+
+Documentación central de la plataforma de {{ org_name }}: qué hay que hacer y
+por qué (issues), qué se decidió (ADRs), cómo está armada (plataforma y fichas
+de servicios) y cómo se opera (runbooks, postmortems y releases).
+
+La documentación de **uso** de cada repo (README, `CLAUDE.md`, deploy,
+CHANGELOG) vive junto a su código. Acá va lo que cruza repos.
+
+| Sección | Qué hay |
+|---|---|
+| [Plataforma](plataforma/index.md) | Mapa de servicios, arquitectura, ambientes, glosario y [cómo documentar](plataforma/como-documentar.md) |
+| [Servicios](servicios/index.md) | Una ficha por repo: qué hace, de qué depende, quién lo consume |
+| [Issues](issues/index.md) | Un issue por carpeta. Índices: [por estado](_generado/issues-por-estado.md) y [por repo](_generado/issues-por-repo.md) |
+| [Decisiones](adr/index.md) | ADRs: contexto, opciones, decisión y consecuencias. [Índice](_generado/adr.md) |
+| [Runbooks](runbooks/index.md) | Deploy, rollback, migraciones, incidentes: pasos con comandos |
+| [Postmortems](postmortems/index.md) | Qué pasó, por qué y qué se cambió. Sin culpables |
+| [Casos de uso](casos-de-uso/index.md) | Flujos de punta a punta, entre servicios |
+| [Releases](releases/index.md) | Una nota por release y el [rollout](_generado/rollout.md): qué versión hay en QA y en prod |
+
+Para crear un documento: `make nuevo TIPO=<tipo> TITULO="..."`. Las reglas
+están en [Cómo documentar](plataforma/como-documentar.md).

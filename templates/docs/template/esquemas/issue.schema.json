@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "issue.schema.json",
+  "title": "issue",
+  "description": "Frontmatter de contenido/issues/<n>-<slug>/issue.md",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "titulo",
+    "estado",
+    "tipo",
+    "prioridad",
+    "area",
+    "repos",
+    "creado",
+    "resuelto",
+    "relacionados"
+  ],
+  "properties": {
+    "id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Número del issue; igual al de la carpeta"
+    },
+    "titulo": {
+      "type": "string",
+      "minLength": 3
+    },
+    "estado": {
+      "enum": [
+        "abierto",
+        "en-curso",
+        "bloqueado",
+        "resuelto",
+        "descartado"
+      ]
+    },
+    "tipo": {
+      "enum": [
+        "feature",
+        "bug",
+        "deuda",
+        "investigacion"
+      ]
+    },
+    "prioridad": {
+      "enum": [
+        "alta",
+        "media",
+        "baja"
+      ]
+    },
+    "area": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Repo principal (nombre exacto, con ficha en servicios/)"
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+      },
+      "uniqueItems": true,
+      "description": "Repos en orden de ejecución (cada uno con ficha en servicios/)"
+    },
+    "creado": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "Fecha absoluta AAAA-MM-DD"
+    },
+    "resuelto": {
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+          "description": "Fecha absoluta AAAA-MM-DD"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "relacionados": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "uniqueItems": true
+    },
+    "etiquetas": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "estado": {
+            "enum": [
+              "en-curso",
+              "resuelto"
+            ]
+          }
+        },
+        "required": [
+          "estado"
+        ]
+      },
+      "then": {
+        "properties": {
+          "area": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+          },
+          "repos": {
+            "minItems": 1
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "estado": {
+            "const": "resuelto"
+          }
+        },
+        "required": [
+          "estado"
+        ]
+      },
+      "then": {
+        "properties": {
+          "resuelto": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+            "description": "Fecha absoluta AAAA-MM-DD"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "resuelto": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

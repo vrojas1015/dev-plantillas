@@ -1,0 +1,18 @@
+# Probar la imagen en local:
+#   docker compose up --build                     → http://localhost:8080
+#   DOCS_USUARIO=equipo DOCS_HASH='<hash>' docker compose up --build   → con basic auth
+#
+# En Coolify se recomienda el recurso "Docker Image" con la imagen `:prod` que
+# publica el CI (ver README.md › Deploy). Si usás el build pack "Docker
+# Compose", sacá `ports`: Coolify enruta el dominio al puerto 80 por su proxy.
+services:
+  docs:
+    build:
+      context: .
+    image: docs:local
+    environment:
+      DOCS_USUARIO: ${DOCS_USUARIO:-}
+      DOCS_HASH: ${DOCS_HASH:-}
+    ports:
+      - "${HOST_PORT:-8080}:80"
+    restart: unless-stopped

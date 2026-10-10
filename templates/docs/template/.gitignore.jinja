@@ -1,0 +1,31 @@
+{#- Se llama .gitignore.jinja para que git no lo aplique dentro del repo de la plantilla. -#}
+# Sitio construido por `make construir` (lo publica el CI, no se commitea)
+site/
+
+# Entornos y dependencias locales
+.venv/
+venv/
+__pycache__/
+*.pyc
+node_modules/
+.cache/
+{%- if obsidian %}
+
+# Obsidian: estado personal del vault (lo compartido es app.json y core-plugins.json)
+contenido/.obsidian/workspace*.json
+contenido/.obsidian/cache
+contenido/.trash/
+{%- endif %}
+
+# Archivos de entorno (nunca commitear secretos)
+.env
+.env.*
+
+# Claude Code: settings personales (los compartidos van en .claude/settings.json)
+.claude/settings.local.json
+
+# IDEs / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

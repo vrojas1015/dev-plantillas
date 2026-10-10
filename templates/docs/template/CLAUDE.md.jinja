@@ -1,0 +1,91 @@
+# {{ titulo_sitio }} — contexto para Claude
+
+Repo central de documentación de la plataforma de {{ org_name }}: issues, ADRs,
+arquitectura, fichas de servicios, runbooks, postmortems, casos de uso y
+releases. No hay código de producto acá. Lo que cambia junto con el código
+(README, `docs/` de uso y deploy, CHANGELOG) vive en el repo de ese código.
+
+## Dónde está cada cosa
+
+| Ruta | Qué es |
+|---|---|
+| `contenido/issues/<nnn>-<slug>/issue.md` | Un issue: qué, por qué, criterios, repos en orden, verificación |
+| `contenido/issues/<nnn>-<slug>/plan.md` | (opcional) Plan o prompt para el agente que trabaja el issue |
+| `contenido/adr/NNNN-<slug>.md` | Decisiones de arquitectura |
+| `contenido/servicios/<repo>.md` | Ficha de cada repo: el nombre del archivo es el nombre exacto del repo |
+| `contenido/runbooks/`, `postmortems/`, `casos-de-uso/`, `releases/` | Operación |
+| `contenido/plataforma/` | Arquitectura, ambientes, glosario, cómo documentar |
+| `contenido/_generado/` | Índices generados por `make generar`. **Nadie los edita** |
+| `_plantillas/` | Plantillas que usa `make nuevo` |
+| `esquemas/` | JSON Schema del frontmatter de cada tipo |
+
+## Reglas para agentes
+
+1. **Sólo se edita la carpeta del propio issue** (`contenido/issues/<n>-*/`).
+   Nunca otros issues, ni `_generado/`, ni ADRs aceptados. El hook
+   `guard-worktree` del plugin `dev-agentes` lo hace cumplir cuando la sesión
+   trabaja en `worktrees/issue-<n>/`.
+2. **Para crear documentos se usa `make nuevo`**, nunca se copian archivos a
+   mano: toma el número siguiente mirando también el remoto.
+3. **Fechas absolutas** (`2026-10-09`), nunca «ayer» ni «la semana pasada».
+4. Un issue pasa a `resuelto` **sólo** con la sección **Verificación**
+   completa (fecha, comandos, resultado y commits; la escribe `/verificar`) y
+   con `resuelto: <fecha>` en el frontmatter.
+5. `repos` del issue va **en orden de ejecución** y con nombres exactos de
+   repo (los que tienen ficha en `servicios/`). Orden típico: protos →
+   servicio → api-gateway → front.
+6. Enlaces Markdown estándar y relativos (`[texto](../adr/0001-x.md)`), nunca
+   `[[wikilinks]]`.
+7. Un ADR `aceptado` no se edita: se escribe otro que lo reemplaza.
+8. Nada de secretos ni datos personales.
+9. Antes de terminar: `make validar`, `make generar` y `make construir` en
+   verde, y se commitea lo que cambie `make generar` (el CI falla si
+   `_generado/` no coincide). Conflicto en `_generado/` al rebasar: se corre
+   `make generar` otra vez; nunca se resuelve a mano.
+
+## Comandos
+
+```bash
+make nuevo TIPO=issue TITULO="Descuento por pedido con tope" REPOS=protos,orders-service
+make nuevo TIPO=plan ISSUE=42
+make nuevo TIPO=adr TITULO="Rate limit en Redis"
+make nuevo TIPO=runbook TITULO="Rollback de un servicio" REPOS=orders-service
+make nuevo TIPO=release VERSION=1.4.0
+make nuevo TIPO=servicio TITULO=orders-service
+make validar        # esquemas + ids + fichas + markdownlint
+make generar        # regenera contenido/_generado/
+make construir      # mkdocs build --strict
+```
+
+Sin make: `python scripts/nuevo.py issue --titulo "..." --repos a,b`,
+`python scripts/validar.py`, `python scripts/generar.py`,
+`python -m mkdocs build --strict`.
+
+## Frontmatter de un issue
+
+```yaml
+id: 42                       # = número de la carpeta
+titulo: Descuento por pedido con tope
+estado: abierto              # abierto | en-curso | bloqueado | resuelto | descartado
+tipo: feature                # feature | bug | deuda | investigacion
+prioridad: media             # alta | media | baja
+area: orders-service         # repo principal (también en repos)
+repos: [protos, orders-service, api-gateway]   # en orden de ejecución
+creado: 2026-10-09
+resuelto: null               # fecha cuando pasa a resuelto
+relacionados: [37]
+```
+
+Secciones: Contexto · Comportamiento esperado · Criterios de aceptación ·
+Repos y orden · Notas · Verificación. El resto de los tipos y sus campos:
+`esquemas/*.schema.json` y `contenido/plataforma/como-documentar.md`.
+
+## Flujo con el plugin dev-agentes
+
+| Skill | Qué hace acá |
+|---|---|
+| `/issue-nuevo` | `make nuevo TIPO=issue` y completa frontmatter y secciones con el usuario |
+| `/issue-start <n>` | Lee `issue.md` (+ `plan.md`) y crea los worktrees de `repos` en orden |
+| `/verificar` | Escribe la sección Verificación en `issue.md` |
+| `/cerrar-issue` | `estado: resuelto`, `resuelto: <fecha>`, abre los MR/PR |
+| `/adr-nuevo`, `/postmortem` | Crean el documento con `make nuevo` |

@@ -11,6 +11,7 @@ guías de cómo se organizan carpetas, repos y trabajo con agentes.
 | `templates/protos/` | Plantilla Copier: repo de contratos gRPC con buf; código para Go, Python, TS/JS, Java, Kotlin y Swift |
 | `templates/api-gateway/` | Plantilla Copier: API gateway REST→gRPC (grpc-gateway) con auth, autorización por ruta, rate limit y límites |
 | `templates/angular-app/` | Plantilla Copier: app Angular standalone + signals + Firebase Hosting |
+| `templates/docs/` | Plantilla Copier: repo central de documentación (issues por carpeta, ADRs, runbooks, releases) con frontmatter validado, índices generados y MkDocs Material |
 | `plugins/dev-agentes/` | Plugin de Claude Code: skills, agentes y hooks del flujo de trabajo |
 | `.claude-plugin/` | Marketplace: permite instalar el plugin con `/plugin marketplace add vrojas1015/dev-plantillas` |
 | `workspace/` | `CLAUDE.md` en capas (plataforma, backend, frontend) y lista de repos |
@@ -22,6 +23,9 @@ guías de cómo se organizan carpetas, repos y trabajo con agentes.
 | `docs/03-flujo-de-trabajo.md` | Issue → worktree → sesión → MR, con varios agentes en paralelo |
 | `docs/04-stack-y-despliegue.md` | Stack Google primero, destinos de deploy (Google o Coolify) y cómo migrar entre ellos |
 | `docs/05-api-gateway.md` | Diseño y seguridad del API gateway (OWASP API Top 10): especificación de la plantilla |
+| `docs/06-documentacion.md` | Diseño del repo de documentación (issues, ADRs, runbooks, MkDocs): especificación de la plantilla |
+| `docs/07-frontend-y-seo.md` | Qué plantilla de front usar y especificación de `astro-site` (SEO técnico, Core Web Vitals, Lighthouse CI) |
+| `docs/08-cli-dp.md` | Especificación de la CLI `dp`: catálogo, `new`, `update`, workspace e issues; hitos en modo pair |
 
 ## Requisitos
 

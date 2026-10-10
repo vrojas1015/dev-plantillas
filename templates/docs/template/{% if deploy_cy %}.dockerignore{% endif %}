@@ -1,0 +1,17 @@
+# Lo que NO entra al contexto del docker build (más rápido y sin secretos).
+.git
+.gitlab
+.github
+.claude
+.venv
+venv
+site
+node_modules
+.cache
+**/__pycache__
+contenido/.obsidian
+.env
+.env.*
+Dockerfile
+docker-compose.yml
+.dockerignore

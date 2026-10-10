@@ -30,7 +30,8 @@ C:\dev\<org>\
 ├── frontend\
 │   ├── CLAUDE.md             ← convenciones comunes del front
 │   └── <app>\                ← un repo por app (admin, landing, ...)
-├── docs\                     ← repo de documentación: issues, ADRs, runbooks
+├── docs\                     ← repo de documentación (plantilla docs): issues en
+│                               contenido\issues\<n>-<slug>\, ADRs, runbooks
 ├── tools\                    ← scripts y migraciones de datos (repo propio)
 ├── plantillas\               ← este repo (dev-plantillas)
 └── worktrees\                ← worktrees de agentes, uno por issue (ver abajo)

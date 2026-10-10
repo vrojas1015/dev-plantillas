@@ -1,0 +1,93 @@
+# Sitio de documentación (MkDocs Material). Ver README.md › Sitio.
+#   make servir     → http://localhost:8000 (recarga al guardar)
+#   make construir  → site/ con --strict: un enlace roto rompe el build
+site_name: {{ titulo_sitio }}
+repo_url: {{ url_org }}/docs
+edit_uri: {% if ci_provider == 'github' %}edit/main/contenido/{% else %}-/edit/main/contenido/{% endif %}
+docs_dir: contenido
+strict: true
+
+theme:
+  name: material
+  language: es
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.footer
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/weather-night
+        name: Modo oscuro
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: Modo claro
+
+plugins:
+  - search:
+      lang: es
+
+# Estado, prioridad y repos al principio de cada issue; listas en los índices.
+hooks:
+  - scripts/hook_mkdocs.py
+
+extra_css:
+  - estilos/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+# Con strict, cualquier warning rompe el build: enlaces a archivos que no
+# existen, anclas inexistentes y enlaces absolutos a páginas.
+validation:
+  omitted_files: ignore # issues, ADRs, fichas: se llega por los índices, no por el menú
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
+nav:
+  - Inicio: index.md
+  - Plataforma:
+      - plataforma/index.md
+      - Mapa de servicios: _generado/servicios.md
+      - Arquitectura: plataforma/arquitectura.md
+      - Ambientes: plataforma/ambientes.md
+      - Glosario: plataforma/glosario.md
+      - Cómo documentar: plataforma/como-documentar.md
+  - Servicios: servicios/index.md
+  - Issues:
+      - issues/index.md
+      - Por estado: _generado/issues-por-estado.md
+      - Por repo: _generado/issues-por-repo.md
+  - Decisiones:
+      - adr/index.md
+      - Índice de ADRs: _generado/adr.md
+  - Runbooks: runbooks/index.md
+  - Postmortems: postmortems/index.md
+  - Casos de uso: casos-de-uso/index.md
+  - Releases:
+      - releases/index.md
+      - Rollout: _generado/rollout.md

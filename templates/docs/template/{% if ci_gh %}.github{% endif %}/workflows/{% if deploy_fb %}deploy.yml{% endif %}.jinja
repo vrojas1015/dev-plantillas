@@ -1,0 +1,52 @@
+# Deploy del sitio a Firebase Hosting ({{ firebase_project }}), KEYLESS vía
+# Workload Identity Federation (OIDC). Cada push a main publica site/.
+#
+# Variables requeridas en el GitHub Environment `production`
+# (Settings › Environments › production › Variables; no son secretos):
+#   GCP_WIF_PROVIDER  projects/<NÚMERO>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+#   GCP_SA_EMAIL      <service-account>@<proyecto>.iam.gserviceaccount.com
+#
+# Setup de una vez: README.md › Deploy.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write # necesario para pedir el token OIDC
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://{{ firebase_project }}.web.app
+    # Nunca dos deploys a la vez, y sin cancelar el que corre.
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: make validar-frontmatter
+      - run: make construir
+
+      - name: Autenticar en GCP (WIF, sin claves)
+        uses: google-github-actions/auth@v2
+        with:
+{%- raw %}
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SA_EMAIL }}
+{%- endraw %}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Deploy a Firebase Hosting
+        run: npx --yes firebase-tools@15 deploy --only hosting --project {{ firebase_project }} --non-interactive
