@@ -58,7 +58,8 @@ Respondé con una tabla y una línea de veredicto:
 ## 5. Evidencia en el issue
 
 Si se trabaja en `worktrees/issue-<n>/` y existe el issue en
-`<workspace>/docs/issues/<n>-*.md`, agregá (o reemplazá, si ya existe) al
+`<workspace>/docs/contenido/issues/<n>-*/issue.md` (o, en el formato anterior,
+`<workspace>/docs/issues/<n>-*.md`), agregá (o reemplazá, si ya existe) al
 final del archivo una sección:
 
 ```markdown

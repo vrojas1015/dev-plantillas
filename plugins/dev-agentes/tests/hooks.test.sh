@@ -25,6 +25,22 @@ check "su propio issue en docs"         0 "$(ev "$I" "$W/docs/issues/42-descuent
 check "issue con ceros a la izquierda"  0 "$(ev "$I" "$W/docs/issues/042-descuentos.md")"
 check "otro issue en docs"              2 "$(ev "$I" "$W/docs/issues/43-otro.md")"
 check "archivo agregado de docs"        2 "$(ev "$I" "$W/docs/rollout.md")"
+# Repo docs con carpeta por issue (plantilla docs): contenido/issues/<n>-<slug>/
+D=$W/docs/contenido
+check "carpeta: su issue.md"            0 "$(ev "$I" "$D/issues/042-descuentos/issue.md")"
+check "carpeta: su plan.md sin ceros"   0 "$(ev "$I" "$D/issues/42-descuentos/plan.md")"
+check "carpeta: subcarpeta propia"      0 "$(ev "$I" "$D/issues/042-descuentos/evidencia/log.txt")"
+check "carpeta: issue 43"               2 "$(ev "$I" "$D/issues/043-otro/issue.md")"
+check "carpeta: 0420 no es 42"          2 "$(ev "$I" "$D/issues/0420-otro/issue.md")"
+check "carpeta: la carpeta sola"        2 "$(ev "$I" "$D/issues/042-descuentos")"
+check "carpeta: archivo suelto"         2 "$(ev "$I" "$D/issues/042-descuentos.md")"
+check "carpeta: escapar con .."         2 "$(ev "$I" "$D/issues/042-descuentos/../043-otro/issue.md")"
+check "carpeta: _generado"              2 "$(ev "$I" "$D/_generado/issues-por-estado.md")"
+check "carpeta: adr"                    2 "$(ev "$I" "$D/adr/0001-registrar-decisiones.md")"
+check "carpeta: _plantillas"            2 "$(ev "$I" "$W/docs/_plantillas/issue.md")"
+I420=$W/worktrees/issue-420
+check "carpeta: issue-420 vs 042"       2 "$(ev "$I420" "$D/issues/042-descuentos/issue.md")"
+check "carpeta: issue-420 su carpeta"   0 "$(ev "$I420" "$D/issues/420-grande/issue.md")"
 check "fuera del workspace"             0 "$(ev "$I" "/tmp/scratch/notas.md")"
 check "sesión fuera de worktree"        0 "$(ev "$W/backend/orders-service" "$W/backend/orders-service/x.go")"
 check "sin file_path"                   0 '{"cwd":"'"$I"'","tool_name":"Edit","tool_input":{}}'
@@ -38,6 +54,11 @@ check "win: mezcla / y \ y mayúsculas"  0 "$(ev "c:/dev/org/worktrees/issue-42"
 check "win: estilo /c/ de git bash"     2 "$(ev "/c/dev/org/worktrees/issue-42" "$WW\backend\api\x.go")"
 check "win: otro issue en docs"         2 "$(ev "$WW\worktrees\issue-42" "$WW\docs\issues\43-x.md")"
 check "win: su issue en docs"           0 "$(ev "$WW\worktrees\issue-42" "$WW\docs\issues\42-x.md")"
+check "win: su carpeta de issue"        0 "$(ev "$WW\worktrees\issue-42" "$WW\docs\contenido\issues\042-x\issue.md")"
+check "win: carpeta mayúsculas"         0 "$(ev "$WW\worktrees\issue-42" 'C:\Dev\Org\Docs\Contenido\Issues\042-X\plan.md')"
+check "win: carpeta de otro issue"      2 "$(ev "$WW\worktrees\issue-42" "$WW\docs\contenido\issues\043-x\issue.md")"
+check "win: _generado"                  2 "$(ev "$WW\worktrees\issue-42" "$WW\docs\contenido\_generado\adr.md")"
+check "win: git bash /c/ carpeta"       0 "$(ev "/c/dev/org/worktrees/issue-42" "/c/dev/org/docs/contenido/issues/042-x/issue.md")"
 
 # format.sh nunca bloquea, aunque el archivo no exista o no compile
 tmp=$(mktemp -d); printf 'package x\nvar   A = 1\n' > "$tmp/a.go"; printf 'package x\nfunc (\n' > "$tmp/b.go"

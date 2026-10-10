@@ -1,0 +1,55 @@
+# Verificación en cada PR y en cada push a main:
+#   frontmatter + markdownlint · generados al día · sitio con --strict
+#   enlaces externos (lychee): sólo en main, para no depender de la red en cada PR.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: pip install -r requirements.txt
+
+      - name: Frontmatter y Markdown
+        run: make validar
+
+      - name: Generados al día
+        run: |
+          make generar
+          if ! git diff --exit-code -- contenido/_generado \
+             || [ -n "$(git status --porcelain --untracked-files=all -- contenido/_generado)" ]; then
+            echo "::error::contenido/_generado/ está desactualizado o se editó a mano: correr 'make generar' y commitear el resultado"
+            exit 1
+          fi
+
+      - name: Sitio (enlaces internos)
+        run: make construir
+
+  enlaces-externos:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lycheeverse/lychee-action@v2
+        with:
+          args: --config lychee.toml 'contenido/**/*.md'
+          fail: true

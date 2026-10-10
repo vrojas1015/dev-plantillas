@@ -1,0 +1,38 @@
+# Servidor estático del sitio (site/ de MkDocs) dentro de la imagen.
+# El TLS y el dominio los maneja el proxy de Coolify; acá sólo HTTP en :80.
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	root * /srv
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# Healthcheck (sin basic auth).
+	respond /salud 200
+
+	# Basic auth opcional: entrypoint.sh crea auth.caddy si están DOCS_USUARIO
+	# y DOCS_HASH. Sin ese archivo el import no agrega nada.
+	import /etc/caddy/auth*.caddy
+
+	# Assets de MkDocs Material: cache de un día. Páginas: revalidar siempre.
+	@assets path /assets/*
+	header @assets Cache-Control "public, max-age=86400"
+	@paginas not path /assets/*
+	header @paginas Cache-Control "no-cache"
+
+	file_server
+
+	# MkDocs genera 404.html.
+	handle_errors 404 {
+		rewrite * /404.html
+		file_server
+	}
+}

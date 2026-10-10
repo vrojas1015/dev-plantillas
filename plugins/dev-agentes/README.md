@@ -17,7 +17,7 @@ Para probar cambios locales sin instalar: `claude --plugin-dir ./plugins/dev-age
 | Tipo | Nombre | Qué hace |
 |---|---|---|
 | Skill | `/verificar` | Build, tests, lint y formato de cada proyecto tocado (Go, Node/Angular, Python); deja la evidencia en el issue |
-| Hook | `guard-worktree` | Si la sesión trabaja en `worktrees/issue-<n>/`, bloquea ediciones a otros archivos del workspace (copias principales, otros issues). Permite su archivo en `docs/issues/` y todo lo que esté fuera del workspace |
+| Hook | `guard-worktree` | Si la sesión trabaja en `worktrees/issue-<n>/`, bloquea ediciones a otros archivos del workspace (copias principales, otros issues). Permite la carpeta de su issue en el repo de documentación (`docs/contenido/issues/<n>-*/`, con o sin ceros a la izquierda; ver `docs/06-documentacion.md`), el formato anterior `docs/issues/<n>-*.md` y todo lo que esté fuera del workspace. Nunca otros issues ni `_generado/` |
 | Hook | `format` | Después de cada edición: `gofmt`, `prettier` del proyecto o `ruff format`. Nunca bloquea |
 
 ### Variables para desactivar

@@ -1,6 +1,6 @@
 # Repo de documentación: diseño
 
-Especificación de la plantilla `docs` (pendiente de construir). Genera el repo
+Especificación de la plantilla `docs` (implementada en `templates/docs/`). Genera el repo
 central de documentación de una plataforma: issues, decisiones, arquitectura,
 runbooks y releases. Lo leen personas (MkDocs, Obsidian, GitHub/GitLab) y
 agentes (rutas predecibles, metadatos validados).

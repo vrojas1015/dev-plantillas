@@ -20,7 +20,8 @@ la plataforma. Las reglas de cada stack están en `backend\CLAUDE.md` y
 
 ## Cómo se trabaja
 
-1. **Todo trabajo tiene un issue** en `docs\issues\<n>-<slug>.md`.
+1. **Todo trabajo tiene un issue** en `docs\contenido\issues\<n>-<slug>\issue.md`
+   (se crea con `make nuevo TIPO=issue` dentro de `docs`).
 2. **Orden de un cambio que cruza capas:** protos → micro → api-gateway → front.
 3. **Nunca se trabaja en la copia principal de un repo** (`backend\<repo>`):
    se queda en `main` y limpia. Se crea un worktree por repo tocado:
@@ -29,9 +30,9 @@ la plataforma. Las reglas de cada stack están en `backend\CLAUDE.md` y
    ```
 4. **Una sesión de agente por issue**, no por repo. La sesión trabaja sólo dentro
    de `worktrees\issue-<n>\`.
-5. **Cada sesión escribe únicamente el archivo de su issue** en `docs`. Los
-   archivos agregados (rollout, índices) los actualiza una persona o un job, no
-   varias sesiones a la vez.
+5. **Cada sesión escribe únicamente la carpeta de su issue** en `docs`
+   (`contenido\issues\<n>-*\`). Los índices de `contenido\_generado\` los
+   regenera `make generar` (o el CI); nadie los edita a mano.
 
 ## Terminado significa
 

@@ -1,0 +1,186 @@
+# CI/CD del repo de documentación.
+#
+#   MR                  → frontmatter + generados al día + sitio --strict, markdownlint
+#   push a main         → lo mismo + enlaces externos (lychee){% if deploy_target == 'firebase-hosting' %} + deploy (Firebase Hosting){% elif deploy_target == 'coolify' %} + imagen + deploy (Coolify){% endif %}
+{%- if deploy_target == 'firebase-hosting' %}
+#
+# Deploy KEYLESS vía Workload Identity Federation (OIDC): GitLab emite un token
+# de corta duración, GCP lo verifica y deja impersonar al service account de
+# deploy SOLO desde este proyecto. No hay claves JSON en GitLab.
+#
+# Variables CI/CD requeridas (Settings › CI/CD › Variables), scope `production`
+# (no son secretas, pero no van en el repo):
+#   GCP_WIF_PROVIDER  projects/<NÚMERO>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+#   GCP_SA_EMAIL      <service-account>@<proyecto>.iam.gserviceaccount.com
+{%- elif deploy_target == 'coolify' %}
+#
+# La imagen (Caddy + site/) va al Container Registry del proyecto con dos tags:
+# `prod` (el que sigue el recurso de Coolify) y el SHA corto (rollback). El
+# login al registry usa el CI_JOB_TOKEN del job: no hay credenciales guardadas.
+#
+# Variables CI/CD requeridas (Settings › CI/CD › Variables), scope `production`:
+#   COOLIFY_URL            https://coolify.example.com (sin barra final)
+#   COOLIFY_RESOURCE_UUID  UUID del recurso en Coolify
+#   COOLIFY_TOKEN          API token de Coolify (Masked + Protected)
+#
+# Requiere un runner con Docker-in-Docker (los shared runners de GitLab.com lo soportan).
+{%- endif %}
+#
+# Setup de una vez: README.md.
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Evita pipelines duplicados (rama + MR) cuando la rama tiene un MR abierto.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+stages:
+  - verificar
+{%- if deploy_target == 'coolify' %}
+  - imagen
+{%- endif %}
+{%- if deploy_target != 'ninguno' %}
+  - deploy
+{%- endif %}
+
+variables:
+  PIP_CACHE_DIR: $CI_PROJECT_DIR/.cache/pip
+
+# Frontmatter (esquemas, ids, fichas), generados al día y sitio con --strict.
+sitio:
+  stage: verificar
+  image: python:3.12
+  cache:
+    key:
+      files:
+        - requirements.txt
+    paths:
+      - .cache/pip
+  before_script:
+    - pip install -r requirements.txt
+  script:
+    - make validar-frontmatter
+    - make generar
+    - |
+      if ! git diff --exit-code -- contenido/_generado || [ -n "$(git status --porcelain --untracked-files=all -- contenido/_generado)" ]; then
+        echo "contenido/_generado/ está desactualizado o se editó a mano: correr 'make generar' y commitear el resultado"
+        exit 1
+      fi
+    - make construir
+{%- if deploy_target == 'firebase-hosting' %}
+  artifacts:
+    paths:
+      - site/
+    expire_in: 1 hour
+{%- endif %}
+
+markdown:
+  stage: verificar
+  image:
+    name: davidanson/markdownlint-cli2:v0.23.3
+    entrypoint: [""]
+  script:
+    - markdownlint-cli2
+
+# Enlaces externos: sólo en la rama principal, para no depender de la red en cada MR.
+enlaces-externos:
+  stage: verificar
+  image:
+    name: lycheeverse/lychee:0.24.2-alpine
+    entrypoint: [""]
+  script:
+    - lychee --config lychee.toml 'contenido/**/*.md'
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+{%- if deploy_target == 'firebase-hosting' %}
+
+# `resource_group` evita dos deploys a la vez; `environment` permite scopear
+# las variables y habilita "Prevent outdated deployment jobs".
+deploy:
+  stage: deploy
+  image: node:24
+  needs:
+    - sitio
+  resource_group: production
+  environment:
+    name: production
+    url: https://{{ firebase_project }}.web.app
+  id_tokens:
+    GCP_ID_TOKEN:
+      aud: https://iam.googleapis.com/$GCP_WIF_PROVIDER
+  script:
+    - test -n "$GCP_WIF_PROVIDER" || (echo "Falta la variable GCP_WIF_PROVIDER para este environment" && exit 1)
+    - test -n "$GCP_SA_EMAIL" || (echo "Falta la variable GCP_SA_EMAIL para este environment" && exit 1)
+    - npm install -g firebase-tools@15
+    # 1. Token OIDC de GitLab a un archivo.
+    - echo "$GCP_ID_TOKEN" > /tmp/gitlab_oidc_token
+    # 2. Credenciales "external_account" (WIF) que apuntan a ese token.
+    - |
+      cat > /tmp/gcp_creds.json <<JSON
+      {
+        "type": "external_account",
+        "audience": "//iam.googleapis.com/${GCP_WIF_PROVIDER}",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+        "token_url": "https://sts.googleapis.com/v1/token",
+        "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${GCP_SA_EMAIL}:generateAccessToken",
+        "credential_source": {
+          "file": "/tmp/gitlab_oidc_token",
+          "format": { "type": "text" }
+        }
+      }
+      JSON
+    # 3. firebase-tools toma las credenciales vía ADC.
+    - export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_creds.json
+    - firebase deploy --only hosting --project {{ firebase_project }} --non-interactive
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+{%- elif deploy_target == 'coolify' %}
+
+# Build + push de la imagen. El Dockerfile corre `mkdocs build --strict`.
+imagen:
+  stage: imagen
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  needs:
+    - sitio
+  script:
+    - echo "$CI_JOB_TOKEN" | docker login -u gitlab-ci-token --password-stdin "$CI_REGISTRY"
+    # Reusa capas de la última imagen (si existe) para acelerar el build.
+    - docker pull "$CI_REGISTRY_IMAGE:prod" || true
+    - >-
+      docker build
+      --cache-from "$CI_REGISTRY_IMAGE:prod"
+      --build-arg BUILDKIT_INLINE_CACHE=1
+      -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+      -t "$CI_REGISTRY_IMAGE:prod"
+      .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - docker push "$CI_REGISTRY_IMAGE:prod"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# Dispara el deploy del recurso en Coolify v4 (que hace pull de `:prod`).
+deploy:
+  stage: deploy
+  image: alpine:3.20
+  needs:
+    - imagen
+  resource_group: production
+  environment:
+    name: production
+  script:
+    - test -n "$COOLIFY_URL" || (echo "Falta la variable COOLIFY_URL para este environment" && exit 1)
+    - test -n "$COOLIFY_RESOURCE_UUID" || (echo "Falta la variable COOLIFY_RESOURCE_UUID para este environment" && exit 1)
+    - test -n "$COOLIFY_TOKEN" || (echo "Falta la variable COOLIFY_TOKEN para este environment" && exit 1)
+    - apk add --no-cache curl
+    - >-
+      curl -fsS "$COOLIFY_URL/api/v1/deploy?uuid=$COOLIFY_RESOURCE_UUID&force=false"
+      -H "Authorization: Bearer $COOLIFY_TOKEN"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+{%- endif %}

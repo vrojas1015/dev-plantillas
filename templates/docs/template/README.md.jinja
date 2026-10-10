@@ -1,0 +1,143 @@
+# {{ titulo_sitio }}
+
+Repo central de documentación de la plataforma de {{ org_name }}: issues, ADRs,
+arquitectura, fichas de servicios, runbooks, postmortems, casos de uso y
+releases. Se lee como sitio (MkDocs Material), en {% if ci_provider == 'github' %}GitHub{% else %}GitLab{% endif %} o con Obsidian.
+
+Generado con la plantilla Copier `docs` de dev-plantillas
+(`.copier-answers.yml`; traer mejoras con `copier update`). Reglas para
+agentes: [CLAUDE.md](CLAUDE.md). Reglas para personas:
+[Cómo documentar](contenido/plataforma/como-documentar.md).
+
+## Requisitos
+
+- Python 3.10+ (`make instalar` crea `.venv/` con `requirements.txt`).
+- `make` (en Windows: `choco install make` y correrlo **desde Git Bash**; en
+  PowerShell usar los equivalentes sin make de la tabla de abajo).
+- Para `make validar-markdown`: Node (npx) o Docker.
+
+## Comandos
+
+| make | Sin make | Qué hace |
+|---|---|---|
+| `make instalar` | `python -m venv .venv` y `.venv/Scripts/pip install -r requirements.txt` (Linux/macOS: `.venv/bin/pip`) | Dependencias |
+| `make nuevo TIPO=issue TITULO="..." REPOS=a,b` | `python scripts/nuevo.py issue --titulo "..." --repos a,b` | Issue nuevo con el número siguiente |
+| `make nuevo TIPO=plan ISSUE=42` | `python scripts/nuevo.py plan --issue 42` | `plan.md` en la carpeta del issue |
+| `make nuevo TIPO=adr TITULO="..."` | `python scripts/nuevo.py adr --titulo "..."` | ADR nuevo |
+| `make nuevo TIPO=runbook TITULO="..." REPOS=a` | `python scripts/nuevo.py runbook --titulo "..." --repos a` | Runbook |
+| `make nuevo TIPO=postmortem TITULO="..." REPOS=a` | `python scripts/nuevo.py postmortem --titulo "..." --repos a` | Postmortem con la fecha de hoy |
+| `make nuevo TIPO=release VERSION=1.4.0` | `python scripts/nuevo.py release --version 1.4.0` | Nota de release |
+| `make nuevo TIPO=servicio TITULO=<repo>` | `python scripts/nuevo.py servicio --titulo <repo>` | Ficha de un repo |
+| `make validar` | `python scripts/validar.py` y `npx markdownlint-cli2` | Frontmatter + markdownlint |
+| `make generar` | `python scripts/generar.py` | Regenera `contenido/_generado/` |
+| `make servir` | `python -m mkdocs serve` | Sitio en <http://localhost:8000> |
+| `make construir` | `python -m mkdocs build --strict` | Sitio en `site/`; un enlace roto falla |
+
+Opciones de `make nuevo` para issues: `PRIORIDAD=alta|media|baja`,
+`CLASE=feature|bug|deuda|investigacion`, `AREA=<repo>` (repo principal; por
+defecto, el de `REPOS` si hay uno solo), `FECHA=AAAA-MM-DD`.
+
+El número de issue/ADR es el siguiente al mayor que haya **localmente o en la
+rama principal del remoto** (`nuevo.py` hace `git fetch` silencioso; sin
+remoto, sólo local). Si igual dos ramas toman el mismo número, `make validar`
+falla por id duplicado: se renumera la carpeta de la rama que llega segunda.
+
+## Estructura
+
+```text
+contenido/                 ← lo que publica MkDocs (docs_dir) y el vault de Obsidian
+├── index.md
+├── plataforma/            ← arquitectura, ambientes, glosario, cómo documentar
+├── servicios/<repo>.md    ← una ficha por repo (nombre exacto del repo)
+├── issues/<nnn>-<slug>/   ← issue.md (+ plan.md)
+├── adr/NNNN-<slug>.md
+├── runbooks/  postmortems/  casos-de-uso/  releases/
+└── _generado/             ← índices: los escribe `make generar`, nadie los edita
+_plantillas/               ← plantillas de `make nuevo`
+esquemas/                  ← JSON Schema del frontmatter de cada tipo
+scripts/                   ← nuevo.py, validar.py, generar.py, hook_mkdocs.py
+```
+
+## Sitio
+
+MkDocs Material con búsqueda, modo oscuro y diagramas Mermaid
+(` ```mermaid `). El hook `scripts/hook_mkdocs.py` muestra estado, prioridad y
+repos al principio de cada issue (y estado/fecha en cada ADR), y lista los
+documentos de cada sección en su índice. `strict: true`: un enlace interno roto
+rompe el build.
+{%- if obsidian %}
+
+## Obsidian
+
+Abrir `contenido/` como vault. `contenido/.obsidian/` trae lo mínimo: enlaces
+Markdown relativos (no wikilinks, para que funcionen en el sitio y en
+{% if ci_provider == 'github' %}GitHub{% else %}GitLab{% endif %}), adjuntos en la carpeta del documento y propiedades
+(frontmatter) visibles. Lo personal (`workspace.json`) no se commitea.
+{%- endif %}
+
+## CI
+
+| Paso | Falla si |
+|---|---|
+| `make validar` (frontmatter + markdownlint) | Falta un campo, valor fuera de la lista, id duplicado, repo sin ficha, issue `resuelto` sin Verificación, estilo Markdown |
+| `make generar` + `git diff --exit-code` | `contenido/_generado/` desactualizado o editado a mano |
+| `make construir` | Enlace interno roto |
+| lychee (`lychee.toml`, sólo en la rama principal) | Enlace externo roto |
+{%- if deploy_target == 'firebase-hosting' %}
+| Deploy (push a `main`) | — : `site/` a Firebase Hosting (`{{ firebase_project }}`) |
+
+## Deploy: Firebase Hosting
+
+Cada push a `main` construye el sitio y lo publica en Firebase Hosting del
+proyecto `{{ firebase_project }}` (`firebase.json`, `.firebaserc`). El CI se
+autentica **sin claves** con Workload Identity Federation (OIDC).
+
+Setup de una vez (igual que en `angular-app`):
+
+1. Proyecto GCP/Firebase `{{ firebase_project }}` con Hosting habilitado.
+2. Pool y provider de Workload Identity para {% if ci_provider == 'github' %}GitHub (`token.actions.githubusercontent.com`), condicionado a este repo{% else %}GitLab (`https://gitlab.com`), condicionado a este proyecto{% endif %}.
+3. Service account de deploy con rol `Firebase Hosting Admin`, impersonable
+   (`roles/iam.workloadIdentityUser`) sólo desde ese provider.
+4. Variables (no secretas) en {% if ci_provider == 'github' %}el GitHub Environment `production`{% else %}Settings › CI/CD › Variables, scope `production`{% endif %}:
+   `GCP_WIF_PROVIDER` (`projects/<NÚMERO>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>`)
+   y `GCP_SA_EMAIL`.
+
+Firebase Hosting es público. Si la documentación es interna, conviene
+`deploy_target: coolify` con basic auth, o `ninguno` y leerla desde el repo.
+{%- elif deploy_target == 'coolify' %}
+| Deploy (push a `main`) | — : imagen Caddy con `site/` + webhook de Coolify |
+
+## Deploy: Coolify v4
+
+`Dockerfile` construye el sitio (`mkdocs build --strict`) y lo sirve con Caddy
+en el puerto 80 (`caddy/Caddyfile`). Cada push a `main` publica la imagen
+{% if ci_provider == 'github' %}en GHCR (`ghcr.io/<owner>/<repo>`){% else %}en el Container Registry del proyecto (`$CI_REGISTRY_IMAGE`){% endif %} con dos tags,
+`prod` (el que sigue Coolify) y el SHA del commit (para rollback), y dispara el
+deploy del recurso en Coolify.
+
+Probar en local:
+
+```bash
+docker compose up --build        # http://localhost:8080
+```
+
+Setup de una vez:
+
+1. En Coolify, un recurso **Docker Image** con la imagen `:prod`, puerto 80 y
+   el dominio. Si el registry es privado, credenciales de sólo lectura en el
+   servidor.
+2. Un API token de Coolify con permiso de deploy y el UUID del recurso.
+3. {% if ci_provider == 'github' %}En el GitHub Environment `production`: variables `COOLIFY_URL` y
+   `COOLIFY_RESOURCE_UUID`, secret `COOLIFY_TOKEN`{% else %}En Settings › CI/CD › Variables (scope `production`): `COOLIFY_URL`,
+   `COOLIFY_RESOURCE_UUID` y `COOLIFY_TOKEN` (Masked + Protected){% endif %}.
+
+**Documentación interna (basic auth):** definir en el recurso de Coolify las
+variables `DOCS_USUARIO` y `DOCS_HASH`. El hash se genera con:
+
+```bash
+docker run --rm caddy:2-alpine caddy hash-password --plaintext '<contraseña>'
+```
+
+Con las dos variables, todo el sitio pide usuario y contraseña (salvo
+`/salud`, que usa el healthcheck). Sin ellas, el sitio es público.
+{%- endif %}

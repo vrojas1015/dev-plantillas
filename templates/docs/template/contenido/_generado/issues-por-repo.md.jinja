@@ -1,0 +1,17 @@
+{#- Primera versión del generado (igual a la salida de scripts/generar.py). copier update no lo pisa (_skip_if_exists). -#}
+<!-- Archivo generado por scripts/generar.py: no editar. Regenerar con `make generar`. -->
+
+# Issues abiertos por repo
+
+> **Archivo generado: no editar.** Para cada repo, los issues abiertos, en curso o bloqueados que lo tocan, con su lugar en el orden de ejecución del issue. Se regenera con `make generar`.
+{% for r in repos_iniciales | sort %}
+## {{ r }}
+
+Ficha: [{{ r }}](../servicios/{{ r }}.md)
+
+| # | Título | Estado | Prioridad | Paso |
+|---|---|---|---|---|
+| [001](../issues/001-issue-de-ejemplo/issue.md) | Issue de ejemplo: cómo se escribe un issue | abierto | baja | {{ repos_iniciales.index(r) + 1 }} de {{ repos_iniciales | length }} |
+{% else %}
+_Todavía no hay fichas de servicios._
+{% endfor -%}

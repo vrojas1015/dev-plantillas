@@ -10,6 +10,7 @@ guías de cómo se organizan carpetas, repos y trabajo con agentes.
 | `templates/go-grpc-service/` | Plantilla Copier: microservicio Go gRPC hexagonal + Postgres + Cloud Run |
 | `templates/protos/` | Plantilla Copier: repo de contratos gRPC con buf; código para Go, Python, TS/JS, Java, Kotlin y Swift |
 | `templates/angular-app/` | Plantilla Copier: app Angular standalone + signals + Firebase Hosting |
+| `templates/docs/` | Plantilla Copier: repo central de documentación (issues por carpeta, ADRs, runbooks, releases) con frontmatter validado, índices generados y MkDocs Material |
 | `plugins/dev-agentes/` | Plugin de Claude Code: skills, agentes y hooks del flujo de trabajo |
 | `.claude-plugin/` | Marketplace: permite instalar el plugin con `/plugin marketplace add vrojas1015/dev-plantillas` |
 | `workspace/` | `CLAUDE.md` en capas (plataforma, backend, frontend) y lista de repos |
