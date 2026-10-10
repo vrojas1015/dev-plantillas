@@ -6,8 +6,8 @@
     "name": "Victor Rojas Barrera",
     "url": "https://github.com/vrojas1015"
   },
-  "homepage": "https://github.com/vrojas1015/dev-plantillas",
-  "repository": "https://github.com/vrojas1015/dev-plantillas",
+  "homepage": "https://github.com/dev-plantillas/dev-plantillas",
+  "repository": "https://github.com/dev-plantillas/dev-plantillas",
   "license": "MIT",
   "keywords": ["workflow", "verification", "go", "angular", "worktrees"]
 }

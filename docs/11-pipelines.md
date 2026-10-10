@@ -30,7 +30,7 @@ on:
   push: { tags: ["qa-v*", "prod-v*"] }
 jobs:
   servicio:
-    uses: vrojas1015/ci/.github/workflows/go-service.yml@v1
+    uses: dev-plantillas/ci/.github/workflows/go-service.yml@v1
     with:
       servicio: orders-service
       deploy: cloud-run

@@ -18,7 +18,7 @@ Estado y prioridades: [`ROADMAP.md`](ROADMAP.md).
 | `templates/android-app/` | Plantilla Copier: app Android nativa (Kotlin + Compose + Material 3, Hilt, Room offline primero), cliente REST del gateway o gRPC, Firebase opcional, Google Play por CI |
 | `templates/docs/` | Plantilla Copier: repo central de documentación (issues por carpeta, ADRs, runbooks, releases) con frontmatter validado, índices generados y MkDocs Material |
 | `plugins/dev-agentes/` | Plugin de Claude Code: skills, agentes y hooks del flujo de trabajo |
-| `.claude-plugin/` | Marketplace: permite instalar el plugin con `/plugin marketplace add vrojas1015/dev-plantillas` |
+| `.claude-plugin/` | Marketplace: permite instalar el plugin con `/plugin marketplace add dev-plantillas/dev-plantillas` |
 | `workspace/` | `CLAUDE.md` en capas (plataforma, backend, frontend) y lista de repos |
 | `scripts/bootstrap.ps1` | Arma `C:\dev\<org>` en una máquina nueva |
 | `scripts/new-worktree.ps1` | Crea los worktrees de un issue |
@@ -46,6 +46,8 @@ Estado y prioridades: [`ROADMAP.md`](ROADMAP.md).
 - `glab` y/o `gh`
 
 ## Uso rápido
+
+Las plantillas publicadas viven en la organización [`dev-plantillas`](https://github.com/dev-plantillas), una por repo (`gh:dev-plantillas/template-<nombre>`); este monorepo es donde se desarrollan.
 
 ```powershell
 # Máquina nueva

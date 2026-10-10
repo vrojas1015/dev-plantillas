@@ -6,7 +6,7 @@ cada una basada en un paso real del trabajo, no un catálogo genérico.
 ## Instalar
 
 ```
-/plugin marketplace add vrojas1015/dev-plantillas
+/plugin marketplace add dev-plantillas/dev-plantillas
 /plugin install dev-agentes@dev-plantillas
 ```
 
