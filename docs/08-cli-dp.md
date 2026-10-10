@@ -13,7 +13,7 @@ y revisión (ver §9).
 
 | Hoy | Con `dp` |
 |---|---|
-| `copier copy --vcs-ref v0.2.1 --defaults --trust -d service_name=x -d deploy_target=coolify gh:vrojas1015/template-go-grpc-service x` | `dp new go-grpc-service x --deploy coolify` |
+| `copier copy --vcs-ref v0.2.1 --defaults --trust -d service_name=x -d deploy_target=coolify gh:dev-plantillas/template-go-grpc-service x` | `dp new go-grpc-service x --deploy coolify` |
 | Recordar qué plantillas existen y su última versión | `dp list` |
 | `git init`, `git add --chmod=+x scripts/*.sh`, primer commit, `gh repo create` | Lo hace `dp new` |
 | Saber qué repos están atrasados respecto de su plantilla | `dp status` |
@@ -29,7 +29,7 @@ y revisión (ver §9).
 | Lenguaje | **Python 3.12+** | Copier es una librería Python: se usa por API, sin subprocesos ni parseo de salidas |
 | Framework de CLI | **Typer** + **Rich** | Tipos, ayuda automática, tablas legibles |
 | Ubicación | `cli/` dentro de `dev-plantillas` | Versionado junto a las plantillas y los docs |
-| Instalación | `uv tool install "git+https://github.com/vrojas1015/dev-plantillas@cli-v0.1.0#subdirectory=cli"` (o `pipx`) | Un comando en Windows, macOS y Linux; aislado del Python del sistema |
+| Instalación | `uv tool install "git+https://github.com/dev-plantillas/dev-plantillas@cli-v0.1.0#subdirectory=cli"` (o `pipx`) | Un comando en Windows, macOS y Linux; aislado del Python del sistema |
 | Versionado | Tags `cli-vX.Y.Z` (independientes de los de las plantillas) | La CLI y las plantillas evolucionan a ritmos distintos |
 | Dependencias externas | `git` obligatorio; `gh`/`glab`, `docker`, toolchains según la plantilla | `dp doctor` dice qué falta para cada caso |
 
@@ -42,7 +42,7 @@ remoto con caché local de 24 h; `--offline` usa la caché.
 version: 1
 plantillas:
   - nombre: go-grpc-service
-    repo: gh:vrojas1015/template-go-grpc-service
+    repo: gh:dev-plantillas/template-go-grpc-service
     tipo: backend            # backend | gateway | contratos | front | movil | docs
     lenguaje: go
     descripcion: Microservicio Go gRPC hexagonal + Postgres
@@ -51,7 +51,7 @@ plantillas:
       deploy: deploy_target
       ci: ci_provider
   - nombre: angular-app
-    repo: gh:vrojas1015/template-angular-app
+    repo: gh:dev-plantillas/template-angular-app
     tipo: front
     ...
 ```
