@@ -11,7 +11,13 @@ src="$root/templates/$name"
 [ -f "$src/copier.yml" ] || { echo "No existe $src/copier.yml"; exit 1; }
 [ -z "$(git -C "$root" status --porcelain -- "templates/$name")" ] || { echo "Hay cambios sin commitear en templates/$name"; exit 1; }
 # La base común (templates/_base) tiene que estar copiada al día en la plantilla.
-"$(command -v python3 || command -v python)" "$root/scripts/sincronizar-base.py" --comprobar "$name"
+# En Windows `python3` puede ser el alias de la Microsoft Store, que no ejecuta.
+py=""
+for c in python3 python; do
+  if command -v "$c" >/dev/null && "$c" -c "" 2>/dev/null; then py=$c; break; fi
+done
+[ -n "$py" ] || { echo "No encontré Python"; exit 1; }
+"$py" "$root/scripts/sincronizar-base.py" --comprobar "$name"
 
 # subtree split: historial sólo de esa carpeta, con la carpeta como raíz
 branch="publish/$name"
