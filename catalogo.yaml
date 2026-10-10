@@ -52,3 +52,31 @@ plantillas:
     atajos:
       deploy: deploy_target
       ci: ci_provider
+
+  - nombre: astro-site
+    repo: gh:vrojas1015/template-astro-site
+    tipo: front
+    lenguaje: typescript
+    descripcion: Sitio público con Astro e islas de React, SEO técnico y Lighthouse CI
+    destino_por_defecto: frontend/{nombre}
+    atajos:
+      deploy: deploy_target
+      ci: ci_provider
+
+  - nombre: android-app
+    repo: gh:vrojas1015/template-android-app
+    tipo: movil
+    lenguaje: kotlin
+    descripcion: App Android nativa con Kotlin, Compose, Hilt, Room y publicación en Google Play
+    destino_por_defecto: mobile/{nombre}
+    atajos:
+      ci: ci_provider
+
+  - nombre: e2e-tests
+    repo: gh:vrojas1015/template-e2e-tests
+    tipo: pruebas
+    lenguaje: typescript
+    descripcion: Pruebas end-to-end con Playwright, Schemathesis y k6, con registro de casos de uso
+    destino_por_defecto: tools/{nombre}
+    atajos:
+      ci: ci_provider

@@ -17,7 +17,7 @@ definen el comportamiento; tu trabajo es hacerlos pasar.
 
 | Archivo | Qué es |
 |---|---|
-| `catalogo.yaml` (raíz del repo) | El catálogo real con las 4 plantillas publicadas |
+| `catalogo.yaml` (raíz del repo) | El catálogo real con las 8 plantillas publicadas |
 | `cli/tests/conftest.py` | Fixtures: un catálogo temporal válido y una función para escribir catálogos rotos |
 | `cli/tests/test_catalogo.py` | 13 tests de la **lógica**: leer y validar el catálogo |
 | `cli/tests/test_list.py` | 10 tests de la **CLI**: `--version`, `list`, filtros, `--json`, errores, dónde busca el catálogo |
@@ -46,7 +46,7 @@ cli/
   **qué** está mal: archivo inexistente, YAML roto, `version` distinta de 1,
   campo faltante (nombrándolo), tipo desconocido (nombrándolo), nombre duplicado.
 - `cargar_catalogo(ruta: Path) -> list[Plantilla]`: en el orden del archivo.
-- Tipos válidos: `backend`, `gateway`, `contratos`, `front`, `movil`, `docs`.
+- Tipos válidos: `backend`, `gateway`, `contratos`, `front`, `movil`, `docs`, `pruebas`.
 
 **`dp/main.py`**
 

@@ -43,7 +43,7 @@ version: 1
 plantillas:
   - nombre: go-grpc-service
     repo: gh:vrojas1015/template-go-grpc-service
-    tipo: backend            # backend | gateway | contratos | front | movil | docs
+    tipo: backend            # backend | gateway | contratos | front | movil | docs | pruebas
     lenguaje: go
     descripcion: Microservicio Go gRPC hexagonal + Postgres
     destino_por_defecto: backend/{nombre}-service
