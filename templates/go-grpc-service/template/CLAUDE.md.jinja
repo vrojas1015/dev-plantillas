@@ -181,3 +181,4 @@ el wiring en `cli/main.go` y la tabla `items` en `migrations/000001_*`.
 2. Nada de librerías de mocking.
 3. Proto-first: antes de implementar, leer el `.proto` y reportar el delta con el código.
 4. Release con cambio de contrato: protos → clientes (gateway) → este micro.
+5. **Secretos**: nunca al repo (`.env*`, claves, cuentas de servicio); gitleaks los busca en cada commit (`pre-commit install`) y en el CI, y uno filtrado se rota primero (`SECURITY.md`). Título del MR/PR: `feat(issue-<n>): …` (salvo `chore(deps)`).

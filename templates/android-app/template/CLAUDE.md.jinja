@@ -41,6 +41,7 @@ Convention plugins en `build-logic/convention`; versiones SOLO en `gradle/libs.v
 - Corrutinas y `Flow`; nada de callbacks. Textos en `strings.xml`, nunca sueltos.
 - Composable con estado = `XRoute` (con `hiltViewModel()`) + `XScreen(state, callbacks)`
   sin ViewModel (se testea con Robolectric). `Modifier` como primer parámetro opcional.
+- **Secretos**: nunca al repo (`.env*`, claves, cuentas de servicio); gitleaks los busca en cada commit (`pre-commit install`) y en el CI, y uno filtrado se rota primero (`SECURITY.md`). Título del MR/PR: `feat(issue-<n>): …` (salvo `chore(deps)`).
 
 ## Agregar una feature
 

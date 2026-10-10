@@ -1,0 +1,14 @@
+# Secretos: nunca al repo. Si uno se commiteó, se rota primero (SECURITY.md).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*-adminsdk-*.json
+service-account*.json
+google-services.json
+GoogleService-Info.plist

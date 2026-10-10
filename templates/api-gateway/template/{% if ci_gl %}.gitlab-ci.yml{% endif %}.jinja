@@ -42,6 +42,12 @@
 {%- endif %}
 # =============================================================================
 
+# >>> base común (se actualiza con copier update; lo propio va fuera del bloque)
+# Base común de dev-plantillas (gitleaks y título del MR): .gitlab/base.gitlab-ci.yml
+include:
+  - local: .gitlab/base.gitlab-ci.yml
+# <<< base común
+
 stages:
   - test
   - image

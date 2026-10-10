@@ -93,6 +93,8 @@ Durante el desarrollo se puede co-desarrollar sin publicar (Go `go work`,
 Python `pip install -e`, TS `npm link`, Gradle `includeBuild`): ver
 `docs/co-desarrollo.md`. Nunca mergear un consumidor apuntando a un checkout local.
 
+**Secretos**: nunca al repo (`.env*`, claves, cuentas de servicio); gitleaks los busca en cada commit (`pre-commit install`) y en el CI, y uno filtrado se rota primero (`SECURITY.md`). Título del MR/PR: `feat(issue-<n>): …` (salvo `chore(deps)`).
+
 ## Comandos
 
 ```bash

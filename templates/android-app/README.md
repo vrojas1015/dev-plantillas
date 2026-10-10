@@ -54,6 +54,8 @@ más larga es de 124 caracteres desde la raíz del repo.
 | `protos_paquete` | `<grupo>.example.v1` | Solo grpc. Paquete Kotlin del `ItemService` generado |
 | `firebase` | `true` | Auth + App Check + FCM + Crashlytics. `false`: sesión de desarrollo con token fijo |
 | `ci_provider` | `gitlab` | `gitlab` o `github` |
+| `dueño` | `@mi-org/movil` | `CODEOWNERS` y `SECURITY.md` (`@usuario` o `@org/equipo`; base común, `docs/10` de dev-plantillas) |
+| `docs_repo` | vacío | URL del repo de docs: la plantilla de MR/PR enlaza la carpeta del issue ahí |
 
 Derivados (no se guardan): `pkg`, `slug`, `rest`, `grpc`, `fb`, `ci_gl`, `ci_gh`.
 Los archivos que dependen de las respuestas tienen nombre normal y se excluyen

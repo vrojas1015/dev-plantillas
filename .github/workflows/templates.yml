@@ -472,3 +472,25 @@ jobs:
           name: android-app-${{ matrix.api }}-${{ matrix.ci }}
           path: ${{ runner.temp }}/app/**/build/reports/
           retention-days: 7
+
+  # Base común (templates/_base, docs/10): cada plantilla tiene que llevarla al
+  # día. Si falla, correr `python scripts/sincronizar-base.py` y commitear.
+  # También prueba el chequeo del título del MR/PR con títulos válidos e inválidos.
+  base-comun:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Plantillas sincronizadas con templates/_base
+        run: python scripts/sincronizar-base.py --comprobar
+      - name: Chequeo del título del MR/PR
+        run: |
+          v=templates/_base/scripts/verificar-titulo.sh
+          for t in 'feat(issue-42): tope de descuento' 'fix(issue-7)!: total sin envío' \
+                   'Draft: docs(issue-3,api): paginación' 'chore(deps): update grpc to v1.75.0'; do
+            sh "$v" "$t"
+          done
+          for t in 'feat: sin issue' 'tope de descuento' 'feat(api): sin issue' 'feature(issue-1): tipo' 'fix(deps): x'; do
+            if sh "$v" "$t" 2>/dev/null; then echo "aceptó un título inválido: $t"; exit 1; fi
+          done

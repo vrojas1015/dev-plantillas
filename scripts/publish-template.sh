@@ -10,6 +10,8 @@ root=$(git rev-parse --show-toplevel)
 src="$root/templates/$name"
 [ -f "$src/copier.yml" ] || { echo "No existe $src/copier.yml"; exit 1; }
 [ -z "$(git -C "$root" status --porcelain -- "templates/$name")" ] || { echo "Hay cambios sin commitear en templates/$name"; exit 1; }
+# La base común (templates/_base) tiene que estar copiada al día en la plantilla.
+"$(command -v python3 || command -v python)" "$root/scripts/sincronizar-base.py" --comprobar "$name"
 
 # subtree split: historial sólo de esa carpeta, con la carpeta como raíz
 branch="publish/$name"

@@ -1,0 +1,29 @@
+{#- Base común: se edita en templates/_base (y la sección propia en pr-propio.md) y se copia con scripts/sincronizar-base.py. -#}
+## Qué cambia
+
+<!-- Una o dos líneas. El título va con el issue: feat(issue-<n>): … (chore(deps) sin issue). -->
+
+{% if docs_repo -%}
+Issue: [issue-N]({{ docs_repo }}/{{ 'tree' if 'github.com' in docs_repo else '-/tree' }}/main/contenido/issues/)  <!-- N y la carpeta del issue (N-…/); obligatorio salvo chore(deps) -->
+{%- else -%}
+Issue: issue-N  <!-- carpeta contenido/issues/N-…/ del repo de docs; obligatorio salvo chore(deps) -->
+{%- endif %}
+
+## Cómo se probó
+
+- [ ] `./gradlew ktlintCheck detekt lint testDebugUnitTest assembleDebug`
+- [ ] Tests nuevos para la lógica nueva (ViewModel, repositorio, caso de uso)
+- [ ] Probado en un dispositivo o emulador (pantallas tocadas)
+- [ ] Sin `google-services.json`, keystores ni tokens en el diff
+- [ ] Migraciones de Room y endpoints pedidos al backend: explicados abajo / no aplica
+
+## Checklist
+
+- [ ] Sin secretos ni datos personales en el diff (gitleaks corre en el CI igual)
+- [ ] Migraciones: tienen `down` / no aplica
+- [ ] Docs del repo actualizadas (README, `docs/`, CLAUDE.md) / no aplica
+- [ ] Ficha o ADR en el repo de docs actualizados / no aplica
+
+## Notas para el review
+
+<!-- Decisiones, deuda que queda, {{ 'MR' if ci_provider == 'gitlab' else 'PR' }} relacionados en otros repos. -->

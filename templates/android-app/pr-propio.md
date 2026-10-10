@@ -1,0 +1,5 @@
+- [ ] `./gradlew ktlintCheck detekt lint testDebugUnitTest assembleDebug`
+- [ ] Tests nuevos para la lógica nueva (ViewModel, repositorio, caso de uso)
+- [ ] Probado en un dispositivo o emulador (pantallas tocadas)
+- [ ] Sin `google-services.json`, keystores ni tokens en el diff
+- [ ] Migraciones de Room y endpoints pedidos al backend: explicados abajo / no aplica

@@ -1,0 +1,3 @@
+# Base común de dev-plantillas (gitleaks y título del MR): .gitlab/base.gitlab-ci.yml
+include:
+  - local: .gitlab/base.gitlab-ci.yml

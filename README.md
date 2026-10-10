@@ -9,6 +9,7 @@ Estado y prioridades: [`ROADMAP.md`](ROADMAP.md).
 
 | Ruta | Qué es |
 |---|---|
+| `templates/_base/` | Base común de todas las plantillas (gitleaks, `.gitignore` de secretos, `SECURITY.md`, `CODEOWNERS`, plantilla de MR/PR, CI de secretos y del título); no es una plantilla: la copia `scripts/sincronizar-base.py` |
 | `templates/go-grpc-service/` | Plantilla Copier: microservicio Go gRPC hexagonal + Postgres + Cloud Run |
 | `templates/protos/` | Plantilla Copier: repo de contratos gRPC con buf; código para Go, Python, TS/JS, Java, Kotlin y Swift |
 | `templates/api-gateway/` | Plantilla Copier: API gateway REST→gRPC (grpc-gateway) con auth, autorización por ruta, rate limit y límites |
@@ -21,6 +22,7 @@ Estado y prioridades: [`ROADMAP.md`](ROADMAP.md).
 | `workspace/` | `CLAUDE.md` en capas (plataforma, backend, frontend) y lista de repos |
 | `scripts/bootstrap.ps1` | Arma `C:\dev\<org>` en una máquina nueva |
 | `scripts/new-worktree.ps1` | Crea los worktrees de un issue |
+| `scripts/sincronizar-base.py` | Copia `templates/_base` a cada plantilla; `--comprobar` falla si alguna quedó desactualizada (lo corre el CI) |
 | `scripts/publish-template.sh` | Publica una plantilla en su propio repo con tag |
 | `docs/01-estructura-de-carpetas.md` | Layout local del equipo |
 | `docs/02-repositorios-gitlab-github.md` | Organización, nombres, protección y CI en GitLab/GitHub |
@@ -62,7 +64,10 @@ cd C:\dev\<org>\backend\agenda-service; python -m copier update
 
 ## Cambiar una plantilla
 
-1. Rama en este repo, cambio en `templates/<nombre>/`.
+1. Rama en este repo, cambio en `templates/<nombre>/`. Lo común a todas
+   (seguridad, plantilla de MR/PR, CI de secretos) se cambia en
+   `templates/_base/` y se copia con `python scripts/sincronizar-base.py`
+   (`docs/10` §11).
 2. Generar un proyecto de prueba y verificar (build + tests); cada plantilla
    documenta cómo en su `README.md`.
 3. MR. Al mergear: `scripts/publish-template.sh <nombre> vX.Y.Z <remote>`.

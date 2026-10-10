@@ -30,7 +30,8 @@ Leyenda: ✅ publicada · 🔨 en construcción · 📐 especificada · 💭 ide
 |---|---|---|
 | Plugin `dev-agentes`: `/verificar`, hooks `guard-worktree` y `format` | ✅ | `plugins/dev-agentes` |
 | Destinos de deploy Google / Coolify y migración entre ellos | ✅ | `docs/04` |
-| Base común de repos (seguridad, Renovate, releases, conexión con docs) | 📐 | `docs/10` |
+| Base común de repos, fase 1 (`templates/_base`: gitleaks, `.gitignore` de secretos, `SECURITY.md`, `CODEOWNERS`, plantilla de MR/PR, título del MR/PR) | 🔨 | `docs/10` §11 |
+| Base común de repos, fases 2–5 (manifiesto, Renovate, release-please, protección) | 📐 | `docs/10` |
 | Repo `ci` de pipelines reutilizables | 📐 | `docs/11` |
 | Pruebas en el flujo (estándar) | 📐 | `docs/12` |
 | Observabilidad | 📐 | `docs/14` |
@@ -40,9 +41,11 @@ Leyenda: ✅ publicada · 🔨 en construcción · 📐 especificada · 💭 ide
 
 1. **Terminar lo que está en construcción:** `astro-site`, `android-app`,
    `e2e-tests`; publicarlas y sumarlas al catálogo.
-2. **Base común, fase 1** sobre todas las plantillas: gitleaks (pre-commit + CI),
-   `.gitignore` de secretos, `SECURITY.md`, `CODEOWNERS`, plantilla de MR/PR
-   común, chequeo del título del PR. — `docs/10` §9
+2. **Base común, fase 1** sobre todas las plantillas: construida en
+   `templates/_base` + `scripts/sincronizar-base.py` (gitleaks en pre-commit y
+   CI, `.gitignore` de secretos, `SECURITY.md`, `CODEOWNERS`, plantilla de MR/PR
+   común, chequeo del título); falta publicar una versión nueva de cada
+   plantilla. — `docs/10` §11
 3. **CLI `dp` H1–H2** (`list` y `new`): a partir de acá `dp` reemplaza los
    comandos largos de Copier. — `docs/08` §9
 4. **Observabilidad, fase 1:** trazas + logs correlacionados en `go-grpc-service`

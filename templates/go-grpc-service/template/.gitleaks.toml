@@ -1,0 +1,18 @@
+# Configuración de gitleaks (base común de dev-plantillas: no editar acá, se
+# actualiza con `copier update`). Usa las reglas por defecto de gitleaks.
+#
+# Falsos positivos puntuales: agregar el fingerprint del hallazgo a
+# .gitleaksignore (un archivo propio del repo), explicando por qué en el MR/PR.
+# Un secreto real no se ignora: se rota (SECURITY.md).
+title = "gitleaks (base común)"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Archivos de lock y sumas de dependencias (hashes, no secretos)"
+paths = [
+  '''(^|/)go\.sum$''',
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)gradle/verification-metadata\.xml$''',
+]

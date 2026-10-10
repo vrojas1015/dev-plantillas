@@ -57,6 +57,7 @@ padre; acá sólo lo propio.
 - Una entidad inexistente devuelve **404 real**; los resultados iniciales del buscador
   van en el HTML (la isla toma el control después).
 {%- endif %}
+- **Secretos**: nunca al repo (`.env*`, claves, cuentas de servicio); gitleaks los busca en cada commit (`pre-commit install`) y en el CI, y uno filtrado se rota primero (`SECURITY.md`). Título del MR/PR: `feat(issue-<n>): …` (salvo `chore(deps)`).
 
 ## Comandos
 

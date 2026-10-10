@@ -1,0 +1,35 @@
+# Hooks de pre-commit (base común de dev-plantillas: no editar acá, se actualiza
+# con `copier update`). Activarlos en un clon:
+#   pip install pre-commit   # una vez por máquina
+#   pre-commit install       # una vez por clon
+# Correrlos sobre todo el repo: pre-commit run --all-files
+#
+# gitleaks corre también en el CI sobre todo el diff del MR/PR: saltear el hook
+# (--no-verify) no evita que el CI falle.
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      # Revisa todo lo que está en stage, también el código generado.
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-yaml
+        # --unsafe: sólo sintaxis (admite etiquetas como !reference de GitLab).
+        args: [--allow-multiple-documents, --unsafe]
+      - id: check-json
+        # JSON con comentarios (tsconfig, VS Code) no es JSON estricto.
+        exclude: '(^|/)(tsconfig[^/]*|\.vscode/[^/]*|devcontainer)\.json$'
+      # Formato de texto: no se aplica al código generado (gen/, _generado/,
+      # esquemas que exporta Room) ni a los locks.
+      - id: end-of-file-fixer
+        exclude: &generados '(^|/)(gen|_generado)/|(^|/)schemas/.+/[0-9]+\.json$|(^|/)package-lock\.json$|\.min\.(js|css)$'
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+        exclude: *generados

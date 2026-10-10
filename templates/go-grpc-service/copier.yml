@@ -193,3 +193,28 @@ ci_gh:
   type: bool
   default: "{{ ci_provider == 'github' }}"
   when: false
+
+# >>> base común: preguntas comunes (templates/_base/copier-preguntas.yml; las copia scripts/sincronizar-base.py, no editar acá)
+dueño:
+  type: str
+  help: >-
+    Dueño del repo para CODEOWNERS: @usuario o @grupo/equipo de GitLab/GitHub
+    (revisa por defecto todos los MR/PR; se refina por carpeta en CODEOWNERS)
+  default: "@{{ module_path.split('/')[1] }}/backend"
+  validator: >-
+    {% if not (dueño | regex_search('^@[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)*$')) %}
+    Formato @usuario o @org/equipo (ej. @mi-org/backend).
+    {% endif %}
+
+docs_repo:
+  type: str
+  help: >-
+    URL del repo de documentación (plantilla docs), sin barra final, ej.
+    https://gitlab.com/mi-org/docs. La plantilla de MR/PR enlaza el issue ahí.
+    Vacío si no hay
+  default: ""
+  validator: >-
+    {% if docs_repo and not (docs_repo | regex_search('^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~-]+)+$')) %}
+    URL https del repo, sin barra final (ej. https://gitlab.com/mi-org/docs), o vacío.
+    {% endif %}
+# <<< base común

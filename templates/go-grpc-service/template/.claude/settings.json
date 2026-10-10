@@ -38,11 +38,21 @@
       "Bash(git ls-files:*)",
       "Bash(git blame:*)",
       "Bash(ls:*)",
-      "Bash(grpcurl -plaintext localhost:*)"
+      "Bash(grpcurl -plaintext localhost:*)",
+      "Bash(pre-commit run:*)",
+      "Bash(gitleaks git:*)",
+      "Bash(gitleaks dir:*)",
+      "Bash(sh scripts/verificar-titulo.sh:*)"
     ],
     "deny": [
       "Read(./.env)",
-      "Read(./.env.dev)"
+      "Read(./.env.dev)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/*.p12)",
+      "Read(./**/*.jks)",
+      "Read(./**/*.keystore)",
+      "Read(./**/*-adminsdk-*.json)"
     ]
   }
 }

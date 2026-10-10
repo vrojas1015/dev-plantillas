@@ -102,6 +102,8 @@ cp .env.example .env.dev && make up      # postgres:16 + servicio en Docker, esp
 | `service_name` | — | Nombre corto sin `-service` (`agenda` → `agenda-service`). Minúsculas/dígitos/guiones, máx. 19 (límite de 30 del service account `<nombre>-service-sa`) |
 | `service_description` | `TODO…` | Primera sección de `CLAUDE.md` |
 | `ci_provider` | `gitlab` | `gitlab` → `.gitlab-ci.yml`; `github` → `.github/workflows/ci.yml` + `deploy.yml` |
+| `dueño` | `@<org del module_path>/backend` | `CODEOWNERS` y `SECURITY.md` (`@usuario` o `@org/equipo`; base común, `docs/10` de dev-plantillas) |
+| `docs_repo` | vacío | URL del repo de docs: la plantilla de MR/PR enlaza la carpeta del issue ahí |
 | `module_path` | `<gitlab.com\|github.com>/mi-org/<service>-service` | `module` de `go.mod` e imports |
 | `grpc_port` | `5000` | `GRPC_PORT`, Dockerfile, compose, probes de Cloud Run |
 | `db_schema` | `service_name` con `_` | Schema Postgres, `TableName()`, migraciones, usuario `<schema>_user` |

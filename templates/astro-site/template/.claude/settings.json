@@ -20,7 +20,11 @@
       "Bash(git show:*)",
       "Bash(git blame:*)",
       "Bash(git branch --list:*)",
-      "Bash(git branch --show-current)"
+      "Bash(git branch --show-current)",
+      "Bash(pre-commit run:*)",
+      "Bash(gitleaks git:*)",
+      "Bash(gitleaks dir:*)",
+      "Bash(sh scripts/verificar-titulo.sh:*)"
     ],
     "deny": [
       "Read(./.env)",
@@ -31,7 +35,13 @@
       "Bash(gcloud run services replace:*)",
       "Bash(gcloud builds submit:*)",
       "Bash(git push:*)",
-      "Bash(docker push:*)"
+      "Bash(docker push:*)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/*.p12)",
+      "Read(./**/*.jks)",
+      "Read(./**/*.keystore)",
+      "Read(./**/*-adminsdk-*.json)"
     ]
   }
 }

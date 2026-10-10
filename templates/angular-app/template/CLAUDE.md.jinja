@@ -44,6 +44,7 @@ Otros: `src/environments` (dev/qa/prod), `src/styles` (base global), `src/types`
 - **Nombres**: archivos kebab-case sin sufijo (`item-list.ts`, clase `ItemList`); prefijo `app-` en
   features/layout y `ui-` en `ui/`.
 - **Imports** absolutos con `@/` (`@/app/api`, `@/environments/environment`).
+- **Secretos**: nunca al repo (`.env*`, claves, cuentas de servicio); gitleaks los busca en cada commit (`pre-commit install`) y en el CI, y uno filtrado se rota primero (`SECURITY.md`). Título del MR/PR: `feat(issue-<n>): …` (salvo `chore(deps)`).
 {%- if i18n %}
 - **Textos de UI** siempre con `translate`; nunca strings sueltos en templates.
 {%- endif %}
