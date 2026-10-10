@@ -1,0 +1,19 @@
+# Lo que NO entra al contexto del docker build (más rápido y sin secretos).
+.git
+.gitlab
+.github
+.astro
+.vscode
+.idea
+.claude
+.lighthouseci
+.firebase
+node_modules
+dist
+docs
+*.md
+.env
+.env.*
+Dockerfile
+docker-compose.yml
+.dockerignore

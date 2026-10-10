@@ -1,0 +1,177 @@
+{
+  "categorias": [
+    { "slug": "iluminacion", "nombre": { "es": "Iluminación", "en": "Lighting" } },
+    { "slug": "muebles", "nombre": { "es": "Muebles", "en": "Furniture" } },
+    { "slug": "textiles", "nombre": { "es": "Textiles", "en": "Textiles" } }
+  ],
+  "productos": [
+    {
+      "slug": "lampara-de-escritorio-nordica",
+      "nombre": { "es": "Lámpara de escritorio Nórdica", "en": "Nordic desk lamp" },
+      "descripcion": {
+        "es": "Lámpara de escritorio de roble con brazo articulado y luz cálida regulable, pensada para leer y trabajar sin cansar la vista.",
+        "en": "Oak desk lamp with an articulated arm and dimmable warm light, designed for reading and working without eye strain."
+      },
+      "categoria": "iluminacion",
+      "precio": 89,
+      "moneda": "EUR",
+      "actualizado": "2026-09-14T10:00:00Z"
+    },
+    {
+      "slug": "lampara-colgante-esfera",
+      "nombre": { "es": "Lámpara colgante Esfera", "en": "Sphere pendant lamp" },
+      "descripcion": {
+        "es": "Colgante de vidrio opalino que reparte la luz de forma pareja sobre la mesa del comedor; incluye florón y cable textil de dos metros.",
+        "en": "Opal glass pendant that spreads light evenly over the dining table; includes a ceiling rose and a two-metre fabric cable."
+      },
+      "categoria": "iluminacion",
+      "precio": 129,
+      "moneda": "EUR",
+      "actualizado": "2026-08-30T09:30:00Z"
+    },
+    {
+      "slug": "aplique-de-pared-arco",
+      "nombre": { "es": "Aplique de pared Arco", "en": "Arc wall light" },
+      "descripcion": {
+        "es": "Aplique de latón con pantalla orientable, ideal para pasillos y mesas de luz donde no hay espacio para una lámpara de pie.",
+        "en": "Brass wall light with an adjustable shade, ideal for hallways and bedsides where there is no room for a floor lamp."
+      },
+      "categoria": "iluminacion",
+      "precio": 74,
+      "moneda": "EUR",
+      "actualizado": "2026-07-21T15:00:00Z"
+    },
+    {
+      "slug": "lampara-de-pie-tripode",
+      "nombre": { "es": "Lámpara de pie Trípode", "en": "Tripod floor lamp" },
+      "descripcion": {
+        "es": "Lámpara de pie con patas de fresno y pantalla de lino; da una luz indirecta y suave para el rincón de lectura del living.",
+        "en": "Floor lamp with ash legs and a linen shade; gives soft, indirect light for the reading corner of the living room."
+      },
+      "categoria": "iluminacion",
+      "precio": 159,
+      "moneda": "EUR",
+      "actualizado": "2026-09-02T11:15:00Z"
+    },
+    {
+      "slug": "silla-apilable-taller",
+      "nombre": { "es": "Silla apilable Taller", "en": "Workshop stacking chair" },
+      "descripcion": {
+        "es": "Silla de acero pintado con asiento de contrachapado, apilable de a seis y resistente al uso intensivo de bares y oficinas.",
+        "en": "Painted steel chair with a plywood seat, stackable in sixes and tough enough for heavy use in cafés and offices."
+      },
+      "categoria": "muebles",
+      "precio": 65,
+      "moneda": "EUR",
+      "actualizado": "2026-06-11T08:00:00Z"
+    },
+    {
+      "slug": "mesa-extensible-roble",
+      "nombre": { "es": "Mesa extensible de roble", "en": "Extendable oak table" },
+      "descripcion": {
+        "es": "Mesa de comedor de roble macizo que pasa de seis a diez comensales con dos alas guardadas debajo del tablero.",
+        "en": "Solid oak dining table that seats six to ten people thanks to two leaves stored underneath the top."
+      },
+      "categoria": "muebles",
+      "precio": 890,
+      "moneda": "EUR",
+      "actualizado": "2026-09-20T12:00:00Z"
+    },
+    {
+      "slug": "estanteria-modular-grilla",
+      "nombre": { "es": "Estantería modular Grilla", "en": "Grid modular shelving" },
+      "descripcion": {
+        "es": "Estantería de módulos encastrables sin tornillos: se arma en minutos y crece hacia los costados o hacia arriba.",
+        "en": "Shelving made of interlocking modules with no screws: it goes together in minutes and grows sideways or upwards."
+      },
+      "categoria": "muebles",
+      "precio": 240,
+      "moneda": "EUR",
+      "actualizado": "2026-05-28T17:45:00Z"
+    },
+    {
+      "slug": "banqueta-alta-barra",
+      "nombre": { "es": "Banqueta alta Barra", "en": "Bar high stool" },
+      "descripcion": {
+        "es": "Banqueta de madera curvada con apoyapiés de metal, a la altura justa para islas de cocina y barras de 90 centímetros.",
+        "en": "Bent wood stool with a metal footrest, at the right height for kitchen islands and 90-centimetre counters."
+      },
+      "categoria": "muebles",
+      "precio": 98,
+      "moneda": "EUR",
+      "actualizado": "2026-08-05T10:10:00Z"
+    },
+    {
+      "slug": "escritorio-plegable-atelier",
+      "nombre": { "es": "Escritorio plegable Atelier", "en": "Atelier folding desk" },
+      "descripcion": {
+        "es": "Escritorio de pared que se pliega y queda en doce centímetros de profundidad; tiene un estante interno para la notebook.",
+        "en": "Wall-mounted desk that folds down to twelve centimetres deep; it has an inner shelf to keep the laptop."
+      },
+      "categoria": "muebles",
+      "precio": 210,
+      "moneda": "EUR",
+      "actualizado": "2026-07-03T14:20:00Z"
+    },
+    {
+      "slug": "manta-de-lana-merino",
+      "nombre": { "es": "Manta de lana merino", "en": "Merino wool throw" },
+      "descripcion": {
+        "es": "Manta tejida en lana merino de origen certificado, liviana pero abrigada, con terminación de flecos cortos.",
+        "en": "Throw woven from certified merino wool, light yet warm, finished with short fringes on both ends."
+      },
+      "categoria": "textiles",
+      "precio": 119,
+      "moneda": "EUR",
+      "actualizado": "2026-09-25T09:00:00Z"
+    },
+    {
+      "slug": "almohadon-de-lino-lavado",
+      "nombre": { "es": "Almohadón de lino lavado", "en": "Washed linen cushion" },
+      "descripcion": {
+        "es": "Funda de lino lavado a la piedra con relleno de pluma reciclada; el cierre oculto permite sacarla para lavar.",
+        "en": "Stone-washed linen cover with a recycled feather filling; the hidden zip lets you take it off for washing."
+      },
+      "categoria": "textiles",
+      "precio": 39,
+      "moneda": "EUR",
+      "actualizado": "2026-08-18T16:30:00Z"
+    },
+    {
+      "slug": "alfombra-de-yute-trenzado",
+      "nombre": { "es": "Alfombra de yute trenzado", "en": "Braided jute rug" },
+      "descripcion": {
+        "es": "Alfombra redonda de yute trenzado a mano, resistente al tránsito y fácil de aspirar; viene en tres diámetros.",
+        "en": "Round rug made of hand-braided jute, hard-wearing in busy areas and easy to vacuum; available in three sizes."
+      },
+      "categoria": "textiles",
+      "precio": 145,
+      "moneda": "EUR",
+      "actualizado": "2026-06-29T13:00:00Z"
+    },
+    {
+      "slug": "cortina-de-algodon-organico",
+      "nombre": { "es": "Cortina de algodón orgánico", "en": "Organic cotton curtain" },
+      "descripcion": {
+        "es": "Cortina de algodón orgánico que filtra la luz sin oscurecer el ambiente; se cuelga con presillas ocultas en el barral.",
+        "en": "Organic cotton curtain that filters light without darkening the room; it hangs from tabs hidden on the rod."
+      },
+      "categoria": "textiles",
+      "precio": 69,
+      "moneda": "EUR",
+      "actualizado": "2026-09-08T10:45:00Z"
+    },
+    {
+      "slug": "camino-de-mesa-telar",
+      "nombre": { "es": "Camino de mesa Telar", "en": "Loom table runner" },
+      "descripcion": {
+        "es": "Camino de mesa tejido en telar artesanal con algodón y lino, en tonos tierra que combinan con madera clara.",
+        "en": "Table runner woven on a craft loom with cotton and linen, in earthy tones that go well with light wood."
+      },
+      "categoria": "textiles",
+      "precio": 45,
+      "moneda": "EUR",
+      "actualizado": "2026-07-15T18:00:00Z"
+    }
+  ]
+}

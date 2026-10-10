@@ -1,0 +1,60 @@
+{
+  "name": "{{ repo_name }}",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.4.2",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "check": "astro check",
+    "build": "astro check && astro build",
+    "preview": "{{ 'npm run start' if hib else 'astro preview' }}",{% if hib %}
+    "start": "node servidor.mjs 4321",{% endif %}
+    "test:seo": "node scripts/verificar-seo.mjs",
+    "test:jsonld": "node scripts/verificar-jsonld.mjs",
+    "test:redirecciones": "node scripts/verificar-redirecciones.mjs",
+    "lighthouse": "lhci autorun",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "prettier --check . && eslint .",
+    "verificar": "npm run lint && npm run build && npm run test:seo && npm run test:jsonld"{% if d_fb %},
+    "redirecciones:firebase": "node scripts/redirecciones.mjs firebase"{% endif %}{% if d_cy and not hib %},
+    "redirecciones:caddy": "node scripts/redirecciones.mjs caddy"{% endif %}
+  },
+  "dependencies": {
+{%- if blog %}
+    "@astrojs/mdx": "8.0.3",
+{%- endif %}
+{%- if hib %}
+    "@astrojs/node": "11.1.7",
+{%- endif %}
+    "@astrojs/react": "7.0.1",
+{%- if blog %}
+    "@astrojs/rss": "4.0.19",
+{%- endif %}
+    "@astrojs/sitemap": "3.7.4",
+    "astro": "7.3.8",
+{%- if hib %}
+    "compression": "1.8.2",
+{%- endif %}
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "@lhci/cli": "0.15.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "eslint": "10.12.0",
+    "eslint-plugin-astro": "3.2.1",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "prettier": "3.9.9",
+    "prettier-plugin-astro": "1.1.1",
+    "schema-dts": "2.1.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1"
+  }
+}

@@ -1,0 +1,69 @@
+---
+// Página pública de una entidad del backend (SEO programático). Contenido
+// único por entidad: nombre, descripción propia y datos; nada de plantillas
+// vacías con el nombre cambiado (Google las trata como contenido escaso).
+import type { Product } from 'schema-dts'
+
+import Migas from '@/components/Migas.astro'
+import { t } from '@/i18n/textos'
+import Base from '@/layouts/Base.astro'
+import type { Producto } from '@/lib/api'
+import { idiomas, ruta, type Idioma } from '@/lib/i18n'
+import { descripcionMeta, migas, urlAbsoluta } from '@/lib/seo'
+
+interface Props {
+  idioma: Idioma
+  producto: Producto
+}
+
+const { idioma, producto } = Astro.props
+const camino = ruta(idioma, `/catalogo/${producto.slug}/`)
+const precio = new Intl.NumberFormat(idioma, { style: 'currency', currency: producto.moneda })
+const items = [
+  { nombre: t(idioma, 'nav.inicio'), camino: ruta(idioma, '/') },
+  { nombre: t(idioma, 'catalogo.titulo'), camino: ruta(idioma, '/catalogo/') },
+  { nombre: producto.nombre, camino },
+]
+
+// Tipo de schema.org de la entidad: Product en el ejemplo. Para otra entidad,
+// el tipo que corresponda (School, LocalBusiness, Event...).
+const datos: Product = {
+  '@type': 'Product',
+  name: producto.nombre,
+  description: producto.descripcion,
+  sku: producto.slug,
+  category: producto.categoria.nombre,
+  url: urlAbsoluta(camino),
+  offers: {
+    '@type': 'Offer',
+    price: producto.precio,
+    priceCurrency: producto.moneda,
+    availability: 'https://schema.org/InStock',
+    url: urlAbsoluta(camino),
+  },
+}
+---
+
+<Base
+  titulo={producto.nombre}
+  descripcion={descripcionMeta(producto.descripcion)}
+  camino={camino}
+  idioma={idioma}
+  alternativas={idiomas.map((i) => ({ idioma: i, camino: ruta(i, `/catalogo/${producto.slug}/`) }))}
+  jsonLd={[datos, migas(items)]}
+>
+  <article class="contenedor prosa">
+    <Migas items={items} />
+    <h1>{producto.nombre}</h1>
+    <p>{producto.descripcion}</p>
+    <dl>
+      <dt>{t(idioma, 'catalogo.categoria')}</dt>
+      <dd>{producto.categoria.nombre}</dd>
+      <dt>{t(idioma, 'catalogo.precio')}</dt>
+      <dd>{precio.format(producto.precio)}</dd>
+    </dl>
+    <p>
+      <a href={ruta(idioma, '/catalogo/')}>{t(idioma, 'catalogo.volver')}</a>
+    </p>
+  </article>
+</Base>

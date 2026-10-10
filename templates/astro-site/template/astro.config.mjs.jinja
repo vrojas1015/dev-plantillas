@@ -1,0 +1,130 @@
+// @ts-check
+import { defineConfig, envField } from 'astro/config'
+{%- if blog %}
+import mdx from '@astrojs/mdx'
+{%- endif %}
+{%- if hib %}
+import node from '@astrojs/node'
+{%- endif %}
+import react from '@astrojs/react'
+import sitemap from '@astrojs/sitemap'
+{%- if ent %}
+import { loadEnv } from 'vite'
+{%- endif %}
+
+import redirecciones from './redirects.json' with { type: 'json' }
+import { sitio } from './sitio.config.mjs'
+import { fechasDelSitemap{% if ent and hib %}, rutasDeEntidades{% endif %} } from './src/lib/sitemap-fechas.ts'
+
+{%- if ent %}
+
+// Las variables de .env no están en process.env cuando se evalúa este archivo.
+const env = { ...loadEnv(process.env.NODE_ENV ?? 'production', process.cwd(), ''), ...process.env }
+/** @type {import('./src/lib/api/catalogo.ts').OpcionesCatalogo} */
+const api = {
+  fuente: env.PUBLIC_API_FUENTE === 'mock' ? 'mock' : 'api',
+  baseUrl: env.PUBLIC_API_BASE_URL || '{{ api_base_url }}',
+}
+{%- endif %}
+
+// lastmod del sitemap: se calcula al cargar la config (cuando se escribe el
+// sitemap, Vite ya no puede cargar módulos). Con la API caída sólo avisa.
+const fechas = await fechasDelSitemap({% if ent %}api{% endif %})
+
+// https://docs.astro.build/en/reference/configuration-reference/
+export default defineConfig({
+  site: sitio.url,
+  // Una sola política de URLs: siempre con barra final. La otra forma redirige
+  // (Caddy / Firebase / el server de Node) y las canónicas siempre llevan barra.
+  trailingSlash: 'always',
+  build: { format: 'directory' },
+{%- if hib %}
+
+  // Híbrido: todo se prerenderiza salvo las rutas con `export const prerender = false`.
+  adapter: node({ mode: 'standalone' }),
+{%- endif %}
+
+  // Redirecciones 301 en UN solo lugar: redirects.json. Astro las aplica en dev{% if hib %}
+  // y en el server de Node{% endif %}; para el hosting estático, scripts/redirecciones.mjs las
+  // exporta a Caddy / Firebase. El CI compara contra el sitemap de prod (docs/seo.md).
+  redirects: redirecciones,
+{%- if i18n %}
+
+  i18n: {
+    locales: [...sitio.idiomas],
+    defaultLocale: sitio.idiomaDefault,
+    // /<ruta> para el idioma default, /<idioma>/<ruta> para el resto.
+    routing: { prefixDefaultLocale: false },
+  },
+{%- endif %}
+
+  integrations: [
+    react(),
+{%- if blog %}
+    mdx(),
+{%- endif %}
+    sitemap({
+      // El 404 y las páginas de redirección no van al sitemap.
+      filter: (pagina) => !pagina.includes('/404'),
+{%- if i18n %}
+      // Agrega <xhtml:link rel="alternate" hreflang> entre las versiones de cada página.
+      i18n: {
+        defaultLocale: sitio.idiomaDefault,
+        locales: Object.fromEntries(sitio.idiomas.map((i) => [i, i])),
+      },
+{%- endif %}
+{%- if ent and hib %}
+      // Las entidades son SSR: no salen del build, se agregan desde la misma lista de la API.
+      customPages: await rutasDeEntidades(api),
+{%- endif %}
+      // lastmod real: fecha de actualización del post / de la entidad (no la del build).
+      serialize: (item) => {
+        const fecha = fechas.get(new URL(item.url).pathname)
+        return fecha ? { ...item, lastmod: fecha.toISOString() } : item
+      },
+    }),
+  ],
+
+  // Variables de entorno tipadas (astro:env). Las `client` se hornean en el build.
+  env: {
+    schema: {
+      // prod indexa; qa y dev llevan noindex y robots.txt cerrado. Default seguro: dev.
+      PUBLIC_ENTORNO: envField.enum({
+        context: 'client',
+        access: 'public',
+        values: ['prod', 'qa', 'dev'],
+        default: 'dev',
+      }),
+{%- if ent %}
+      // api: el gateway real. mock: src/lib/api/fixtures/catalogo.json (dev y CI).
+      PUBLIC_API_FUENTE: envField.enum({
+        context: 'client',
+        access: 'public',
+        values: ['api', 'mock'],
+        default: 'api',
+      }),
+      PUBLIC_API_BASE_URL: envField.string({
+        context: 'client',
+        access: 'public',
+        default: '{{ api_base_url }}',
+      }),
+{%- endif %}
+{%- if analytics == 'ga4' %}
+      // ID de medición de GA4 (G-XXXXXXX). Vacío = sin analítica. Sólo se carga en prod.
+      PUBLIC_GA4_ID: envField.string({ context: 'client', access: 'public', optional: true }),
+{%- elif analytics == 'plausible' %}
+      // Dominio registrado en Plausible. Vacío = sin analítica. Sólo se carga en prod.
+      PUBLIC_PLAUSIBLE_DOMAIN: envField.string({
+        context: 'client',
+        access: 'public',
+        default: new URL(sitio.url).host,
+      }),
+      PUBLIC_PLAUSIBLE_SRC: envField.string({
+        context: 'client',
+        access: 'public',
+        default: 'https://plausible.io/js/script.js',
+      }),
+{%- endif %}
+    },
+  },
+})

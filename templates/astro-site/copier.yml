@@ -1,0 +1,236 @@
+# Plantilla Copier: sitio público Astro (SSG + islas de React) con SEO técnico,
+# Core Web Vitals y Lighthouse CI. Especificación: docs/07-frontend-y-seo.md.
+# Ver README.md (al lado de este archivo) para cómo generar y actualizar.
+
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_templates_suffix: .jinja
+_answers_file: .copier-answers.yml
+
+_message_after_copy: |
+  Sitio {{ site_name }} generado.
+
+  Siguientes pasos:
+    cd {{ _copier_conf.dst_path }}
+    git init -b main   (si todavía no es un repo)
+    npm install        (genera package-lock.json: commitealo, el CI usa `npm ci`)
+    cp .env.example .env
+    npm run dev        → http://localhost:4321
+    npm run verificar  (build + test de SEO + JSON-LD)
+
+  Checklist completo: README.md de la plantilla, sección "Después de generar".
+
+# ------------------------------------------------------------------
+# Identidad del sitio
+# ------------------------------------------------------------------
+site_name:
+  type: str
+  help: Nombre visible del sitio (va en cada <title> como «Página · Sitio»)
+  default: Mi sitio
+  validator: >-
+    {% if site_name | length > 30 %}
+    Máximo 30 caracteres: el sufijo « · {{ site_name }}» tiene que dejar lugar en un título de 60.
+    {% endif %}
+
+repo_name:
+  type: str
+  help: Nombre técnico (kebab-case) = nombre del repo, del paquete npm y de la imagen
+  default: sitio-web
+  validator: >-
+    {% if not (repo_name | regex_search('^[a-z][a-z0-9]*(-[a-z0-9]+)*$')) %}
+    Debe ser kebab-case: minúsculas, números y guiones (ej. sitio-web).
+    {% endif %}
+
+site_url:
+  type: str
+  help: URL pública de producción, sin barra final. Base de canonical, Open Graph y sitemap
+  default: https://www.ejemplo.com
+  validator: >-
+    {% if not (site_url | regex_search('^https://[a-z0-9.-]+\.[a-z]{2,}$')) %}
+    Usá https://dominio.tld en minúsculas, sin barra ni ruta final.
+    {% endif %}
+
+idiomas:
+  type: yaml
+  help: Idiomas (ISO 639-1), el primero es el default. Más de uno activa i18n + hreflang. Ej. [es, en]
+  default: "[es]"
+  validator: >-
+    {% if idiomas is string or idiomas is mapping or (idiomas | length) == 0 %}
+    Tiene que ser una lista no vacía, ej. [es] o [es, en].
+    {% else %}{% for i in idiomas %}{% if not ((i | string) | regex_search('^[a-z]{2}$')) %}
+    «{{ i }}» no es un código de dos letras en minúsculas.
+    {% endif %}{% endfor %}{% if (idiomas | unique | list | length) != (idiomas | length) %}
+    Hay idiomas repetidos.
+    {% endif %}{% endif %}
+
+# ------------------------------------------------------------------
+# Contenido
+# ------------------------------------------------------------------
+blog:
+  type: bool
+  help: ¿Blog (colección Markdown/MDX con esquema, RSS, BlogPosting)?
+  default: true
+
+entidades_api:
+  type: bool
+  help: ¿Páginas de entidades desde la API (catálogo de ejemplo + buscador en isla de React)?
+  default: true
+
+api_base_url:
+  type: str
+  help: URL base del api-gateway de producción (en dev y CI se usa un fixture local)
+  default: https://api.ejemplo.com
+  when: "{{ entidades_api }}"
+  validator: >-
+    {% if not (api_base_url | regex_search('^https?://[^/\s]+$')) %}
+    Usá http(s)://host, sin barra ni ruta final.
+    {% endif %}
+
+render:
+  type: str
+  help: ¿Todo estático o con rutas SSR?
+  choices:
+    "Estático (SSG): todo se genera en el build": estatico
+    "Híbrido: SSG + rutas SSR con el adapter de Node (las entidades se renderizan por request)": hibrido
+  default: estatico
+  validator: >-
+    {% if render == 'hibrido' and not entidades_api %}
+    hibrido necesita entidades_api: la ruta SSR de ejemplo es la página de entidad.
+    {% endif %}
+
+analytics:
+  type: str
+  help: Analítica
+  choices:
+    "GA4 con Consent Mode v2 y banner propio (sin cookies hasta aceptar)": ga4
+    "Plausible (sin cookies, sin banner)": plausible
+    "Ninguna": ninguna
+  default: ninguna
+
+# ------------------------------------------------------------------
+# Deploy y CI
+# ------------------------------------------------------------------
+deploy_target:
+  type: str
+  help: ¿Dónde se despliega?
+  choices:
+    "Firebase Hosting (con híbrido: SSR en Cloud Run detrás de Hosting)": firebase-hosting
+    "Coolify v4 en un VPS propio (Caddy; con híbrido, Node en el mismo contenedor)": coolify
+    "Cloud Run (sólo con render híbrido)": cloud-run
+    "Ninguno (sólo CI de verificación)": ninguno
+  default: firebase-hosting
+  validator: >-
+    {% if deploy_target == 'cloud-run' and render != 'hibrido' %}
+    cloud-run sólo tiene sentido con render: hibrido (un sitio estático va a Firebase Hosting o Coolify).
+    {% endif %}
+
+gcp_project_qa:
+  type: str
+  help: ID del proyecto GCP/Firebase de QA (no el número)
+  default: "{{ repo_name }}-qa"
+  when: "{{ deploy_target in ['firebase-hosting', 'cloud-run'] }}"
+  validator: >-
+    {% if not (gcp_project_qa | regex_search('^[a-z][a-z0-9-]{4,28}[a-z0-9]$')) %}
+    ID de proyecto GCP inválido (6-30 caracteres, minúsculas, números y guiones).
+    {% endif %}
+
+gcp_project_prod:
+  type: str
+  help: ID del proyecto GCP/Firebase de producción (no el número)
+  default: "{{ repo_name }}-prod"
+  when: "{{ deploy_target in ['firebase-hosting', 'cloud-run'] }}"
+  validator: >-
+    {% if not (gcp_project_prod | regex_search('^[a-z][a-z0-9-]{4,28}[a-z0-9]$')) %}
+    ID de proyecto GCP inválido (6-30 caracteres, minúsculas, números y guiones).
+    {% endif %}
+
+gcp_region:
+  type: str
+  help: Región de Cloud Run y Artifact Registry
+  default: us-central1
+  when: "{{ deploy_target == 'cloud-run' or (deploy_target == 'firebase-hosting' and render == 'hibrido') }}"
+
+ci_provider:
+  type: str
+  help: ¿Dónde vive el repo / qué CI se genera?
+  choices:
+    GitLab CI: gitlab
+    GitHub Actions: github
+  default: gitlab
+
+# ------------------------------------------------------------------
+# Valores computados (no se preguntan ni se guardan). Nombres cortos para los
+# archivos condicionales: Windows corta las rutas en 260 caracteres.
+# ------------------------------------------------------------------
+idioma:
+  type: str
+  default: "{{ idiomas[0] }}"
+  when: false
+
+i18n:
+  type: bool
+  default: "{{ (idiomas | length) > 1 }}"
+  when: false
+
+ent:
+  type: bool
+  default: "{{ entidades_api }}"
+  when: false
+
+hib:
+  type: bool
+  default: "{{ render == 'hibrido' }}"
+  when: false
+
+ana:
+  type: bool
+  default: "{{ analytics != 'ninguna' }}"
+  when: false
+
+ga4:
+  type: bool
+  default: "{{ analytics == 'ga4' }}"
+  when: false
+
+d_fb:
+  type: bool
+  default: "{{ deploy_target == 'firebase-hosting' }}"
+  when: false
+
+d_cy:
+  type: bool
+  default: "{{ deploy_target == 'coolify' }}"
+  when: false
+
+# Cloud Run en juego: destino cloud-run, o Firebase Hosting con rutas SSR.
+d_cr:
+  type: bool
+  default: "{{ deploy_target == 'cloud-run' or (deploy_target == 'firebase-hosting' and render == 'hibrido') }}"
+  when: false
+
+# Hay imagen Docker: coolify (Caddy o Node) o cualquier destino con Cloud Run.
+docker:
+  type: bool
+  default: "{{ deploy_target == 'coolify' or deploy_target == 'cloud-run' or (deploy_target == 'firebase-hosting' and render == 'hibrido') }}"
+  when: false
+
+# Sitio estático en Coolify: Caddy sirve dist/.
+caddy:
+  type: bool
+  default: "{{ deploy_target == 'coolify' and render != 'hibrido' }}"
+  when: false
+
+has_cd:
+  type: bool
+  default: "{{ deploy_target != 'ninguno' }}"
+  when: false
+
+ci_gl:
+  type: bool
+  default: "{{ ci_provider == 'gitlab' }}"
+  when: false
+
+ci_gh:
+  type: bool
+  default: "{{ ci_provider == 'github' }}"
+  when: false

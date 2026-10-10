@@ -1,0 +1,21 @@
+#!/usr/bin/env node
+// Server de producción del render híbrido: el handler standalone de @astrojs/node
+// (archivos estáticos + rutas prerenderizadas + SSR + redirecciones) con
+// compresión gzip/brotli. El adapter no comprime y Cloud Run tampoco: sin esto,
+// el JS de las islas viaja ~3 veces más pesado.
+//
+//   node servidor.mjs [puerto]     (PORT / HOST por variable de entorno; default 8080 / 0.0.0.0)
+import http from 'node:http'
+
+import compression from 'compression'
+
+process.env.ASTRO_NODE_AUTOSTART = 'disabled'
+const { handler } = await import('./dist/server/entry.mjs')
+
+const puerto = Number(process.argv[2] ?? process.env.PORT ?? 8080)
+const host = process.env.HOST ?? '0.0.0.0'
+const comprimir = compression()
+
+http
+  .createServer((req, res) => comprimir(req, res, () => handler(req, res)))
+  .listen(puerto, host, () => console.log(`Servidor escuchando en http://${host}:${puerto}`))

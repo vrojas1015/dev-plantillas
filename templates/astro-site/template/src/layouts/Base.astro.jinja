@@ -1,0 +1,57 @@
+---
+// Layout de TODA página: <html lang>, <Seo> (obligatorio: sus props son las
+// del layout), JSON-LD, skip-link, cabecera, pie{% if ana %} y analítica{% endif %}.
+
+{%- if ana %}
+
+import Analitica from '@/components/Analitica.astro'
+{%- endif %}
+import Cabecera from '@/components/Cabecera.astro'
+import Pie from '@/components/Pie.astro'
+import JsonLd from '@/components/seo/JsonLd.astro'
+import Seo, { type Props as SeoProps } from '@/components/seo/Seo.astro'
+import { t } from '@/i18n/textos'
+import type { Nodo } from '@/lib/seo'
+import '@/styles/global.css'
+
+export interface Props extends SeoProps {
+  /** Nodos de schema.org de la página (se publican en un @graph). */
+  jsonLd?: Nodo[]
+}
+
+const { jsonLd = [], ...seo } = Astro.props
+---
+
+<!doctype html>
+<html lang={seo.idioma}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#0b3d91" />
+    <Seo {...seo} />
+{%- if blog %}
+    <link
+      rel="alternate"
+      type="application/rss+xml"
+      title="RSS"
+      href={new URL('rss.xml', Astro.site).href}
+    />
+{%- endif %}
+    {jsonLd.length > 0 && <JsonLd datos={jsonLd} />}
+    <slot name="head" />
+  </head>
+  <body>
+    <a class="saltar" href="#contenido">
+      {t(seo.idioma, 'nav.saltar')}
+    </a>
+    <Cabecera idioma={seo.idioma} alternativas={seo.alternativas ?? []} />
+    <main id="contenido" tabindex="-1">
+      <slot />
+    </main>
+    <Pie idioma={seo.idioma} />
+{%- if ana %}
+    <Analitica idioma={seo.idioma} />
+{%- endif %}
+  </body>
+</html>

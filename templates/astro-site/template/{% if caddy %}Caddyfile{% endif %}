@@ -1,0 +1,38 @@
+# Servidor del sitio estático dentro de la imagen (ver Dockerfile).
+# El TLS y el dominio los maneja el proxy de Coolify; acá sólo HTTP en :80.
+{
+	admin off
+	auto_https off
+}
+
+:80 {
+	root * /srv
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# Redirecciones 301 generadas desde redirects.json (scripts/redirecciones.mjs).
+	import /etc/caddy/redirecciones.caddy
+
+	# Assets con hash en el nombre (/_astro/*): no cambian nunca → caché de un año.
+	@astro path /_astro/*
+	header @astro Cache-Control "public, max-age=31536000, immutable"
+
+	# HTML, sitemap, robots.txt, public/: revalidar siempre.
+	header ?Cache-Control "public, max-age=0, must-revalidate"
+
+	# /ruta sin barra → 308 a /ruta/ (política única de URLs: siempre con barra).
+	file_server
+
+	# 404 real: la página propia de Astro, con status 404 (nunca 200 ni fallback SPA).
+	handle_errors 404 {
+		rewrite * /404.html
+		file_server {
+			status 404
+		}
+	}
+}

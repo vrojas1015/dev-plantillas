@@ -1,0 +1,54 @@
+// Estado de una isla en la URL (?q=…&cat=…): links compartibles, recargar
+// mantiene los filtros y back/forward funcionan.
+//
+// Importante: la URL se lee DESPUÉS de hidratar (en un efecto), nunca en el
+// render inicial. La isla se renderiza en el servidor sin query string; si el
+// primer render del cliente leyera la URL, el HTML no coincidiría y React
+// descartaría el HTML del servidor (hydration mismatch).
+import { useCallback, useEffect, useState } from 'react'
+
+export type Parametros<K extends string> = Record<K, string>
+
+function leer<K extends string>(claves: readonly K[]): Parametros<K> {
+  const qs = new URLSearchParams(window.location.search)
+  return Object.fromEntries(claves.map((k) => [k, qs.get(k) ?? ''])) as Parametros<K>
+}
+
+/**
+ * @param claves nombres cortos de los parámetros (q, cat, ...)
+ * @returns [valores, escribir, listo]: `listo` es false hasta leer la URL.
+ *   escribir(valores, 'push') agrega una entrada al historial (cambios
+ *   "confirmados", como elegir un filtro); 'replace' no (mientras se tipea).
+ */
+export function useEstadoUrl<K extends string>(claves: readonly K[]) {
+  const vacio = Object.fromEntries(claves.map((k) => [k, ''])) as Parametros<K>
+  const [valores, setValores] = useState<Parametros<K>>(vacio)
+  const [listo, setListo] = useState(false)
+
+  useEffect(() => {
+    setValores(leer(claves))
+    setListo(true)
+    const alVolver = () => setValores(leer(claves))
+    window.addEventListener('popstate', alVolver)
+    return () => window.removeEventListener('popstate', alVolver)
+    // Las claves son constantes del componente.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const escribir = useCallback((nuevos: Parametros<K>, modo: 'push' | 'replace') => {
+    setValores(nuevos)
+    const qs = new URLSearchParams(window.location.search)
+    for (const [k, v] of Object.entries<string>(nuevos)) {
+      if (v) qs.set(k, v)
+      else qs.delete(k)
+    }
+    const busqueda = qs.toString()
+    const url = `${window.location.pathname}${busqueda ? `?${busqueda}` : ''}${window.location.hash}`
+    if (url === `${window.location.pathname}${window.location.search}${window.location.hash}`)
+      return
+    if (modo === 'push') window.history.pushState(window.history.state, '', url)
+    else window.history.replaceState(window.history.state, '', url)
+  }, [])
+
+  return [valores, escribir, listo] as const
+}

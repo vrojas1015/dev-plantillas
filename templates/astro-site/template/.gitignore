@@ -1,0 +1,35 @@
+# Build de Astro
+/dist
+/.astro
+
+# Node
+/node_modules
+npm-debug.log*
+.npmrc
+
+# Variables de entorno (nunca se commitean secretos; .env.example sí)
+.env
+.env.*
+!.env.example
+
+# Lighthouse CI / lychee
+/.lighthouseci
+/.lycheecache
+
+# Firebase
+.firebase/
+firebase-debug.log*
+
+# IDEs
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Claude Code: se comparte settings.json, no lo local
+.claude/settings.local.json
+.claude/worktrees/
+
+# SO
+.DS_Store
+Thumbs.db
+*.log

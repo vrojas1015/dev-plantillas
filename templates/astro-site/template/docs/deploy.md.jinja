@@ -1,0 +1,166 @@
+# Deploy de {{ site_name }}
+
+Destino: **{{ deploy_target }}**{% if hib %} (render híbrido){% endif %}. CI: **{{ 'GitLab CI' if ci_gl else 'GitHub Actions' }}**.
+
+## Ambientes
+
+| | QA | Producción |
+|---|---|---|
+| `PUBLIC_ENTORNO` | `qa` | `prod` |
+| Indexación | `noindex,nofollow` + `robots.txt` con `Disallow: /` | `index,follow` + sitemap |
+{%- if ent %}
+| `PUBLIC_API_FUENTE` | `api` (gateway de QA si se define `PUBLIC_API_BASE_URL`) | `api` (`{{ api_base_url }}`) |
+{%- endif %}
+{%- if ana %}
+| Analítica | No se carga | {{ 'GA4 (con consentimiento)' if ga4 else 'Plausible' }} |
+{%- endif %}
+{%- if d_fb %}
+| Cómo se publica | tag `qa-vX.Y.Z` | push/merge a `main` |
+{%- elif has_cd %}
+| Cómo se publica | tag `qa-vX.Y.Z` | tag `prod-vX.Y.Z` |
+{%- endif %}
+
+Las variables `PUBLIC_*` se hornean en el build: **un build (o una imagen) por
+ambiente**. Lo que valida el CI en cada MR/PR (lint, tipos, SEO, JSON-LD, enlaces,
+Lighthouse) corre con `PUBLIC_ENTORNO=prod`{% if ent %} y el fixture de la API{% endif %}.
+
+**QA con basic auth (opcional, recomendado):** que nadie de afuera vea QA.
+{%- if d_cy %} En Coolify: recurso de QA → *Advanced* → etiquetas de Traefik con un
+middleware `basicauth` (usuario + hash bcrypt generado con `htpasswd -nbB`). El hash
+es un secreto: va en Coolify, nunca en el repo.
+{%- elif d_fb %} Firebase Hosting no tiene basic auth: usar un canal de preview con
+vencimiento (`firebase hosting:channel:deploy`) o restringir QA detrás de IAP con
+Cloud Run.
+{%- elif d_cr %} En Cloud Run: dejar QA sin `allUsers` (sólo usuarios con
+`roles/run.invoker`) o ponerle IAP.
+{%- else %} Depende del hosting que se elija.
+{%- endif %}
+{%- if d_fb or d_cr %}
+
+## Setup de GCP (una vez por proyecto: `{{ gcp_project_qa }}` y `{{ gcp_project_prod }}`)
+
+```bash
+PROJECT=<id-del-proyecto>; REPO=<grupo/repo o owner/repo>
+gcloud services enable iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com \
+  {% if d_fb %}firebasehosting.googleapis.com {% endif %}{% if d_cr %}run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com {% endif %}--project "$PROJECT"
+{%- if d_cr %}
+
+# Artifact Registry para las imágenes
+gcloud artifacts repositories create {{ repo_name }} --repository-format=docker \
+  --location={{ gcp_region }} --project "$PROJECT"
+{%- endif %}
+
+# Service account de deploy
+gcloud iam service-accounts create deployer-web --project "$PROJECT"
+SA=deployer-web@$PROJECT.iam.gserviceaccount.com
+{%- if d_fb %}
+gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role roles/firebasehosting.admin
+{%- endif %}
+{%- if d_cr %}
+for ROL in roles/run.admin roles/cloudbuild.builds.editor roles/artifactregistry.writer \
+           roles/iam.serviceAccountUser roles/storage.admin roles/serviceusage.serviceUsageConsumer; do
+  gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role "$ROL"
+done
+{%- endif %}
+
+# Workload Identity Federation: el CI de ESTE repo puede impersonar al SA, sin claves
+gcloud iam workload-identity-pools create ci --location=global --project "$PROJECT"
+{%- if ci_gl %}
+gcloud iam workload-identity-pools providers create-oidc gitlab --location=global \
+  --workload-identity-pool=ci --project "$PROJECT" \
+  --issuer-uri=https://gitlab.com --allowed-audiences=https://iam.googleapis.com/projects/<NÚMERO>/locations/global/workloadIdentityPools/ci/providers/gitlab \
+  --attribute-mapping=google.subject=assertion.sub,attribute.project_path=assertion.project_path \
+  --attribute-condition="assertion.project_path == '$REPO'"
+gcloud iam service-accounts add-iam-policy-binding "$SA" --project "$PROJECT" --role roles/iam.workloadIdentityUser \
+  --member "principalSet://iam.googleapis.com/projects/<NÚMERO>/locations/global/workloadIdentityPools/ci/attribute.project_path/$REPO"
+{%- else %}
+gcloud iam workload-identity-pools providers create-oidc github --location=global \
+  --workload-identity-pool=ci --project "$PROJECT" \
+  --issuer-uri=https://token.actions.githubusercontent.com \
+  --attribute-mapping=google.subject=assertion.sub,attribute.repository=assertion.repository \
+  --attribute-condition="assertion.repository == '$REPO'"
+gcloud iam service-accounts add-iam-policy-binding "$SA" --project "$PROJECT" --role roles/iam.workloadIdentityUser \
+  --member "principalSet://iam.googleapis.com/projects/<NÚMERO>/locations/global/workloadIdentityPools/ci/attribute.repository/$REPO"
+{%- endif %}
+```
+{%- if d_cr %}
+
+Después del **primer** deploy, hacer público el servicio (una vez; `services replace` no toca la policy):
+
+```bash
+gcloud run services add-iam-policy-binding {{ repo_name }} --region {{ gcp_region }} \
+  --member allUsers --role roles/run.invoker --project "$PROJECT"
+```
+{%- endif %}
+{%- if d_fb %}
+
+Firebase: agregar Firebase al proyecto (consola), crear el sitio de Hosting y, en
+producción, conectar el dominio (Hosting → *Agregar dominio personalizado*).
+{%- endif %}
+
+Variables del CI (**por ambiente**: {{ 'environments `production` y `qa` de GitLab' if ci_gl else 'GitHub Environments `production` y `qa`' }}; no son secretos):
+
+| Variable | Valor |
+|---|---|
+| `GCP_WIF_PROVIDER` | `projects/<NÚMERO>/locations/global/workloadIdentityPools/ci/providers/{{ 'gitlab' if ci_gl else 'github' }}` |
+| `GCP_SA_EMAIL` | `deployer-web@<proyecto>.iam.gserviceaccount.com` |
+{%- if ga4 %}
+| `PUBLIC_GA4_ID` | `G-XXXXXXXXXX` (sólo production) |
+{%- endif %}
+{%- elif d_cy %}
+
+## Setup de Coolify (una vez por ambiente)
+
+1. En Coolify v4: **+ New → Docker Image** con
+   `{{ 'registry.gitlab.com/<grupo>/<repo>' if ci_gl else 'ghcr.io/<owner>/<repo>' }}:qa` (QA) y `:prod` (producción).
+   Puerto expuesto: **{{ '8080' if hib else '80' }}**. Dominio + SSL (Let's Encrypt) en el recurso.
+2. En el VPS, `docker login` al registry con un token de sólo lectura (el
+   registry es privado).
+3. Copiar el **UUID** de cada recurso y crear un **API token** (Keys & Tokens) con
+   permiso de deploy.
+4. Variables del CI ({{ 'Settings › CI/CD › Variables, con scope por environment' if ci_gl else 'GitHub Environments `qa` y `production`' }}):
+
+| Variable | Valor |
+|---|---|
+| `COOLIFY_URL` | `https://coolify.example.com` (sin barra final) |
+| `COOLIFY_RESOURCE_UUID` | UUID del recurso de ese ambiente |
+| `COOLIFY_TOKEN` | token de API ({{ 'Masked + Protected' if ci_gl else 'en Secrets, no en Variables' }}) |
+{%- if ga4 %}
+| `PUBLIC_GA4_ID` | `G-XXXXXXXXXX` (sólo producción) |
+{%- endif %}
+
+Probar la imagen en local antes del primer tag:
+
+```bash
+docker compose up --build        # http://localhost:8080
+curl -sI http://localhost:8080/no-existe/ | head -1   # → 404
+```
+{%- endif %}
+{%- if has_cd %}
+
+## Publicar
+
+```bash
+{%- if d_fb %}
+git tag qa-v1.0.0 && git push origin qa-v1.0.0     # QA
+# Producción: merge a main
+{%- else %}
+git tag qa-v1.0.0 && git push origin qa-v1.0.0     # QA
+git tag prod-v1.0.0 && git push origin prod-v1.0.0 # producción
+{%- endif %}
+```
+
+Proteger los tags (`prod-v*` sólo Maintainers) y la rama `main`.
+{%- if ent %} Para regenerar las páginas de entidades cuando cambian
+los datos{% if not hib %} (SSG){% endif %}, el backend puede disparar el pipeline de `main` con un
+{{ 'pipeline trigger token' if ci_gl else '`repository_dispatch` / `workflow_dispatch`' }}.
+{%- endif %}
+{%- else %}
+
+## Sin destino de deploy
+
+El CI sólo verifica. Para elegir uno: `python -m copier update --data deploy_target=<firebase-hosting|coolify{% if hib %}|cloud-run{% endif %}>`.
+{%- endif %}
+
+Después del primer deploy a producción: `docs/search-console.md` y definir la
+variable `SITEMAP_PROD` del CI para activar el chequeo de redirecciones.

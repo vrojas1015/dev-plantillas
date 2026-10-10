@@ -1,0 +1,19 @@
+// Configuración del sitio: ÚNICA fuente para astro.config.mjs, src/ y scripts/.
+// JavaScript plano (con tipos JSDoc) para que lo puedan importar los scripts de
+// Node sin compilar.
+
+/** @typedef {{ '{' }}{% for i in idiomas %}'{{ i }}'{{ ' | ' if not loop.last }}{% endfor %}{{ '}' }} Idioma */
+
+export const sitio = {
+  nombre: '{{ site_name | replace("'", "\\'") }}',
+  /** URL de producción, sin barra final. Base de canonical, Open Graph y sitemap. */
+  url: '{{ site_url }}',
+  /** El primero es el default (sin prefijo en la URL); el resto va en /<idioma>/. */
+  idiomas: /** @type {const} */ ([{% for i in idiomas %}'{{ i }}'{{ ', ' if not loop.last }}{% endfor %}]),
+  /** @type {Idioma} */
+  idiomaDefault: '{{ idioma }}',
+  /** Imagen de Open Graph por defecto (1200×630, en public/). */
+  ogImagen: '/og-default.png',
+  /** Política de URLs: siempre con barra final (/blog/mi-post/). */
+  barraFinal: true,
+}

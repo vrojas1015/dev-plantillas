@@ -1,0 +1,32 @@
+// Caché en sessionStorage con TTL: volver del detalle al buscador es
+// instantáneo (sin refetch) y con el scroll donde estaba. Si el storage no está
+// disponible (modo privado, cuota llena) simplemente no cachea.
+const TTL_MS = 5 * 60 * 1000
+
+interface Entrada<T> {
+  valor: T
+  guardado: number
+}
+
+export function leerCache<T>(clave: string): T | null {
+  try {
+    const crudo = sessionStorage.getItem(clave)
+    if (!crudo) return null
+    const entrada = JSON.parse(crudo) as Entrada<T>
+    if (Date.now() - entrada.guardado > TTL_MS) {
+      sessionStorage.removeItem(clave)
+      return null
+    }
+    return entrada.valor
+  } catch {
+    return null
+  }
+}
+
+export function escribirCache<T>(clave: string, valor: T): void {
+  try {
+    sessionStorage.setItem(clave, JSON.stringify({ valor, guardado: Date.now() }))
+  } catch {
+    // Cuota llena o storage bloqueado: se pierde la caché, no la funcionalidad.
+  }
+}

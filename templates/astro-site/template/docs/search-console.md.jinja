@@ -1,0 +1,37 @@
+# Google Search Console
+
+Una vez, cuando el sitio ya está publicado en producción ({{ site_url }}).
+
+## 1. Verificar el dominio
+
+1. Entrar a <https://search.google.com/search-console> con la cuenta del equipo
+   (no una personal: agregar después a las personas como usuarios).
+2. **Agregar propiedad → Dominio** → `{{ site_url | replace('https://', '') | replace('www.', '') }}`
+   (la propiedad de dominio cubre `www`, sin `www`, `http` y `https`).
+3. Copiar el registro **TXT** que muestra y crearlo en el DNS del dominio.
+4. Esperar la propagación (minutos a horas) y tocar **Verificar**. No borrar el
+   registro TXT: si desaparece, la propiedad se pierde.
+
+## 2. Enviar el sitemap
+
+**Sitemaps → Agregar un sitemap** → `sitemap-index.xml`. El estado tiene que
+quedar en *Correcto* con la cantidad de URLs esperada (posts, entidades e idiomas).
+`robots.txt` de prod ya lo anuncia, así que otros buscadores lo encuentran solos.
+
+## 3. Revisar
+
+- **Inspección de URL**: pegar una URL nueva → *Probar URL publicada* → *Solicitar
+  indexación* (para no esperar al próximo rastreo).
+- **Páginas** (indexación): las excluidas por `noindex` tienen que ser sólo el 404
+  y nada de producción. Si aparecen páginas de QA, el QA está mal configurado:
+  revisar que se haya construido con `PUBLIC_ENTORNO=qa`.
+- **Experiencia → Core Web Vitals**: datos reales de usuarios (CrUX). Lighthouse CI
+  mide en laboratorio; si acá aparece algo en rojo que el CI no ve, ajustar los
+  presupuestos de `lighthouserc.json`.
+- **Mejoras / resultados enriquecidos**: errores del JSON-LD que valida Google.
+
+## QA y previews
+
+Nunca agregar QA a Search Console ni enviar su sitemap. QA ya sale con
+`noindex,nofollow` en cada página y `Disallow: /` en `robots.txt`; para que
+tampoco lo vea nadie de afuera, ponerle basic auth en el proxy (ver `docs/deploy.md`).

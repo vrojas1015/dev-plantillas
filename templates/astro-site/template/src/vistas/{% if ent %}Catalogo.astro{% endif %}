@@ -1,0 +1,44 @@
+---
+// Listado del catálogo con la isla del buscador. Los resultados iniciales se
+// piden en el build (o en el request, si la ruta es SSR) y van en el HTML: sin
+// JS la página igual muestra y enlaza las entidades. Con ?q=…/&cat=… la
+// canónica sigue siendo /catalogo/ (no se indexan combinaciones de filtros).
+import Buscador from '@/components/islands/Buscador'
+import Migas from '@/components/Migas.astro'
+import { t } from '@/i18n/textos'
+import Base from '@/layouts/Base.astro'
+import { catalogo } from '@/lib/api'
+import { idiomas, ruta, type Idioma } from '@/lib/i18n'
+import { migas } from '@/lib/seo'
+
+interface Props {
+  idioma: Idioma
+}
+
+const { idioma } = Astro.props
+const [inicial, categorias] = await Promise.all([
+  catalogo.buscar({ idioma }),
+  catalogo.categorias(idioma),
+])
+const items = [
+  { nombre: t(idioma, 'nav.inicio'), camino: ruta(idioma, '/') },
+  { nombre: t(idioma, 'catalogo.titulo'), camino: ruta(idioma, '/catalogo/') },
+]
+---
+
+<Base
+  titulo={t(idioma, 'catalogo.titulo')}
+  descripcion={t(idioma, 'catalogo.descripcion')}
+  camino={ruta(idioma, '/catalogo/')}
+  idioma={idioma}
+  alternativas={idiomas.map((i) => ({ idioma: i, camino: ruta(i, '/catalogo/') }))}
+  jsonLd={[migas(items)]}
+>
+  <div class="contenedor">
+    <Migas items={items} />
+    <h1>{t(idioma, 'catalogo.titulo')}</h1>
+    <p>{t(idioma, 'catalogo.descripcion')}</p>
+    {/* client:idle: interactiva apenas el navegador está libre, sin competir con el LCP. */}
+    <Buscador client:idle idioma={idioma} inicial={inicial} categorias={categorias} />
+  </div>
+</Base>

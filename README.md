@@ -13,6 +13,7 @@ Estado y prioridades: [`ROADMAP.md`](ROADMAP.md).
 | `templates/protos/` | Plantilla Copier: repo de contratos gRPC con buf; código para Go, Python, TS/JS, Java, Kotlin y Swift |
 | `templates/api-gateway/` | Plantilla Copier: API gateway REST→gRPC (grpc-gateway) con auth, autorización por ruta, rate limit y límites |
 | `templates/angular-app/` | Plantilla Copier: app Angular standalone + signals + Firebase Hosting |
+| `templates/astro-site/` | Plantilla Copier: sitio público Astro 7 (SSG o híbrido) + islas de React con SEO técnico, JSON-LD tipado, sitemap/robots por ambiente y Lighthouse CI |
 | `templates/docs/` | Plantilla Copier: repo central de documentación (issues por carpeta, ADRs, runbooks, releases) con frontmatter validado, índices generados y MkDocs Material |
 | `plugins/dev-agentes/` | Plugin de Claude Code: skills, agentes y hooks del flujo de trabajo |
 | `.claude-plugin/` | Marketplace: permite instalar el plugin con `/plugin marketplace add vrojas1015/dev-plantillas` |

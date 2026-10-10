@@ -1,0 +1,131 @@
+// Textos de la interfaz por idioma. Nunca strings sueltos en componentes:
+// todo texto visible sale de acá con t(idioma, 'clave').
+import type { Idioma } from '@/lib/i18n'
+
+const es = {
+  'sitio.descripcion':
+    'Sitio de ejemplo generado con la plantilla astro-site: estático, rápido y listo para buscadores.',
+  'nav.saltar': 'Saltar al contenido',
+  'nav.principal': 'Navegación principal',
+  'nav.inicio': 'Inicio',
+{%- if blog %}
+  'nav.blog': 'Blog',
+{%- endif %}
+{%- if ent %}
+  'nav.catalogo': 'Catálogo',
+{%- endif %}
+  'inicio.titulo': 'Un sitio rápido, accesible y fácil de encontrar',
+  'inicio.bajada':
+    'HTML generado en el build, cero JavaScript por defecto y SEO técnico verificado en cada cambio.',
+  'inicio.imagen': 'Ilustración abstracta con formas geométricas en tonos azules',
+{%- if blog %}
+  'inicio.ultimos': 'Últimas entradas',
+  'blog.titulo': 'Blog',
+  'blog.descripcion':
+    'Notas y guías sobre cómo construimos el sitio: rendimiento, accesibilidad y SEO técnico.',
+  'blog.publicado': 'Publicado el',
+  'blog.actualizado': 'Actualizado el',
+  'blog.vacio': 'Todavía no hay entradas.',
+{%- endif %}
+{%- if ent %}
+  'catalogo.titulo': 'Catálogo',
+  'catalogo.descripcion':
+    'Explorá el catálogo completo: buscá por nombre y filtrá por categoría. Cada producto tiene su ficha.',
+  'catalogo.buscar': 'Buscar en el catálogo',
+  'catalogo.enviar': 'Buscar',
+  'catalogo.categoria': 'Categoría',
+  'catalogo.todas': 'Todas',
+  'catalogo.resultados': 'resultados',
+  'catalogo.sinResultados': 'No hay resultados para esa búsqueda.',
+  'catalogo.cargando': 'Cargando…',
+  'catalogo.cargarMas': 'Cargar más',
+  'catalogo.error': 'No se pudo cargar el catálogo. Probá de nuevo.',
+  'catalogo.precio': 'Precio',
+  'catalogo.volver': 'Volver al catálogo',
+{%- endif %}
+  'pie.derechos': 'Todos los derechos reservados.',
+  'error404.titulo': 'Página no encontrada',
+  'error404.descripcion':
+    'La página que buscás no existe o cambió de dirección. Volvé al inicio para seguir navegando.',
+  'error404.volver': 'Volver al inicio',
+{%- if ga4 %}
+  'consentimiento.texto':
+    'Usamos cookies de analítica para entender cómo se usa el sitio. Sólo se activan si aceptás.',
+  'consentimiento.aceptar': 'Aceptar',
+  'consentimiento.rechazar': 'Rechazar',
+{%- endif %}
+}
+
+export type ClaveTexto = keyof typeof es
+
+{%- if 'en' in idiomas %}
+
+const en: Record<ClaveTexto, string> = {
+  'sitio.descripcion':
+    'Example site generated with the astro-site template: static, fast and ready for search engines.',
+  'nav.saltar': 'Skip to content',
+  'nav.principal': 'Main navigation',
+  'nav.inicio': 'Home',
+{%- if blog %}
+  'nav.blog': 'Blog',
+{%- endif %}
+{%- if ent %}
+  'nav.catalogo': 'Catalog',
+{%- endif %}
+  'inicio.titulo': 'A fast, accessible site that is easy to find',
+  'inicio.bajada':
+    'HTML generated at build time, zero JavaScript by default and technical SEO checked on every change.',
+  'inicio.imagen': 'Abstract illustration with geometric shapes in shades of blue',
+{%- if blog %}
+  'inicio.ultimos': 'Latest posts',
+  'blog.titulo': 'Blog',
+  'blog.descripcion':
+    'Notes and guides on how we build the site: performance, accessibility and technical SEO.',
+  'blog.publicado': 'Published on',
+  'blog.actualizado': 'Updated on',
+  'blog.vacio': 'No posts yet.',
+{%- endif %}
+{%- if ent %}
+  'catalogo.titulo': 'Catalog',
+  'catalogo.descripcion':
+    'Browse the full catalog: search by name and filter by category. Every product has its own page.',
+  'catalogo.buscar': 'Search the catalog',
+  'catalogo.enviar': 'Search',
+  'catalogo.categoria': 'Category',
+  'catalogo.todas': 'All',
+  'catalogo.resultados': 'results',
+  'catalogo.sinResultados': 'No results for that search.',
+  'catalogo.cargando': 'Loading…',
+  'catalogo.cargarMas': 'Load more',
+  'catalogo.error': 'The catalog could not be loaded. Please try again.',
+  'catalogo.precio': 'Price',
+  'catalogo.volver': 'Back to the catalog',
+{%- endif %}
+  'pie.derechos': 'All rights reserved.',
+  'error404.titulo': 'Page not found',
+  'error404.descripcion':
+    'The page you are looking for does not exist or has moved. Go back to the home page to keep browsing.',
+  'error404.volver': 'Back to home',
+{%- if ga4 %}
+  'consentimiento.texto':
+    'We use analytics cookies to understand how the site is used. They are only enabled if you accept.',
+  'consentimiento.aceptar': 'Accept',
+  'consentimiento.rechazar': 'Decline',
+{%- endif %}
+}
+{%- endif %}
+
+const textos: Record<Idioma, Record<ClaveTexto, string>> = {
+{%- for i in idiomas %}
+{%- if i in ['es', 'en'] %}
+  {{ i }},
+{%- else %}
+  // TODO: traducir al «{{ i }}» (por ahora usa los textos en español).
+  {{ i }}: es,
+{%- endif %}
+{%- endfor %}
+}
+
+export function t(idioma: Idioma, clave: ClaveTexto): string {
+  return textos[idioma][clave]
+}

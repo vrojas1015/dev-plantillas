@@ -1,0 +1,60 @@
+---
+import { t } from '@/i18n/textos'
+import { ruta, type Idioma } from '@/lib/i18n'
+import type { Alternativa } from '@/components/seo/Seo.astro'
+import { sitio } from '../../sitio.config.mjs'
+
+interface Props {
+  idioma: Idioma
+  alternativas: Alternativa[]
+}
+
+const { idioma{% if i18n %}, alternativas{% endif %} } = Astro.props
+const actual = Astro.url.pathname
+const enlaces = [
+  { href: ruta(idioma, '/'), texto: t(idioma, 'nav.inicio') },
+{%- if blog %}
+  { href: ruta(idioma, '/blog/'), texto: t(idioma, 'nav.blog') },
+{%- endif %}
+{%- if ent %}
+  { href: ruta(idioma, '/catalogo/'), texto: t(idioma, 'nav.catalogo') },
+{%- endif %}
+]
+---
+
+<header class="cabecera">
+  <div class="contenedor cabecera__fila">
+    <a class="cabecera__marca" href={ruta(idioma, '/')}>
+      {sitio.nombre}
+    </a>
+    <nav aria-label={t(idioma, 'nav.principal')}>
+      <ul class="cabecera__menu" role="list">
+        {enlaces.map((e) => (
+          <li>
+            <a href={e.href} aria-current={actual === e.href ? 'page' : undefined}>
+              {e.texto}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+{%- if i18n %}
+    {alternativas.length > 1 && (
+      <ul class="cabecera__idiomas" role="list">
+        {alternativas.map((a) => (
+          <li>
+            <a
+              href={a.camino}
+              hreflang={a.idioma}
+              lang={a.idioma}
+              aria-current={a.idioma === idioma ? 'true' : undefined}
+            >
+              {a.idioma.toUpperCase()}
+            </a>
+          </li>
+        ))}
+      </ul>
+    )}
+{%- endif %}
+  </div>
+</header>
