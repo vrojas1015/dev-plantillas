@@ -34,6 +34,8 @@ ya hay.
 | **Java** | Integraciones empresariales (SOAP, mensajería, ERPs), librerías JVM maduras, equipos Java existentes | — |
 | **TypeScript** (Node) | BFF para un front, tiempo real (WebSockets), funciones serverless, equipo full-stack JS | `ts-grpc-service` (pendiente) |
 | **JavaScript** | Scripts chicos y glue code; en servicios, siempre TypeScript | — |
+| **C#** (.NET) | Ecosistema Microsoft (Azure, Windows, Office/Dynamics), APIs de alto rendimiento con ASP.NET Core, juegos con Unity | — |
+| **C++** | Rendimiento extremo o hardware: embebidos/IoT, motores de juego, video/audio, librerías nativas | — |
 
 ### Go
 
@@ -121,6 +123,47 @@ Sólo para scripts chicos y configuración. En cualquier servicio o librería:
 TypeScript. Los contratos generados desde `protos` publican JS + tipos, así
 que un proyecto JS puede consumirlos igual.
 
+### C# (.NET)
+
+**Elegirlo cuando:**
+
+- El cliente o la empresa vive en el **ecosistema Microsoft**: Azure, Active
+  Directory / Entra ID, SQL Server, Dynamics, SharePoint, Office.
+- Hay un equipo o un sistema .NET existente que hay que extender.
+- APIs de alto rendimiento con un framework completo: ASP.NET Core rinde al nivel
+  de Go con más «baterías incluidas» (inyección de dependencias, ORM, auth).
+- **Juegos** con Unity, o apps de escritorio Windows (WPF, WinUI).
+
+**No elegirlo cuando:**
+
+- La plataforma es Google-first y no hay ninguna de las razones anteriores: suma
+  un ecosistema completo (SDK, NuGet, herramientas) sin beneficio claro sobre Go
+  o Kotlin.
+
+### C++
+
+**Elegirlo cuando:**
+
+- **Rendimiento o latencia extremos** donde cada microsegundo cuenta:
+  procesamiento de video/audio, visión por computadora, motores de cálculo.
+- **Hardware**: embebidos, IoT, firmware, drivers, robótica.
+- **Motores de juego** (Unreal) o gráficos de bajo nivel.
+- Una **librería nativa** que otros lenguajes consumen (Python, Kotlin/Android
+  vía NDK, Swift).
+
+**No elegirlo cuando:**
+
+- Es un servicio web o de negocio: la seguridad de memoria es responsabilidad
+  del programador y los errores son caros. Go cubre ese terreno.
+- Para un proyecto nuevo de sistemas sin código C++ existente, evaluar **Rust**
+  (rendimiento equivalente con seguridad de memoria garantizada por el
+  compilador), con un ADR.
+
+**Integración con la plataforma:** un componente en C++ (o Rust) se expone
+como un servicio gRPC — `protos` puede generar C++ con los plugins de buf — o
+como librería que un servicio Go/Python/Kotlin llama. No se escribe la API de
+negocio en C++.
+
 ### Por tipo de problema
 
 | Problema | Primera opción | Alternativa | Por qué |
@@ -136,6 +179,10 @@ que un proyecto JS puede consumirlos igual.
 | CLI que se distribuye | Go | Python (para uso interno, como `dp`) | Binario único |
 | Scripts de operación y migraciones | Python | Go | Rapidez para escribir |
 | Workers de colas y jobs | Go | Python (si son de datos) | Concurrencia |
+| Cliente en el ecosistema Microsoft (Azure, Entra ID, SQL Server) | C# | Go | Integración nativa y equipo del cliente |
+| Video, audio, visión por computadora | C++ (como servicio gRPC o librería) | Rust; Python con librerías nativas | Rendimiento |
+| Embebidos, IoT, firmware | C / C++ | Rust | Hardware y recursos mínimos |
+| Juegos | C# (Unity) o C++ (Unreal) | — | El motor decide el lenguaje |
 
 ## 3. Frontend y móvil
 
@@ -156,6 +203,7 @@ que un proyecto JS puede consumirlos igual.
 
 | Problema | Primera opción | Por qué |
 |---|---|---|
+| App de escritorio Windows | C# (WinUI/WPF) o una web app | Ecosistema nativo; si no necesita el sistema operativo, web |
 | Panel de administración, backoffice | Angular | Estructura fuerte para apps grandes y equipos |
 | Landing, marketing, blog | Astro | HTML estático, Core Web Vitals, SEO |
 | Catálogo o perfiles públicos que vienen de la API | Astro (SSG o SSR) | SEO programático (`docs/07` §4) |
@@ -217,4 +265,4 @@ plataforma.
 | `go-grpc-service`, `api-gateway`, `protos`, `angular-app`, `docs` | Publicadas |
 | `astro-site`, `android-app`, `e2e-tests` | En construcción |
 | `python-grpc-service`, `ts-grpc-service`, `react-app` | Pendientes: se construyen cuando un proyecto real las necesite |
-| Java, Swift, Next.js, Expo | Sin plantilla prevista; se evalúan con un ADR cuando aparezca el caso |
+| Java, C#, C++, Swift, Next.js, Expo | Sin plantilla prevista; se evalúan con un ADR cuando aparezca el caso |
