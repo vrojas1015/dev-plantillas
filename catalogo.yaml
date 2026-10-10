@@ -22,6 +22,17 @@ plantillas:
     atajos:
       ci: ci_provider
 
+  - nombre: api-gateway
+    repo: gh:vrojas1015/template-api-gateway
+    tipo: gateway
+    lenguaje: go
+    descripcion: API gateway REST→gRPC con auth, autorización por ruta y rate limit
+    destino_por_defecto: backend/{nombre}
+    atajos:
+      deploy: deploy_target
+      ci: ci_provider
+      auth: auth
+
   - nombre: angular-app
     repo: gh:vrojas1015/template-angular-app
     tipo: front
