@@ -1,0 +1,51 @@
+package {{ application_id }}.core.testing
+
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.map
+import kotlin.time.Instant
+import {{ application_id }}.core.domain.ItemsRepository
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+import {{ application_id }}.core.model.Item
+
+/**
+ * Repositorio en memoria. `stored` es "lo que hay en Room"; `remote` lo que
+ * devolvería la red; `failWith` simula un error de red en los refresh.
+ */
+class FakeItemsRepository(
+    stored: List<Item> = emptyList(),
+    var remote: List<Item> = stored,
+    var failWith: AppError? = null,
+) : ItemsRepository {
+    private val items = MutableStateFlow(stored)
+    private val lastSync = MutableStateFlow<Instant?>(null)
+    var refreshCount = 0
+        private set
+
+    override fun observeItems(): Flow<List<Item>> = items
+
+    override fun observeItem(id: String): Flow<Item?> = items.map { list -> list.find { it.id == id } }
+
+    override fun observeLastSync(): Flow<Instant?> = lastSync
+
+    override suspend fun refreshItems() {
+        refreshCount++
+        failWith?.let { throw AppException(it) }
+        items.value = remote
+    }
+
+    override suspend fun refreshItem(id: String) {
+        refreshCount++
+        failWith?.let { throw AppException(it) }
+        val item = remote.find { it.id == id } ?: throw AppException(AppError.NotFound)
+        items.value = items.value.filterNot { it.id == id } + item
+    }
+
+    override suspend fun createItem(name: String, description: String): Item {
+        failWith?.let { throw AppException(it) }
+        val item = Item(id = "nuevo-${items.value.size + 1}", name = name, description = description)
+        items.value = items.value + item
+        return item
+    }
+}

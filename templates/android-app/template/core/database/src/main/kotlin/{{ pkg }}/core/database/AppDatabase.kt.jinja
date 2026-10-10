@@ -1,0 +1,13 @@
+package {{ application_id }}.core.database
+
+import androidx.room.Database
+import androidx.room.RoomDatabase
+
+/**
+ * Base local. Al cambiar una entidad: subir `version`, agregar la migración y
+ * commitear el JSON nuevo de core/database/schemas/ (lo genera el build).
+ */
+@Database(entities = [ItemEntity::class], version = 1, exportSchema = true)
+abstract class AppDatabase : RoomDatabase() {
+    abstract fun itemDao(): ItemDao
+}

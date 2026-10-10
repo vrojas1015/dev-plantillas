@@ -1,0 +1,22 @@
+// Raíz: solo declara los plugins (apply false) para que todos los módulos usen
+// la misma versión (libs.versions.toml). La configuración común está en los
+// convention plugins de build-logic/, no acá.
+plugins {
+    alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.android.library) apply false
+    alias(libs.plugins.android.test) apply false
+    alias(libs.plugins.kotlin.jvm) apply false
+    alias(libs.plugins.kotlin.compose) apply false
+    alias(libs.plugins.kotlin.serialization) apply false
+    alias(libs.plugins.ksp) apply false
+    alias(libs.plugins.hilt) apply false
+    alias(libs.plugins.room) apply false
+    alias(libs.plugins.baselineprofile) apply false
+    alias(libs.plugins.play.publisher) apply false
+    alias(libs.plugins.detekt) apply false
+    alias(libs.plugins.ktlint) apply false
+{%- if fb %}
+    alias(libs.plugins.google.services) apply false
+    alias(libs.plugins.firebase.crashlytics) apply false
+{%- endif %}
+}

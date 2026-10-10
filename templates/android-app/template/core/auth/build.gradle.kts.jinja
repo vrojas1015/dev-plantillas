@@ -1,0 +1,27 @@
+plugins {
+    alias(libs.plugins.app.android.library)
+    alias(libs.plugins.app.hilt)
+}
+
+// Token fijo para desarrollo (sin Firebase o sin google-services.json): se lee
+// de ~/.gradle/gradle.properties (devAuthToken=...), NUNCA del repo. Solo en debug.
+val devAuthToken = providers.gradleProperty("devAuthToken").orElse("").get()
+
+android {
+    namespace = "{{ application_id }}.core.auth"
+    buildFeatures { buildConfig = true }
+    buildTypes {
+        debug { buildConfigField("String", "DEV_AUTH_TOKEN", "\"$devAuthToken\"") }
+        release { buildConfigField("String", "DEV_AUTH_TOKEN", "\"\"") }
+    }
+}
+
+dependencies {
+    api(projects.core.domain)
+{%- if fb %}
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.auth)
+    implementation(libs.firebase.appcheck)
+    implementation(libs.kotlinx.coroutines.play.services)
+{%- endif %}
+}

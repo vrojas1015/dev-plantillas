@@ -1,0 +1,32 @@
+package {{ application_id }}.core.datastore
+
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.longPreferencesKey
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import javax.inject.Inject
+import kotlin.time.Instant
+
+/** Preferencias chicas de la app (no datos de negocio: esos van en Room). */
+interface SyncPreferences {
+    val lastItemsSync: Flow<Instant?>
+
+    suspend fun setLastItemsSync(at: Instant)
+}
+
+internal class DataStoreSyncPreferences @Inject constructor(
+    private val store: DataStore<Preferences>,
+) : SyncPreferences {
+    override val lastItemsSync: Flow<Instant?> =
+        store.data.map { prefs -> prefs[LAST_ITEMS_SYNC]?.let(Instant::fromEpochMilliseconds) }
+
+    override suspend fun setLastItemsSync(at: Instant) {
+        store.edit { it[LAST_ITEMS_SYNC] = at.toEpochMilliseconds() }
+    }
+
+    private companion object {
+        val LAST_ITEMS_SYNC = longPreferencesKey("last_items_sync")
+    }
+}

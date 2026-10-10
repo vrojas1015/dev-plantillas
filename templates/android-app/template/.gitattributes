@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.jar binary
+*.png binary
+*.webp binary
+# Esquemas exportados por Room: generados, colapsados en los diffs.
+core/database/schemas/** linguist-generated=true gitlab-generated=true

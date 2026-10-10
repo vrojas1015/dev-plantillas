@@ -1,0 +1,196 @@
+# =============================================================================
+# Plantilla Copier: app Android nativa (Kotlin + Jetpack Compose)
+# =============================================================================
+# Ver README.md (al lado de este archivo). Todo lo que vive en template/ es el
+# contenido del repo generado; lo que está acá afuera no se copia.
+# Especificación: docs/09-movil-android.md de dev-plantillas.
+# =============================================================================
+
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_answers_file: .copier-answers.yml
+_templates_suffix: .jinja
+
+# Archivos según las respuestas. Se excluyen acá (patrones con Jinja) en vez de
+# usar nombres condicionales: las rutas Kotlin ya son largas y Windows corta en
+# 260 caracteres. Los primeros son los excludes por defecto de Copier.
+_exclude:
+  - "~*"
+  - "*.py[co]"
+  - "__pycache__"
+  - ".git"
+  - ".DS_Store"
+  - "{% if not rest %}core/network/src/*/kotlin/**/Rest*{% endif %}"
+  - "{% if not rest %}core/network/src/main/kotlin/**/HttpClientFactory.kt{% endif %}"
+  - "{% if not grpc %}core/network/src/*/kotlin/**/Grpc*{% endif %}"
+  - "{% if not grpc %}docs/protos.md{% endif %}"
+  - "{% if not fb %}core/auth/src/main/kotlin/**/FirebaseAuthRepository.kt{% endif %}"
+  - "{% if not fb %}app/src/main/kotlin/**/push{% endif %}"
+  - "{% if not fb %}app/src/main/res/drawable/ic_notification.xml{% endif %}"
+  - "{% if not fb %}docs/firebase.md{% endif %}"
+  - "{% if fb %}docs/auth.md{% endif %}"
+
+_message_after_copy: |
+  App {{ app_name }} ({{ application_id }}) generada: cliente {{ cliente_api }}{% if firebase %} + Firebase{% endif %}.
+
+  Siguientes pasos (en {{ _copier_conf.dst_path }}):
+    - git init -b main
+    - ./gradlew ktlintCheck detekt lint testDebugUnitTest assembleDebug
+      (JDK 21 + Android SDK; o en Docker: README.md, "Compilar sin Android Studio")
+  {%- if firebase %}
+    - google-services.json de cada ambiente en app/src/qa/ y app/src/prod/
+      (NO se commitean; docs/firebase.md). Sin ellos compila en debug.
+  {%- endif %}
+  {%- if cliente_api == 'grpc' %}
+    - Registry Maven de {{ protos_maven }}: docs/protos.md.
+  {%- endif %}
+    - git add . && git add --chmod=+x gradlew scripts/*.sh
+      git commit -m "Scaffold inicial desde la plantilla android-app"
+  Publicar en Google Play: docs/play-console.md (el primer AAB se sube a mano).
+
+# -----------------------------------------------------------------------------
+# Preguntas
+# -----------------------------------------------------------------------------
+
+app_name:
+  type: str
+  help: "Nombre visible de la app (launcher y Play Store). Ej. Mi App"
+  default: Mi App
+  validator: >-
+    {% if not (app_name | regex_search('^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][A-Za-z0-9ÁÉÍÓÚÜÑáéíóúüñ .-]{0,29}$')) %}
+    Entre 1 y 30 caracteres: letras, dígitos, espacios, punto o guion; empieza con letra.
+    {% endif %}
+
+application_id:
+  type: str
+  help: "applicationId y paquete Kotlin base (ej. com.miorg.miapp). INMUTABLE una vez publicada"
+  default: com.miorg.miapp
+  validator: >-
+    {%- set kw = ['abstract','assert','boolean','break','byte','case','catch','char','class','const',
+                  'continue','default','do','double','else','enum','extends','false','final','finally',
+                  'float','for','goto','if','implements','import','instanceof','int','interface','long',
+                  'native','new','null','package','private','protected','public','return','short','static',
+                  'strictfp','super','switch','synchronized','this','throw','throws','transient','true',
+                  'try','void','volatile','while','_','fun','in','is','object','typealias','val','var',
+                  'when','as','typeof'] -%}
+    {%- if not (application_id | regex_search('^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$')) -%}
+    Paquete Java inválido: al menos dos segmentos en minúsculas que empiezan con letra (ej. com.miorg.miapp).
+    {%- elif application_id | length > 60 -%}
+    Demasiado largo (máx. 60): alarga las rutas de los archivos Kotlin y Windows corta en 260.
+    {%- else -%}
+    {%- for s in application_id.split('.') if s in kw -%}
+    «{{ s }}» es una palabra reservada de Java/Kotlin: no puede ser un segmento del paquete.
+    {%- endfor -%}
+    {%- endif -%}
+
+min_sdk:
+  type: int
+  help: "minSdk (26 = Android 8.0; mínimo 26: ícono adaptativo y java.time sin desugaring)"
+  default: 26
+  validator: >-
+    {% if min_sdk < 26 or min_sdk > 36 %}Entre 26 y 36.{% endif %}
+
+cliente_api:
+  type: str
+  help: "Cómo habla con el backend"
+  choices:
+    "REST contra el api-gateway (Ktor + kotlinx.serialization)": rest
+    "gRPC con los stubs Kotlin del repo protos (grpc-kotlin)": grpc
+  default: rest
+
+api_base_url_qa:
+  type: str
+  help: "URL base del gateway de QA{% if cliente_api == 'grpc' %} (o del servicio gRPC: https://host[:puerto]){% endif %}"
+  default: https://api-qa.example.com
+  validator: >-
+    {% if not (api_base_url_qa | regex_search('^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[^\s"]*)?$')) %}
+    URL inválida (ej. https://api-qa.example.com).
+    {% endif %}
+
+api_base_url_prod:
+  type: str
+  help: "URL base del gateway de producción"
+  default: https://api.example.com
+  validator: >-
+    {% if not (api_base_url_prod | regex_search('^https://[A-Za-z0-9.-]+(:[0-9]+)?(/[^\s"]*)?$')) %}
+    URL https inválida (producción no admite http).
+    {% endif %}
+
+protos_maven:
+  type: str
+  help: "Coordenadas Maven del artefacto de contratos (plantilla protos con kotlin): grupo:artefacto:versión"
+  default: com.miorg:protos:0.1.0
+  when: "{{ cliente_api == 'grpc' }}"
+  validator: >-
+    {% if not (protos_maven | regex_search('^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*:[a-z][a-z0-9-]*:[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9.]+)?$')) %}
+    Formato grupo:artefacto:versión (ej. com.miorg:protos:0.1.0).
+    {% endif %}
+
+protos_paquete:
+  type: str
+  help: "Paquete Kotlin del ItemService generado (<maven_group>.<first_package>.v1 en la plantilla protos)"
+  default: "{{ protos_maven.split(':')[0] if cliente_api == 'grpc' else 'com.miorg' }}.example.v1"
+  when: "{{ cliente_api == 'grpc' }}"
+  validator: >-
+    {% if not (protos_paquete | regex_search('^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$')) %}
+    Paquete inválido (ej. com.miorg.example.v1).
+    {% endif %}
+
+firebase:
+  type: bool
+  help: "Firebase: Auth + App Check (Play Integrity) + FCM + Crashlytics. Sin Firebase: token fijo de desarrollo"
+  default: true
+
+ci_provider:
+  type: str
+  help: "Proveedor de CI/CD"
+  choices:
+    GitLab CI: gitlab
+    GitHub Actions: github
+  default: gitlab
+
+# -----------------------------------------------------------------------------
+# Valores derivados (no se preguntan ni se guardan; se recalculan en cada
+# copy/update). Nombres cortos para los archivos condicionales: Windows corta
+# las rutas en 260 caracteres y las de Kotlin ya son largas.
+# -----------------------------------------------------------------------------
+
+# Ruta de paquete: com.miorg.miapp -> com/miorg/miapp
+pkg:
+  type: str
+  default: "{{ application_id | replace('.', '/') }}"
+  when: false
+
+# Nombre técnico (rootProject.name): "Mi App" -> mi-app
+slug:
+  type: str
+  default: >-
+    {{- app_name | lower | replace('á','a') | replace('é','e') | replace('í','i') | replace('ó','o')
+        | replace('ú','u') | replace('ü','u') | replace('ñ','n') | regex_replace('[^a-z0-9]+', '-')
+        | regex_replace('^-+|-+$', '') -}}
+  when: false
+
+rest:
+  type: bool
+  default: "{{ cliente_api == 'rest' }}"
+  when: false
+
+grpc:
+  type: bool
+  default: "{{ cliente_api == 'grpc' }}"
+  when: false
+
+fb:
+  type: bool
+  default: "{{ firebase }}"
+  when: false
+
+ci_gl:
+  type: bool
+  default: "{{ ci_provider == 'gitlab' }}"
+  when: false
+
+ci_gh:
+  type: bool
+  default: "{{ ci_provider == 'github' }}"
+  when: false

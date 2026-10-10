@@ -1,0 +1,76 @@
+# Google Play: upload key, primer upload y publicación
+
+Se usa **Play App Signing**: Google guarda la clave con la que firma lo que llega
+a los usuarios; nosotros firmamos con una **upload key** que solo prueba que el
+AAB viene de nosotros. El repo no tiene ningún keystore.
+
+## 1. Upload key (una vez, por app)
+
+```bash
+keytool -genkeypair -v -keystore upload.jks -alias upload \
+  -keyalg RSA -keysize 4096 -validity 10000 \
+  -dname "CN={{ app_name }}, O=<organización>"
+base64 -w0 upload.jks > upload.jks.base64   # -> ANDROID_UPLOAD_KEYSTORE_BASE64
+```
+
+Guardá `upload.jks` y sus contraseñas en el gestor de secretos del equipo (no en
+el repo ni en un chat). Cargá las variables de `docs/ci-cd.md`. Si se pierde la
+upload key: Play Console → Integridad de la app → **Solicitar restablecimiento
+de clave de carga** (se genera una nueva y Google la habilita en unos días).
+
+Firmar en local (para probar un release):
+
+```bash
+export UPLOAD_KEYSTORE_FILE=$PWD/upload.jks UPLOAD_KEYSTORE_PASSWORD=... UPLOAD_KEY_ALIAS=upload UPLOAD_KEY_PASSWORD=...
+./gradlew bundleProdRelease     # app/build/outputs/bundle/prodRelease/app-prod-release.aab
+```
+
+## 2. Crear las apps en Play Console
+
+Una app por flavor (cada una con su applicationId):
+
+| App | applicationId |
+|---|---|
+| {{ app_name }} QA | `{{ application_id }}.qa` |
+| {{ app_name }} | `{{ application_id }}` |
+
+Completar ficha, clasificación de contenido, público objetivo, seguridad de los
+datos y política de privacidad (Play no deja publicar sin eso).
+
+## 3. Primer upload: a mano
+
+Google exige que el **primer AAB** de cada app se suba desde la consola (la API
+no puede crear la primera versión):
+
+1. `VERSION_NAME=0.1.0 ./gradlew bundleQaRelease` (con las variables de la upload key).
+2. Play Console → app QA → Pruebas → **Pruebas internas** → Crear versión →
+   aceptar Play App Signing → subir `app/build/outputs/bundle/qaRelease/*.aab`.
+3. Lo mismo con `bundleProdRelease` en la app de producción (pista interna).
+
+Desde ahí, todo por CI.
+
+## 4. Cuenta de servicio para el CI (Gradle Play Publisher)
+
+1. Google Cloud (un proyecto propio para publicación) → IAM → Cuentas de servicio
+   → crear `play-publisher` → Claves → JSON. Ese JSON es `PLAY_SERVICE_ACCOUNT_JSON`.
+2. Habilitar la **Google Play Android Developer API** en ese proyecto.
+3. Play Console → Usuarios y permisos → Invitar al email de la cuenta de servicio
+   con permisos de *Lanzar en pistas de prueba* y *Lanzar en producción*, solo
+   para estas apps.
+
+## 5. Publicar
+
+```bash
+git tag qa-v0.2.0 && git push origin qa-v0.2.0      # -> pista interna de QA
+git tag prod-v0.2.0 && git push origin prod-v0.2.0  # -> pista interna de prod
+```
+
+Con `prod-v*`, después de probar en la pista interna: aprobar el paso a
+producción al **10 %**, mirar Android vitals{% if fb %} y Crashlytics{% endif %}, y seguir con **50 %** y
+**100 %** (docs/ci-cd.md). Para frenar: Play Console → Producción → Detener
+lanzamiento; se corrige y se publica un parche (`prod-v0.2.1`).
+
+Configuración de Gradle Play Publisher: bloque `play { }` de
+`app/build.gradle.kts` (pista `internal`, AAB). Comandos útiles con la variable
+`ANDROID_PUBLISHER_CREDENTIALS` exportada: `./gradlew bootstrapProdListing`
+(baja la ficha actual a `app/src/prod/play/`) y `promoteProdReleaseArtifact`.

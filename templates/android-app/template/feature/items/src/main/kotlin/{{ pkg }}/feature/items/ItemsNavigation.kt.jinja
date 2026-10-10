@@ -1,0 +1,31 @@
+package {{ application_id }}.feature.items
+
+import androidx.navigation.NavController
+import androidx.navigation.NavGraphBuilder
+import androidx.navigation.NavOptions
+import androidx.navigation.compose.composable
+import kotlinx.serialization.Serializable
+
+/** Rutas type-safe de la feature (Navigation Compose). */
+@Serializable
+data object ItemsListRoute
+
+@Serializable
+data class ItemDetailRoute(val id: String)
+
+fun NavController.navigateToItemDetail(id: String, navOptions: NavOptions? = null) =
+    navigate(ItemDetailRoute(id), navOptions)
+
+/** Registra las pantallas de la feature. La app decide a dónde ir (no hay dependencias entre features). */
+fun NavGraphBuilder.itemsGraph(
+    onItemClick: (String) -> Unit,
+    onBack: () -> Unit,
+    onRequestSignIn: () -> Unit,
+) {
+    composable<ItemsListRoute> {
+        ItemsListRoute(onItemClick = onItemClick, onRequestSignIn = onRequestSignIn)
+    }
+    composable<ItemDetailRoute> {
+        ItemDetailRoute(onBack = onBack, onRequestSignIn = onRequestSignIn)
+    }
+}

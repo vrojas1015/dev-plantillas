@@ -1,0 +1,114 @@
+package {{ application_id }}.core.network
+
+import io.ktor.client.HttpClient
+import io.ktor.client.call.body
+import io.ktor.client.engine.HttpClientEngine
+import io.ktor.client.plugins.HttpRequestRetry
+import io.ktor.client.plugins.HttpSend
+import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.defaultRequest
+import io.ktor.client.plugins.plugin
+import io.ktor.client.statement.HttpResponse
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpMethod
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.isSuccess
+import io.ktor.serialization.kotlinx.json.json
+import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.Json
+import java.io.IOException
+import {{ application_id }}.core.domain.AppCheckTokenProvider
+import {{ application_id }}.core.domain.AuthRepository
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+
+internal val GatewayJson = Json {
+    ignoreUnknownKeys = true
+    explicitNulls = false
+}
+
+/**
+ * Cliente HTTP del gateway:
+ * - interceptor (HttpSend) que agrega `Authorization: Bearer <ID token>` y el
+ *   token de App Check; ante un 401 renueva el token una vez y reintenta; si
+ *   sigue en 401 avisa a la sesión (la UI pide volver a iniciar sesión).
+ * - timeouts y reintentos con backoff exponencial SOLO para GET.
+ */
+internal fun createHttpClient(
+    engine: HttpClientEngine,
+    config: NetworkConfig,
+    auth: AuthRepository,
+    appCheck: AppCheckTokenProvider,
+): HttpClient {
+    val client = HttpClient(engine) {
+        expectSuccess = false
+        install(ContentNegotiation) { json(GatewayJson) }
+        install(HttpTimeout) {
+            requestTimeoutMillis = config.timeoutMillis
+            connectTimeoutMillis = config.timeoutMillis
+        }
+        install(HttpRequestRetry) {
+            // Un POST repetido podría crear dos veces: solo se reintentan lecturas.
+            retryIf(config.maxRetries) { request, response ->
+                request.method == HttpMethod.Get && response.status.value >= HttpStatusCode.InternalServerError.value
+            }
+            retryOnExceptionIf(config.maxRetries) { request, cause ->
+                request.method == HttpMethod.Get && cause is IOException
+            }
+            delayMillis { retry -> config.retryBaseDelayMillis * (1L shl (retry - 1)) }
+        }
+        defaultRequest { url(config.baseUrl.trimEnd('/') + "/") }
+    }
+    client.plugin(HttpSend).intercept { request ->
+        appCheck.token()?.let { request.headers[APP_CHECK_HEADER] = it }
+        auth.idToken(forceRefresh = false)?.let { request.headers[HttpHeaders.Authorization] = "Bearer $it" }
+        var call = execute(request)
+        if (call.response.status == HttpStatusCode.Unauthorized) {
+            val fresh = auth.idToken(forceRefresh = true)
+            if (fresh != null) {
+                request.headers[HttpHeaders.Authorization] = "Bearer $fresh"
+                call = execute(request)
+            }
+            if (call.response.status == HttpStatusCode.Unauthorized) auth.onUnauthorized()
+        }
+        call
+    }
+    return client
+}
+
+/** Ejecuta una llamada y traduce cualquier falla a AppException. */
+internal suspend inline fun <reified T> HttpClient.callApi(block: HttpClient.() -> HttpResponse): T {
+    val response = try {
+        block()
+    } catch (e: IOException) {
+        throw AppException(AppError.Offline, e)
+    }
+    if (!response.status.isSuccess()) {
+        throw AppException(errorFor(response.status.value, response.errorMessage()))
+    }
+    return try {
+        response.body<T>()
+    } catch (e: SerializationException) {
+        throw AppException(AppError.Server(response.status.value), e)
+    }
+}
+
+internal fun errorFor(status: Int, message: String?): AppError = when (status) {
+    HttpStatusCode.BadRequest.value, HttpStatusCode.UnprocessableEntity.value -> AppError.Invalid(message)
+    HttpStatusCode.Unauthorized.value -> AppError.Unauthorized
+    HttpStatusCode.Forbidden.value -> AppError.Forbidden
+    HttpStatusCode.NotFound.value -> AppError.NotFound
+    else -> AppError.Server(status)
+}
+
+/** Mensaje del error del gateway, si el cuerpo tiene el formato esperado (si no, null). */
+@Suppress("SwallowedException")
+internal suspend fun HttpResponse.errorMessage(): String? =
+    try {
+        body<ErrorJson>().error?.message?.takeIf { it.isNotBlank() }
+    } catch (e: SerializationException) {
+        null
+    } catch (e: IOException) {
+        null
+    }

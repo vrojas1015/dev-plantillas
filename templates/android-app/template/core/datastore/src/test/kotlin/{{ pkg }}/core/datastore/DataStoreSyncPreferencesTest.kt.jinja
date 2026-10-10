@@ -1,0 +1,28 @@
+package {{ application_id }}.core.datastore
+
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import kotlin.time.Instant
+
+class DataStoreSyncPreferencesTest {
+    @get:Rule val tmp = TemporaryFolder()
+
+    @Test
+    fun guardaYLeeLaUltimaSincronizacion() = runTest {
+        val store = PreferenceDataStoreFactory.create(scope = backgroundScope) {
+            tmp.newFile("prefs.preferences_pb").apply { delete() }
+        }
+        val prefs = DataStoreSyncPreferences(store)
+        assertNull(prefs.lastItemsSync.first())
+
+        val at = Instant.parse("2026-05-06T07:08:09Z")
+        prefs.setLastItemsSync(at)
+        assertEquals(at, prefs.lastItemsSync.first())
+    }
+}

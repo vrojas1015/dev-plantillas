@@ -1,0 +1,38 @@
+package {{ application_id }}.push
+
+import android.Manifest
+import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.app.NotificationChannelCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import {{ application_id }}.R
+
+/** Canales de notificación (Android 8+) y helper para mostrar una. */
+object Notifications {
+    /** Debe coincidir con default_notification_channel_id del AndroidManifest. */
+    const val CHANNEL_GENERAL = "general"
+
+    fun createChannels(context: Context) {
+        val channel = NotificationChannelCompat.Builder(CHANNEL_GENERAL, NotificationManagerCompat.IMPORTANCE_DEFAULT)
+            .setName(context.getString(R.string.notification_channel_general))
+            .build()
+        NotificationManagerCompat.from(context).createNotificationChannel(channel)
+    }
+
+    fun show(context: Context, id: Int, title: String?, body: String?) {
+        val allowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!allowed) return
+        val notification = NotificationCompat.Builder(context, CHANNEL_GENERAL)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setAutoCancel(true)
+            .build()
+        NotificationManagerCompat.from(context).notify(id, notification)
+    }
+}

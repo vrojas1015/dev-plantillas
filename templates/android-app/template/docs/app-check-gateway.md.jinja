@@ -1,0 +1,46 @@
+# App Check en el api-gateway
+
+App Check prueba que la llamada viene de **esta app** sin modificar en un
+dispositivo real (Play Integrity). Complementa al login: el ID token dice
+*quién* es el usuario; App Check dice *desde qué app* llama. Es la defensa
+contra scripts que usan la API pública con un token robado o creando cuentas
+(OWASP API6, acceso sin restricciones a flujos de negocio sensibles).
+
+## Qué manda la app
+
+{%- if fb %}
+Cada request lleva `X-Firebase-AppCheck: <token>` (`core:network`, desde
+`FirebaseAppCheckTokenProvider`). Si no se puede obtener (sin red, dispositivo
+no confiable), la request sale **sin** la cabecera y decide el gateway.
+{%- else %}
+Con `firebase=false` la app no manda App Check (`AppCheckTokenProvider` devuelve
+null). Con `copier update --data firebase=true` se agrega solo.
+{%- endif %}
+
+## Estado en el api-gateway: integración pendiente
+
+La plantilla `api-gateway` **todavía no verifica App Check** (verifica el ID
+token de Firebase, OIDC o API keys). Hasta que lo haga, la cabecera llega y se
+ignora: no rompe nada. La integración propuesta:
+
+1. **Verificar el JWT** de `X-Firebase-AppCheck` igual que el ID token, con
+   otra configuración:
+   - JWKS: `https://firebaseappcheck.googleapis.com/v1/jwks` (cachear, rotan).
+   - Algoritmo `RS256`; `iss` = `https://firebaseappcheck.googleapis.com/<número-de-proyecto>`;
+     `aud` contiene `projects/<número-de-proyecto>`; `exp` vigente.
+   - `sub` = App ID de Firebase de la app: aceptar solo los de nuestras apps
+     (lista en la config, p. ej. `APPCHECK_APP_IDS`).
+2. **Política por ruta** en `routes.yaml`, p. ej. `app_check: required | optional`:
+   - Empezar en **modo monitoreo**: verificar, loguear y medir cuántas requests
+     llegarían sin token válido, sin rechazar.
+   - Pasar a `required` en las rutas sensibles (crear, pagar, enviar) cuando la
+     métrica muestre que los clientes legítimos lo mandan. Rechazo: 401 con
+     `{"error": {"code": "UNAUTHENTICATED", ...}}` (el formato único del gateway).
+3. **Replay protection** (opcional, rutas críticas): tokens de un solo uso
+   (`getLimitedUseAppCheckToken` en la app) y la API `verifyToken` de Firebase
+   con consumo; cuesta una llamada extra por request.
+4. La web (Angular) usa reCAPTCHA Enterprise como proveedor: mismo JWKS, otro App ID.
+
+Mientras tanto, la protección efectiva es la del gateway: auth, autorización por
+ruta y rate limit. Pedir la integración con un issue en el repo de docs
+(referenciar este archivo).

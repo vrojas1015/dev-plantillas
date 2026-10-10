@@ -1,0 +1,82 @@
+# {{ app_name }} — contexto para Claude
+
+App Android nativa (`{{ application_id }}`): Kotlin + Jetpack Compose + Material 3,
+Hilt, Room, corrutinas/Flow. Backend: {% if rest %}REST contra el api-gateway (Ktor){% else %}gRPC con los stubs de `{{ protos_maven }}`{% endif %}.
+{%- if fb %} Firebase: Auth, App Check, FCM, Crashlytics.{% endif %}
+Las reglas comunes de la plataforma están en los `CLAUDE.md` de las carpetas padre.
+
+## Módulos
+
+| Módulo | Qué va | Plugin |
+|---|---|---|
+| `core:model` | Modelos de dominio (`Item`, `AppError`). **Kotlin puro** | `app.jvm.library` |
+| `core:domain` | Interfaces de repositorios y casos de uso. **Kotlin puro** | `app.jvm.library` |
+| `core:data` | Repositorios offline primero (Room = fuente de verdad) | `app.android.library` |
+| `core:network` | Cliente {% if rest %}REST (Ktor){% else %}gRPC (grpc-kotlin){% endif %}, token en cada request, errores -> `AppError` | `app.android.library` |
+| `core:database` | Room: entidades, DAOs, `schemas/` (commiteado) | `app.android.room` |
+| `core:datastore` | Preferencias chicas (DataStore) | `app.android.library` |
+| `core:auth` | Sesión y token{% if fb %} (Firebase Auth / App Check){% endif %} | `app.android.library` |
+| `core:designsystem` | Tema Material 3, componentes base | `app.android.compose` |
+| `core:ui` | Componentes compartidos (`ErrorMessage`, `Loading`) | `app.android.compose` |
+| `core:testing` | Fakes (`FakeItemsRepository`, `FakeAuthRepository`), `MainDispatcherRule` | `app.jvm.library` |
+| `feature:items` | Ejemplo: lista + detalle (ViewModel + pantallas + navegación) | `app.android.feature` |
+| `app` | `Application`, `MainActivity`, `AppNavHost`, login, DI de arranque, flavors | `app.android.application` |
+| `baselineprofile` | Generador de baseline profiles (necesita dispositivo) | — |
+
+Convention plugins en `build-logic/convention`; versiones SOLO en `gradle/libs.versions.toml`.
+
+## Reglas
+
+- **`core:model` y `core:domain` son Kotlin puro**: nada de `android.*`, `androidx.*`,
+  Firebase ni Hilt-Android. Son lo que se mueve a un módulo KMP (docs/kmp.md).
+  `verificarKotlinPuro` y `settings.gradle.kts` hacen fallar el build si no.
+- **Flujo unidireccional**: el ViewModel expone `StateFlow<XUiState>` (data class
+  inmutable) y recibe eventos; el composable solo dibuja el estado y llama callbacks.
+- **Offline primero**: la UI observa Room; la red solo escribe en Room (`refresh*`).
+- Toda falla sale de la capa de datos como `AppException(AppError)`; la UI la
+  muestra con `ErrorMessage`/`messageRes()`. 401 -> "Volver a iniciar sesión".
+- Una feature no depende de otra: comparten por `core`. La navegación entre
+  features la arma `app` (`AppNavHost`).
+- Hilt para todo (`@HiltViewModel`, `@Inject constructor`, módulos `internal`).
+- Corrutinas y `Flow`; nada de callbacks. Textos en `strings.xml`, nunca sueltos.
+- Composable con estado = `XRoute` (con `hiltViewModel()`) + `XScreen(state, callbacks)`
+  sin ViewModel (se testea con Robolectric). `Modifier` como primer parámetro opcional.
+
+## Agregar una feature
+
+1. Copiar `feature/items` a `feature/<nombre>` y renombrar paquete y `namespace`.
+2. `include(":feature:<nombre>")` en `settings.gradle.kts`.
+3. Su `build.gradle.kts` solo aplica `alias(libs.plugins.app.android.feature)`.
+4. Rutas `@Serializable` + `NavGraphBuilder.<nombre>Graph(...)`; registrarlo en `AppNavHost`.
+5. Datos nuevos: modelo en `core:model`, interfaz en `core:domain`, implementación
+   en `core:data` (+ red en `core:network`, tabla en `core:database` con migración).
+6. Tests: ViewModel (JUnit + Turbine con fakes de `core:testing`) y pantalla (Robolectric).
+
+## Comandos
+
+```bash
+./gradlew ktlintCheck detekt lint testDebugUnitTest assembleDebug   # lo mismo que el CI
+./gradlew ktlintFormat                                  # arregla el formato
+./gradlew :feature:items:testDebugUnitTest              # tests de un módulo
+./gradlew installQaDebug                                # app QA (debug) en el dispositivo
+./gradlew bundleProdRelease                             # AAB con R8 (firma: docs/play-console.md)
+./gradlew :app:generateBaselineProfile                  # con dispositivo conectado
+```
+
+Sin JDK/SDK local: README.md, "Compilar sin Android Studio" (Docker).
+
+## Build y publicación
+
+- Flavors `qa`/`prod` (applicationId `.qa` en QA), build types `debug` (`.debug`) y
+  `release` (R8). URL del gateway por flavor en `app/build.gradle.kts`.
+- Versión desde el tag: `qa-vX.Y.Z` -> pista interna de QA; `prod-vX.Y.Z` -> interna de
+  prod y producción escalonada con aprobación manual. Notas desde `CHANGELOG.md`.
+- Secretos y variables del CI: `docs/ci-cd.md`. Primer upload: `docs/play-console.md`.
+
+## Nunca
+
+- Commitear `google-services.json`, keystores (`*.jks`), cuentas de servicio o tokens.
+- `GlobalScope`, `runBlocking` en código de la app, `!!` (detekt falla).
+- Lógica en los composables (va al ViewModel o al dominio) o red/Room desde la UI.
+- Versiones fuera de `libs.versions.toml`; baselines de detekt/lint para tapar errores.
+- Inventar un endpoint que el backend no tiene: issue en el repo de docs primero.

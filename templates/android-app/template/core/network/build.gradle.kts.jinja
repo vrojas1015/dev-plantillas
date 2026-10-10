@@ -1,0 +1,31 @@
+plugins {
+    alias(libs.plugins.app.android.library)
+    alias(libs.plugins.app.hilt)
+{%- if rest %}
+    alias(libs.plugins.kotlin.serialization)
+{%- endif %}
+}
+
+android {
+    namespace = "{{ application_id }}.core.network"
+}
+
+dependencies {
+    api(projects.core.domain)
+{%- if rest %}
+    // REST contra el api-gateway: Ktor (motor OkHttp) + kotlinx.serialization.
+    implementation(libs.ktor.client.core)
+    implementation(libs.ktor.client.okhttp)
+    implementation(libs.ktor.client.content.negotiation)
+    implementation(libs.ktor.serialization.kotlinx.json)
+    testImplementation(libs.okhttp.mockwebserver)
+{%- else %}
+    // gRPC: stubs Kotlin (grpc-kotlin) del repo protos + transporte OkHttp.
+    implementation(libs.protos)
+    implementation(platform(libs.grpc.bom))
+    implementation(libs.grpc.okhttp)
+    testImplementation(platform(libs.grpc.bom))
+    testImplementation(libs.grpc.inprocess)
+{%- endif %}
+    testImplementation(projects.core.testing)
+}

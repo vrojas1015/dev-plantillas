@@ -414,3 +414,61 @@ jobs:
           curl -fsS http://localhost:8080/blog/primer-post/ | grep -q 'BlogPosting'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/no-existe/)" = 404
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/inicio/)" = 301
+
+  # App Android: checks, tests (JVM + Robolectric) y build debug en la JVM, sin
+  # emulador. ubuntu-latest trae el Android SDK (AGP baja la plataforma que falte).
+  # grpc: publica antes un protos (kotlin) en mavenLocal, como haría el co-desarrollo.
+  android-app:
+    name: android-app (${{ matrix.api }}, firebase=${{ matrix.firebase }}, ${{ matrix.ci }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      BUF_TOKEN: ${{ secrets.BUF_TOKEN }}   # opcional: evita el límite de la BSR sin autenticar
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { api: rest, firebase: true,  ci: gitlab }
+          - { api: grpc, firebase: false, ci: github }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install copier
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6
+      - uses: bufbuild/buf-action@v1
+        if: matrix.api == 'grpc'
+        with: { setup_only: true }
+      - name: Contratos (protos con kotlin) en mavenLocal
+        if: matrix.api == 'grpc'
+        run: |
+          copier copy --defaults --trust -d org_name=miorg -d maven_group=com.miorg -d 'languages=[kotlin]' \
+            templates/protos "$RUNNER_TEMP/protos"
+          cd "$RUNNER_TEMP/protos"
+          bash scripts/generate.sh
+          cd gen/jvm && sh ./gradlew --no-daemon publishToMavenLocal
+      - name: Generar
+        run: |
+          copier copy --defaults --trust \
+            -d cliente_api=${{ matrix.api }} -d firebase=${{ matrix.firebase }} -d ci_provider=${{ matrix.ci }} \
+            -d protos_maven=com.miorg:protos:0.1.0 \
+            templates/android-app "$RUNNER_TEMP/app"
+      - name: ktlint, detekt, lint, tests y assembleDebug
+        working-directory: ${{ runner.temp }}/app
+        run: sh ./gradlew ktlintCheck detekt lint testDebugUnitTest assembleDebug
+      - name: core:model sigue siendo Kotlin puro
+        working-directory: ${{ runner.temp }}/app
+        run: |
+          printf '\ndependencies { implementation("com.google.android:android:4.1.1.4") }\n' >> core/model/build.gradle.kts
+          if sh ./gradlew :core:model:verificarKotlinPuro; then echo "verificarKotlinPuro no detectó la dependencia de Android"; exit 1; fi
+      - name: Reportes
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-app-${{ matrix.api }}-${{ matrix.ci }}
+          path: ${{ runner.temp }}/app/**/build/reports/
+          retention-days: 7

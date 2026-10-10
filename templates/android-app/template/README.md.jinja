@@ -1,0 +1,60 @@
+# {{ app_name }}
+
+App Android nativa (`{{ application_id }}`) generada con la plantilla
+`android-app`: Kotlin, Jetpack Compose + Material 3, Hilt, Room (offline
+primero), {% if rest %}REST contra el api-gateway (Ktor){% else %}gRPC con los contratos de `{{ protos_maven }}`{% endif %}{% if fb %}
+y Firebase (Auth, App Check, FCM, Crashlytics){% endif %}.
+
+Guía para agentes y reglas de arquitectura: [`CLAUDE.md`](CLAUDE.md).
+
+## Requisitos
+
+- Android Studio (incluye JDK 21 y el SDK), o JDK 21 + Android SDK (`compileSdk` 37).
+{%- if fb %}
+- `app/src/qa/google-services.json` y `app/src/prod/google-services.json` para
+  probar Firebase (no se commitean; [`docs/firebase.md`](docs/firebase.md)). Sin
+  ellos el build debug funciona con la sesión de desarrollo.
+{%- endif %}
+{%- if grpc %}
+- Acceso al registry Maven del repo protos ([`docs/protos.md`](docs/protos.md)).
+{%- endif %}
+
+## Comandos
+
+```bash
+./gradlew ktlintCheck detekt lint testDebugUnitTest assembleDebug   # verificación completa (= CI)
+./gradlew installQaDebug        # instala la variante QA de debug en un dispositivo
+./gradlew ktlintFormat          # formatea
+```
+
+Variantes: `qaDebug`, `qaRelease`, `prodDebug`, `prodRelease`. QA y prod tienen
+`applicationId` distinto, se pueden instalar las dos.
+
+## Compilar sin Android Studio (Docker)
+
+```bash
+docker volume create android-sdk && docker volume create gradle-cache
+docker run --rm -it -v "$PWD:/app" -w /app \
+  -v android-sdk:/sdk -e ANDROID_HOME=/sdk -v gradle-cache:/root/.gradle \
+  eclipse-temurin:21-jdk bash -c \
+  "apt-get update -qq && apt-get install -y -qq unzip >/dev/null && bash scripts/android-sdk.sh && \
+   ./gradlew ktlintCheck detekt lint testDebugUnitTest assembleDebug"
+```
+
+## Documentación
+
+| Documento | Para qué |
+|---|---|
+| [`docs/ci-cd.md`](docs/ci-cd.md) | Pipeline, tags, secretos y variables del CI |
+| [`docs/play-console.md`](docs/play-console.md) | Upload key, primer upload manual, Gradle Play Publisher, rollout |
+{%- if fb %}
+| [`docs/firebase.md`](docs/firebase.md) | google-services.json, App Check, FCM, Crashlytics |
+{%- else %}
+| [`docs/auth.md`](docs/auth.md) | Sesión de desarrollo (token fijo) y cómo conectar un proveedor real |
+{%- endif %}
+| [`docs/app-check-gateway.md`](docs/app-check-gateway.md) | Cómo el api-gateway verifica App Check |
+{%- if grpc %}
+| [`docs/protos.md`](docs/protos.md) | Consumir el artefacto de contratos |
+{%- endif %}
+| [`docs/baseline-profile.md`](docs/baseline-profile.md) | Generar el baseline profile en un dispositivo |
+| [`docs/kmp.md`](docs/kmp.md) | Camino a iOS con Kotlin Multiplatform |

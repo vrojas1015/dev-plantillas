@@ -1,0 +1,42 @@
+// Generador de baseline profiles: un test instrumentado que recorre la app y
+// registra qué código precompilar (arranque y scroll más rápidos en release).
+// Necesita un dispositivo o emulador (API 28+): ./gradlew :app:generateBaselineProfile
+// No corre en el CI de PR (ver docs/baseline-profile.md).
+plugins {
+    alias(libs.plugins.android.test)
+    alias(libs.plugins.baselineprofile)
+}
+
+android {
+    namespace = "{{ application_id }}.baselineprofile"
+    compileSdk = libs.versions.compileSdk.get().toInt()
+
+    defaultConfig {
+        minSdk = 28
+        targetSdk = libs.versions.targetSdk.get().toInt()
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    targetProjectPath = ":app"
+
+    flavorDimensions += "ambiente"
+    productFlavors {
+        create("qa") { dimension = "ambiente" }
+        create("prod") { dimension = "ambiente" }
+    }
+}
+
+baselineProfile {
+    useConnectedDevices = true
+}
+
+dependencies {
+    implementation(libs.androidx.test.ext.junit)
+    implementation(libs.androidx.uiautomator)
+    implementation(libs.androidx.benchmark.macro.junit4)
+}

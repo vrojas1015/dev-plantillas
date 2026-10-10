@@ -1,0 +1,69 @@
+package {{ application_id }}.core.data
+
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import javax.inject.Inject
+import kotlin.time.Clock
+import kotlin.time.Instant
+import {{ application_id }}.core.database.ItemDao
+import {{ application_id }}.core.database.ItemEntity
+import {{ application_id }}.core.database.asEntity
+import {{ application_id }}.core.database.asModel
+import {{ application_id }}.core.datastore.SyncPreferences
+import {{ application_id }}.core.domain.ItemsRepository
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+import {{ application_id }}.core.model.Item
+import {{ application_id }}.core.network.ItemsNetworkDataSource
+
+/**
+ * Offline primero: la UI observa Room; refresh* trae de la red y escribe en
+ * Room, y Room avisa a quien observa. Sin red, observe* sigue devolviendo lo
+ * último guardado y refresh* lanza AppException(AppError.Offline).
+ */
+internal class OfflineFirstItemsRepository @Inject constructor(
+    private val dao: ItemDao,
+    private val network: ItemsNetworkDataSource,
+    private val preferences: SyncPreferences,
+    private val clock: Clock,
+) : ItemsRepository {
+    override fun observeItems(): Flow<List<Item>> = dao.observeAll().map { rows -> rows.map(ItemEntity::asModel) }
+
+    override fun observeItem(id: String): Flow<Item?> = dao.observeById(id).map { it?.asModel() }
+
+    override fun observeLastSync(): Flow<Instant?> = preferences.lastItemsSync
+
+    override suspend fun refreshItems() {
+        val all = mutableListOf<Item>()
+        var cursor: String? = null
+        var pages = 0
+        do {
+            val page = network.list(cursor = cursor, limit = PAGE_SIZE)
+            all += page.items
+            cursor = page.nextCursor
+            pages++
+        } while (cursor != null && pages < MAX_PAGES)
+        dao.replaceAll(all.map(Item::asEntity))
+        preferences.setLastItemsSync(clock.now())
+    }
+
+    override suspend fun refreshItem(id: String) {
+        try {
+            dao.upsert(listOf(network.get(id).asEntity()))
+        } catch (e: AppException) {
+            // Borrado en el servidor: que tampoco aparezca localmente.
+            if (e.error == AppError.NotFound) dao.delete(id)
+            throw e
+        }
+    }
+
+    override suspend fun createItem(name: String, description: String): Item =
+        network.create(name, description).also { dao.upsert(listOf(it.asEntity())) }
+
+    private companion object {
+        const val PAGE_SIZE = 50
+
+        // Tope de seguridad: una lista de ejemplo no debería pasar de 1000 items.
+        const val MAX_PAGES = 20
+    }
+}

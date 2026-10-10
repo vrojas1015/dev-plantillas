@@ -1,0 +1,84 @@
+package {{ application_id }}.core.auth
+
+import com.google.firebase.FirebaseException
+import com.google.firebase.FirebaseNetworkException
+import com.google.firebase.FirebaseTooManyRequestsException
+import com.google.firebase.appcheck.FirebaseAppCheck
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.auth.FirebaseUser
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.tasks.await
+import {{ application_id }}.core.domain.AppCheckTokenProvider
+import {{ application_id }}.core.domain.AuthRepository
+import {{ application_id }}.core.domain.SessionState
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+
+/**
+ * Sesión con Firebase Auth (email y contraseña; Google con Credential Manager
+ * se agrega acá, ver docs/firebase.md). El ID token de Firebase autentica
+ * contra el api-gateway (auth=firebase): Firebase lo cachea y lo renueva solo;
+ * forceRefresh pide uno nuevo cuando el gateway rechazó el anterior.
+ */
+internal class FirebaseAuthRepository(private val auth: FirebaseAuth) : AuthRepository {
+    private val state = MutableStateFlow(auth.currentUser.toSession())
+    override val session: StateFlow<SessionState> = state.asStateFlow()
+
+    init {
+        auth.addAuthStateListener { state.value = it.currentUser.toSession() }
+    }
+
+    override suspend fun idToken(forceRefresh: Boolean): String? {
+        val user = auth.currentUser ?: return null
+        return try {
+            user.getIdToken(forceRefresh).await().token
+        } catch (e: FirebaseNetworkException) {
+            throw AppException(AppError.Offline, e)
+        } catch (e: FirebaseException) {
+            throw AppException(AppError.Unauthorized, e)
+        }
+    }
+
+    override suspend fun signIn(email: String, password: String) {
+        try {
+            auth.signInWithEmailAndPassword(email, password).await()
+        } catch (e: FirebaseNetworkException) {
+            throw AppException(AppError.Offline, e)
+        } catch (e: FirebaseTooManyRequestsException) {
+            throw AppException(AppError.Server(TOO_MANY_REQUESTS), e)
+        } catch (e: FirebaseAuthException) {
+            throw AppException(AppError.Unauthorized, e)
+        }
+    }
+
+    override suspend fun signOut() = auth.signOut()
+
+    override fun onUnauthorized() {
+        state.value = SessionState.Expired
+    }
+
+    private fun FirebaseUser?.toSession(): SessionState =
+        if (this == null) SessionState.SignedOut else SessionState.SignedIn(uid)
+
+    private companion object {
+        const val TOO_MANY_REQUESTS = 429
+    }
+}
+
+/**
+ * Token de App Check para la cabecera X-Firebase-AppCheck. Si no se puede
+ * obtener (sin red, dispositivo no confiable) va sin token y decide el gateway.
+ */
+internal class FirebaseAppCheckTokenProvider(private val appCheck: FirebaseAppCheck) : AppCheckTokenProvider {
+    // Sin token la request sigue igual: no hay nada que propagar.
+    @Suppress("SwallowedException")
+    override suspend fun token(): String? =
+        try {
+            appCheck.getAppCheckToken(false).await().token
+        } catch (e: FirebaseException) {
+            null
+        }
+}

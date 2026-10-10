@@ -1,0 +1,19 @@
+# Gradle / Android Studio
+.gradle/
+.kotlin/
+build/
+local.properties
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+.DS_Store
+
+# Secretos: NUNCA al repo (docs/firebase.md, docs/play-console.md)
+google-services.json
+*.jks
+*.keystore
+*.p12
+service-account*.json
+play-credentials*.json

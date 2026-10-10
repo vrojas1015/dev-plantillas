@@ -1,0 +1,38 @@
+package {{ application_id }}.core.domain
+
+import kotlinx.coroutines.flow.Flow
+import javax.inject.Inject
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+import {{ application_id }}.core.model.Item
+
+/** Lista de items guardada localmente (se actualiza sola cuando refresca la red). */
+class ObserveItemsUseCase @Inject constructor(private val repository: ItemsRepository) {
+    operator fun invoke(): Flow<List<Item>> = repository.observeItems()
+}
+
+class ObserveItemUseCase @Inject constructor(private val repository: ItemsRepository) {
+    operator fun invoke(id: String): Flow<Item?> = repository.observeItem(id)
+}
+
+class RefreshItemsUseCase @Inject constructor(private val repository: ItemsRepository) {
+    suspend operator fun invoke() = repository.refreshItems()
+}
+
+class RefreshItemUseCase @Inject constructor(private val repository: ItemsRepository) {
+    suspend operator fun invoke(id: String) = repository.refreshItem(id)
+}
+
+/** Crea un item validando antes de ir a la red (reglas de negocio = dominio). */
+class CreateItemUseCase @Inject constructor(private val repository: ItemsRepository) {
+    suspend operator fun invoke(name: String, description: String): Item {
+        val trimmed = name.trim()
+        if (trimmed.isEmpty()) throw AppException(AppError.Invalid("El nombre es obligatorio"))
+        if (trimmed.length > MAX_NAME) throw AppException(AppError.Invalid("Máximo $MAX_NAME caracteres"))
+        return repository.createItem(trimmed, description.trim())
+    }
+
+    private companion object {
+        const val MAX_NAME = 200
+    }
+}

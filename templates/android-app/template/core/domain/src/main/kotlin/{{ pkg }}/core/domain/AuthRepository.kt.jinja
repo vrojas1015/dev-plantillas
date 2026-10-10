@@ -1,0 +1,37 @@
+package {{ application_id }}.core.domain
+
+import kotlinx.coroutines.flow.StateFlow
+
+/** Estado de la sesión del usuario. */
+sealed interface SessionState {
+    data object SignedOut : SessionState
+
+    data class SignedIn(val userId: String) : SessionState
+
+    /** El backend rechazó el token aun renovado: hay que volver a iniciar sesión. */
+    data object Expired : SessionState
+}
+
+/**
+ * Sesión y token para el gateway. La implementación vive en core:auth
+ * (Firebase Auth o un token fijo de desarrollo).
+ */
+interface AuthRepository {
+    val session: StateFlow<SessionState>
+
+    /** ID token para `Authorization: Bearer`; null si no hay sesión. */
+    suspend fun idToken(forceRefresh: Boolean = false): String?
+
+    /** Lanza AppException si las credenciales no sirven o no hay red. */
+    suspend fun signIn(email: String, password: String)
+
+    suspend fun signOut()
+
+    /** La red avisa que el token fue rechazado aun después de renovarlo. */
+    fun onUnauthorized()
+}
+
+/** Token de App Check (prueba que la llamada viene de esta app); null si no hay. */
+fun interface AppCheckTokenProvider {
+    suspend fun token(): String?
+}

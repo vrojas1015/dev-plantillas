@@ -1,0 +1,160 @@
+package {{ application_id }}.core.network
+
+import com.google.protobuf.Timestamp
+import io.grpc.Channel
+import io.grpc.ManagedChannel
+import io.grpc.Metadata
+import io.grpc.Status
+import io.grpc.StatusException
+import io.grpc.okhttp.OkHttpChannelBuilder
+import java.net.URI
+import java.util.concurrent.TimeUnit
+import javax.inject.Inject
+import kotlin.time.Instant
+import {{ protos_paquete }}.ItemServiceGrpc
+import {{ protos_paquete }}.ItemServiceGrpcKt.ItemServiceCoroutineStub
+import {{ protos_paquete }}.createItemRequest
+import {{ protos_paquete }}.getItemRequest
+import {{ protos_paquete }}.listItemsRequest
+import {{ protos_paquete }}.pageRequest
+import {{ application_id }}.core.domain.AppCheckTokenProvider
+import {{ application_id }}.core.domain.AuthRepository
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+import {{ application_id }}.core.model.Item
+import {{ application_id }}.core.model.ItemsPage
+import {{ protos_paquete }}.Item as ItemProto
+
+/** Lo que necesita cada llamada: deadline y credenciales. */
+internal class GrpcCallConfig(
+    val timeoutMillis: Long,
+    val auth: AuthRepository,
+    val appCheck: AppCheckTokenProvider,
+)
+
+/**
+ * ItemService por gRPC con los stubs de corrutinas (grpc-kotlin) del artefacto
+ * de contratos. El token va como metadata `authorization: Bearer ...`; ante
+ * UNAUTHENTICATED se renueva una vez y se reintenta.
+ */
+internal class GrpcItemsDataSource @Inject constructor(
+    channel: Channel,
+    private val call: GrpcCallConfig,
+) : ItemsNetworkDataSource {
+    private val stub = ItemServiceCoroutineStub(channel)
+
+    override suspend fun list(cursor: String?, limit: Int): ItemsPage {
+        val response = withAuth { headers ->
+            stub.deadline().listItems(
+                listItemsRequest {
+                    page = pageRequest {
+                        this.cursor = cursor.orEmpty()
+                        this.limit = limit
+                    }
+                },
+                headers,
+            )
+        }
+        return ItemsPage(
+            items = response.itemsList.map { it.asModel() },
+            nextCursor = response.page.nextCursor.takeIf { response.page.hasNext && it.isNotEmpty() },
+        )
+    }
+
+    override suspend fun get(id: String): Item =
+        withAuth { headers -> stub.deadline().getItem(getItemRequest { this.id = id }, headers) }.item.asModel()
+
+    override suspend fun create(name: String, description: String): Item =
+        withAuth { headers ->
+            stub.deadline().createItem(
+                createItemRequest {
+                    this.name = name
+                    this.description = description
+                },
+                headers,
+            )
+        }.item.asModel()
+
+    private fun ItemServiceCoroutineStub.deadline() = withDeadlineAfter(call.timeoutMillis, TimeUnit.MILLISECONDS)
+
+    private suspend fun <T> withAuth(block: suspend (Metadata) -> T): T =
+        try {
+            try {
+                block(headers(forceRefresh = false))
+            } catch (e: StatusException) {
+                if (e.status.code != Status.Code.UNAUTHENTICATED) throw e
+                block(headers(forceRefresh = true))
+            }
+        } catch (e: StatusException) {
+            val error = e.status.asAppError()
+            if (error == AppError.Unauthorized) call.auth.onUnauthorized()
+            throw AppException(error, e)
+        }
+
+    private suspend fun headers(forceRefresh: Boolean): Metadata = Metadata().apply {
+        call.auth.idToken(forceRefresh)?.let { put(AUTHORIZATION, "Bearer $it") }
+        call.appCheck.token()?.let { put(APP_CHECK, it) }
+    }
+
+    private companion object {
+        val AUTHORIZATION: Metadata.Key<String> = Metadata.Key.of("authorization", Metadata.ASCII_STRING_MARSHALLER)
+        val APP_CHECK: Metadata.Key<String> = Metadata.Key.of(APP_CHECK_HEADER, Metadata.ASCII_STRING_MARSHALLER)
+    }
+}
+
+internal fun Status.asAppError(): AppError = when (code) {
+    Status.Code.UNAVAILABLE, Status.Code.DEADLINE_EXCEEDED -> AppError.Offline
+    Status.Code.UNAUTHENTICATED -> AppError.Unauthorized
+    Status.Code.PERMISSION_DENIED -> AppError.Forbidden
+    Status.Code.NOT_FOUND -> AppError.NotFound
+    Status.Code.INVALID_ARGUMENT, Status.Code.FAILED_PRECONDITION -> AppError.Invalid(description)
+    else -> AppError.Server(null)
+}
+
+private fun ItemProto.asModel(): Item = Item(
+    id = id,
+    name = name,
+    description = description,
+    createdAt = if (hasCreatedAt()) createdAt.asInstant() else null,
+    updatedAt = if (hasUpdatedAt()) updatedAt.asInstant() else null,
+)
+
+private fun Timestamp.asInstant(): Instant = Instant.fromEpochSeconds(seconds, nanos)
+
+/**
+ * Canal OkHttp (el transporte recomendado en Android). https -> TLS; http ->
+ * texto plano (solo para un servidor local). Reintentos con backoff solo para
+ * las lecturas (GetItem, ListItems) vía service config.
+ */
+internal fun createChannel(config: NetworkConfig): ManagedChannel {
+    val uri = URI(config.baseUrl)
+    val tls = uri.scheme == "https"
+    val port = when {
+        uri.port != -1 -> uri.port
+        tls -> HTTPS_PORT
+        else -> HTTP_PORT
+    }
+    return OkHttpChannelBuilder.forAddress(uri.host, port)
+        .apply { if (tls) useTransportSecurity() else usePlaintext() }
+        .defaultServiceConfig(retryServiceConfig(config.maxRetries))
+        .enableRetry()
+        .build()
+}
+
+private fun retryServiceConfig(maxRetries: Int): Map<String, Any> = mapOf(
+    "methodConfig" to listOf(
+        mapOf(
+            "name" to listOf("GetItem", "ListItems").map { mapOf("service" to ItemServiceGrpc.SERVICE_NAME, "method" to it) },
+            "retryPolicy" to mapOf(
+                "maxAttempts" to (maxRetries + 1).toDouble(),
+                "initialBackoff" to "0.5s",
+                "maxBackoff" to "5s",
+                "backoffMultiplier" to 2.0,
+                "retryableStatusCodes" to listOf("UNAVAILABLE"),
+            ),
+        ),
+    ),
+)
+
+private const val HTTPS_PORT = 443
+private const val HTTP_PORT = 80

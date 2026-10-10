@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(./gradlew ktlintCheck:*)",
+      "Bash(./gradlew ktlintFormat:*)",
+      "Bash(./gradlew detekt:*)",
+      "Bash(./gradlew lint:*)",
+      "Bash(./gradlew testDebugUnitTest:*)",
+      "Bash(./gradlew assembleDebug:*)",
+      "Bash(./gradlew check:*)",
+      "Bash(./gradlew :core:model:verificarKotlinPuro:*)",
+      "Bash(./gradlew :core:domain:verificarKotlinPuro:*)",
+      "Bash(./gradlew tasks:*)",
+      "Bash(./gradlew dependencies:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git blame:*)",
+      "Bash(git branch --list:*)",
+      "Bash(git branch --show-current)"
+    ],
+    "deny": [
+      "Read(./**/google-services.json)",
+      "Read(./**/*.jks)",
+      "Read(./**/*.keystore)",
+      "Read(./local.properties)",
+      "Bash(./gradlew publish:*)",
+      "Bash(./gradlew promote:*)",
+      "Bash(./gradlew bootstrap:*)",
+      "Bash(git push:*)"
+    ]
+  }
+}

@@ -1,0 +1,59 @@
+package {{ application_id }}.core.auth
+
+{% if fb -%}
+import android.content.Context
+import android.util.Log
+import com.google.firebase.FirebaseApp
+import com.google.firebase.appcheck.FirebaseAppCheck
+import com.google.firebase.auth.FirebaseAuth
+{% endif -%}
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+{%- if fb %}
+import dagger.hilt.android.qualifiers.ApplicationContext
+{%- endif %}
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+import {{ application_id }}.core.domain.AppCheckTokenProvider
+import {{ application_id }}.core.domain.AuthRepository
+
+@Module
+@InstallIn(SingletonComponent::class)
+internal object AuthModule {
+{%- if fb %}
+    private const val TAG = "AuthModule"
+
+    /**
+     * Firebase Auth si la app tiene google-services.json; si no (debug local o
+     * tests), la sesión de desarrollo con token fijo.
+     */
+    @Provides
+    @Singleton
+    fun authRepository(@ApplicationContext context: Context): AuthRepository =
+        if (FirebaseApp.getApps(context).isEmpty()) {
+            Log.w(TAG, "Firebase no está configurado (falta google-services.json): sesión de desarrollo")
+            DevTokenAuthRepository(BuildConfig.DEV_AUTH_TOKEN)
+        } else {
+            FirebaseAuthRepository(FirebaseAuth.getInstance())
+        }
+
+    @Provides
+    @Singleton
+    fun appCheckTokenProvider(@ApplicationContext context: Context): AppCheckTokenProvider =
+        if (FirebaseApp.getApps(context).isEmpty()) {
+            AppCheckTokenProvider { null }
+        } else {
+            FirebaseAppCheckTokenProvider(FirebaseAppCheck.getInstance())
+        }
+{%- else %}
+    /** Sin Firebase: token fijo de desarrollo (docs/auth.md para conectar un proveedor real). */
+    @Provides
+    @Singleton
+    fun authRepository(): AuthRepository = DevTokenAuthRepository(BuildConfig.DEV_AUTH_TOKEN)
+
+    @Provides
+    @Singleton
+    fun appCheckTokenProvider(): AppCheckTokenProvider = AppCheckTokenProvider { null }
+{%- endif %}
+}

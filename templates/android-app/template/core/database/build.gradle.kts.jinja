@@ -1,0 +1,15 @@
+plugins {
+    alias(libs.plugins.app.android.library)
+    alias(libs.plugins.app.android.room)
+    alias(libs.plugins.app.hilt)
+}
+
+android {
+    namespace = "{{ application_id }}.core.database"
+}
+
+dependencies {
+    api(projects.core.model)
+    // Tipos de Room (RoomDatabase, Dao) en la API pública del módulo.
+    api(libs.androidx.room.runtime)
+}

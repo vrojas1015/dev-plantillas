@@ -1,0 +1,61 @@
+package {{ application_id }}.feature.items
+
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+import {{ application_id }}.core.domain.ObserveItemUseCase
+import {{ application_id }}.core.domain.RefreshItemUseCase
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+import {{ application_id }}.core.model.Item
+
+data class ItemDetailUiState(
+    val item: Item? = null,
+    val isRefreshing: Boolean = false,
+    val error: AppError? = null,
+)
+
+@HiltViewModel
+class ItemDetailViewModel @Inject constructor(
+    savedStateHandle: SavedStateHandle,
+    observeItem: ObserveItemUseCase,
+    private val refreshItem: RefreshItemUseCase,
+) : ViewModel() {
+    // Argumento de ItemDetailRoute(id): Navigation lo guarda con el nombre de la propiedad.
+    private val id: String = checkNotNull(savedStateHandle["id"]) { "ItemDetailRoute sin id" }
+    private val refresh = MutableStateFlow<Pair<Boolean, AppError?>>(true to null)
+
+    val uiState: StateFlow<ItemDetailUiState> =
+        combine(observeItem(id), refresh) { item, (refreshing, error) ->
+            ItemDetailUiState(item = item, isRefreshing = refreshing, error = error)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS), ItemDetailUiState(isRefreshing = true))
+
+    init {
+        retry()
+    }
+
+    fun retry() {
+        viewModelScope.launch {
+            refresh.value = true to null
+            val error = try {
+                refreshItem(id)
+                null
+            } catch (e: AppException) {
+                e.error
+            }
+            refresh.value = false to error
+        }
+    }
+
+    private companion object {
+        const val STOP_TIMEOUT_MILLIS = 5_000L
+    }
+}

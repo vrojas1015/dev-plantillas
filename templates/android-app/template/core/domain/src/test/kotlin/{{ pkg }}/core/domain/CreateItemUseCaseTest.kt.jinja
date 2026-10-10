@@ -1,0 +1,50 @@
+package {{ application_id }}.core.domain
+
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.time.Instant
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.model.AppException
+import {{ application_id }}.core.model.Item
+
+class CreateItemUseCaseTest {
+    private val repository = RecordingRepository()
+    private val createItem = CreateItemUseCase(repository)
+
+    @Test
+    fun recortaEspaciosYCrea() = runTest {
+        val item = createItem("  Lámpara ", " de pie ")
+        assertEquals("Lámpara", item.name)
+        assertEquals(listOf("Lámpara" to "de pie"), repository.created)
+    }
+
+    @Test
+    fun nombreVacioEsInvalidoYNoLlamaALaRed() = runTest {
+        val error = assertFailsWith<AppException> { createItem("   ", "x") }
+        assertEquals(AppError.Invalid("El nombre es obligatorio"), error.error)
+        assertEquals(emptyList(), repository.created)
+    }
+
+    private class RecordingRepository : ItemsRepository {
+        val created = mutableListOf<Pair<String, String>>()
+
+        override fun observeItems(): Flow<List<Item>> = emptyFlow()
+
+        override fun observeItem(id: String): Flow<Item?> = emptyFlow()
+
+        override fun observeLastSync(): Flow<Instant?> = emptyFlow()
+
+        override suspend fun refreshItems() = Unit
+
+        override suspend fun refreshItem(id: String) = Unit
+
+        override suspend fun createItem(name: String, description: String): Item {
+            created += name to description
+            return Item(id = "1", name = name, description = description)
+        }
+    }
+}

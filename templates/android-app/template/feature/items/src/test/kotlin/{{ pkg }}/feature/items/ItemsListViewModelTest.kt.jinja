@@ -1,0 +1,71 @@
+package {{ application_id }}.feature.items
+
+import app.cash.turbine.test
+import kotlinx.coroutines.test.runTest
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import {{ application_id }}.core.domain.ObserveItemsUseCase
+import {{ application_id }}.core.domain.RefreshItemsUseCase
+import {{ application_id }}.core.model.AppError
+import {{ application_id }}.core.testing.FakeItemsRepository
+import {{ application_id }}.core.testing.MainDispatcherRule
+import {{ application_id }}.core.testing.TestData
+
+class ItemsListViewModelTest {
+    @get:Rule val mainDispatcher = MainDispatcherRule()
+
+    private fun viewModel(repository: FakeItemsRepository) =
+        ItemsListViewModel(ObserveItemsUseCase(repository), RefreshItemsUseCase(repository))
+
+    @Test
+    fun alAbrirRefrescaYMuestraLosItems() = runTest {
+        val repository = FakeItemsRepository(stored = emptyList(), remote = TestData.items)
+
+        viewModel(repository).uiState.test {
+            val state = expectMostRecentItem()
+            assertEquals(TestData.items, state.items)
+            assertFalse(state.isRefreshing)
+            assertEquals(null, state.error)
+        }
+        assertEquals(1, repository.refreshCount)
+    }
+
+    @Test
+    fun sinConexionMuestraLoGuardado() = runTest {
+        val repository = FakeItemsRepository(stored = TestData.items, failWith = AppError.Offline)
+
+        viewModel(repository).uiState.test {
+            val state = expectMostRecentItem()
+            assertEquals(TestData.items, state.items)
+            assertEquals(AppError.Offline, state.error)
+            assertTrue(state.showingStoredData)
+        }
+    }
+
+    @Test
+    fun unauthorizedPideVolverAIniciarSesion() = runTest {
+        val repository = FakeItemsRepository(stored = emptyList(), failWith = AppError.Unauthorized)
+
+        viewModel(repository).uiState.test {
+            assertTrue(expectMostRecentItem().requiresSignIn)
+        }
+    }
+
+    @Test
+    fun reintentarDespuesDeUnErrorLimpiaElError() = runTest {
+        val repository = FakeItemsRepository(stored = emptyList(), remote = TestData.items, failWith = AppError.Server(503))
+        val viewModel = viewModel(repository)
+
+        viewModel.uiState.test {
+            assertEquals(AppError.Server(503), expectMostRecentItem().error)
+            repository.failWith = null
+            viewModel.onEvent(ItemsListEvent.Refresh)
+            val state = expectMostRecentItem()
+            assertEquals(null, state.error)
+            assertEquals(TestData.items, state.items)
+        }
+    }
+}

@@ -1,0 +1,26 @@
+package {{ application_id }}.core.domain
+
+import kotlinx.coroutines.flow.Flow
+import kotlin.time.Instant
+import {{ application_id }}.core.model.Item
+
+/**
+ * Items con la base local como fuente de verdad: observe* lee la base (funciona
+ * sin conexión) y refresh* la actualiza desde la red.
+ *
+ * Los métodos suspend lanzan [{{ application_id }}.core.model.AppException] ante un error.
+ */
+interface ItemsRepository {
+    fun observeItems(): Flow<List<Item>>
+
+    fun observeItem(id: String): Flow<Item?>
+
+    /** Momento de la última sincronización completa (null: nunca). */
+    fun observeLastSync(): Flow<Instant?>
+
+    suspend fun refreshItems()
+
+    suspend fun refreshItem(id: String)
+
+    suspend fun createItem(name: String, description: String): Item
+}

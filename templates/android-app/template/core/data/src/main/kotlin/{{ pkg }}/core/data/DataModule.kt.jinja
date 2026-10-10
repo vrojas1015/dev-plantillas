@@ -1,0 +1,23 @@
+package {{ application_id }}.core.data
+
+import dagger.Binds
+import dagger.Module
+import dagger.Provides
+import dagger.hilt.InstallIn
+import dagger.hilt.components.SingletonComponent
+import javax.inject.Singleton
+import kotlin.time.Clock
+import {{ application_id }}.core.domain.ItemsRepository
+
+@Module
+@InstallIn(SingletonComponent::class)
+internal abstract class DataModule {
+    @Binds
+    @Singleton
+    abstract fun itemsRepository(impl: OfflineFirstItemsRepository): ItemsRepository
+
+    companion object {
+        @Provides
+        fun clock(): Clock = Clock.System
+    }
+}
