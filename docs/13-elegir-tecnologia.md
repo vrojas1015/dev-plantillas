@@ -9,12 +9,12 @@ dos cosas en la balanza.
 
 Antes de elegir, responder en orden:
 
-1. **¿Qué tipo de problema es?** (secciones 2 y 3: cada tecnología tiene señales
+1. **¿Qué tipo de problema es?** (secciones 2 a 4: cada tecnología tiene señales
    claras de cuándo encaja).
 2. **¿Hay una plantilla?** Una tecnología con plantilla trae CI, seguridad,
    deploy, tests y agentes resueltos. Sin plantilla, todo eso se construye y se
    mantiene a mano.
-3. **¿El beneficio paga el costo de una tecnología más?** (sección 4).
+3. **¿El beneficio paga el costo de una tecnología más?** (sección 5).
 4. **Si se elige algo nuevo, se escribe un ADR** en `docs` con el problema, las
    opciones y por qué.
 
@@ -225,7 +225,113 @@ negocio en C++.
 - **¿Una sola persona tiene que sacar iOS y Android?** → Expo o KMP, no dos
   apps nativas separadas.
 
-## 4. El costo de una tecnología más
+## 4. Protocolos de API hacia los clientes
+
+Dentro de la plataforma los servicios hablan **gRPC** con contratos de `protos`.
+Hacia afuera, el `api-gateway` expone el protocolo que necesita cada cliente
+(arquitectura en `docs/05-api-gateway.md`). Un mismo servicio puede servir a
+varios clientes por protocolos distintos sin cambiar: sólo cambia el adaptador
+del gateway.
+
+### Resumen
+
+| Protocolo | Su terreno | Estado en el gateway |
+|---|---|---|
+| **REST / JSON** | El default: apps web y móviles propias, integraciones de terceros, APIs públicas | Fase 1 (construida) |
+| **GraphQL** | Clientes con necesidades de datos muy variables: varias pantallas que combinan muchas entidades, apps móviles con red lenta, un ecosistema de clientes que no controlás | Fase 4 |
+| **SOAP** | Integraciones legacy que lo **exigen**: bancos, gobierno, ERPs, aseguradoras | Adaptador aparte (Java), cuando aparezca el caso |
+| **gRPC-Web / Connect** | Front o móvil propios que quieren tipos generados de los mismos `protos`, sin traducir a REST | Opción con ConnectRPC (`docs/05` §1) |
+| **WebSockets / SSE** | Tiempo real: notificaciones en vivo, chat, tableros que se actualizan | Servicio TypeScript o Go dedicado detrás del gateway |
+| **Webhooks** (salientes) | Avisarle a un sistema externo que algo pasó | Servicio que firma y reintenta los envíos |
+
+### REST
+
+**Elegirlo cuando:**
+
+- No hay una razón fuerte para otra cosa: es lo que todos los clientes,
+  herramientas y equipos conocen.
+- Terceros van a integrarse: OpenAPI generado, ejemplos con `curl`, sin
+  librerías especiales.
+- Importa la caché HTTP (CDN, navegador) en lecturas públicas.
+- Recursos con operaciones claras (crear, leer, listar, actualizar).
+
+**Cuidado con:**
+
+- Pantallas que necesitan datos de muchas entidades: terminan haciendo muchas
+  llamadas (*under-fetching*) o endpoints a medida por pantalla. Si se repite,
+  es la señal para un BFF o para GraphQL.
+
+### GraphQL
+
+**Elegirlo cuando:**
+
+- Muchas pantallas o clientes distintos piden **combinaciones diferentes** de las
+  mismas entidades, y mantener un endpoint REST por pantalla se vuelve inmanejable.
+- Apps móviles en redes lentas: una sola consulta trae exactamente lo necesario.
+- Hay clientes externos que arman sus propias consultas (API de producto).
+
+**No elegirlo cuando:**
+
+- Hay un solo cliente propio con pantallas estables: REST es más simple.
+- Se necesita caché HTTP simple: GraphQL va por `POST` a un solo endpoint.
+- El equipo no está dispuesto a pagar su complejidad de seguridad y rendimiento.
+
+**Costos que trae (y que el gateway tiene que resolver, `docs/05` §1 y §4):**
+
+| Riesgo | Control obligatorio |
+|---|---|
+| Una consulta pide miles de objetos | **Límite de profundidad y de costo** por consulta; el rate limit cuenta costo, no requests |
+| N+1 contra los servicios | *Dataloaders* que agrupan llamadas gRPC |
+| Autorización | Por campo y por objeto, no sólo por ruta: un solo endpoint expone todo el grafo |
+| Exploración del esquema | Introspección apagada en producción para clientes no confiables |
+
+### SOAP
+
+**Elegirlo sólo cuando** el otro lado lo exige y no hay alternativa: bancos,
+organismos de gobierno, ERPs y sistemas empresariales con contratos WSDL
+existentes. Nunca para clientes nuevos propios.
+
+**Cómo:** un **adaptador separado** en Java (Apache CXF) que traduce SOAP ↔ gRPC
+y pasa por el pipeline del gateway (auth, rate limit, logs). Así lo legacy
+queda aislado y el resto de la plataforma no aprende SOAP. Atención a WS-Security
+(firmas, certificados) y a XML (deshabilitar entidades externas: XXE).
+
+### gRPC-Web / Connect
+
+**Elegirlo cuando** el cliente es propio (Angular, Astro, Android, iOS) y se
+quiere usar **los mismos tipos generados desde `protos`** en el cliente,
+sin escribir ni mantener la traducción a REST. Connect además habla JSON por HTTP,
+así que sigue siendo depurable con `curl`.
+
+**No elegirlo cuando** hay terceros que se integran: para ellos, REST con OpenAPI.
+
+### Tiempo real y eventos
+
+| Necesidad | Protocolo |
+|---|---|
+| El servidor avisa al cliente (notificaciones, progreso, tableros) | **SSE** (simple, sobre HTTP, reconecta solo) |
+| Ida y vuelta continua (chat, colaboración) | **WebSockets** |
+| App móvil en segundo plano | **Push** (FCM), no una conexión abierta |
+| Avisar a un sistema externo | **Webhooks** firmados (HMAC), con reintentos y idempotencia |
+| Entre servicios internos | gRPC streaming o una cola/pub-sub (Pub/Sub en Google) |
+
+### Por tipo de cliente
+
+| Cliente | Primera opción | Alternativa |
+|---|---|---|
+| App web propia (Angular, React) | REST | Connect (tipos desde `protos`) |
+| Sitio público (Astro) | REST (en el build o SSR) | — |
+| App Android / iOS propia | REST | gRPC/Connect con stubs de `protos`; GraphQL si las pantallas combinan mucho |
+| Integración de un tercero | REST con OpenAPI | Webhooks para eventos |
+| Ecosistema de clientes externos con necesidades variadas | GraphQL | REST |
+| Banco, gobierno, ERP que exige WSDL | SOAP (adaptador) | — |
+| Otro servicio interno | gRPC directo (no pasa por el gateway) | Cola / pub-sub para eventos |
+
+**Regla práctica:** REST por defecto. Se agrega otro protocolo cuando un cliente
+concreto lo necesita, como un adaptador más del gateway, sin tocar los
+servicios.
+
+## 5. El costo de una tecnología más
 
 Cada lenguaje o framework nuevo en la plataforma suma, para siempre:
 
@@ -258,7 +364,7 @@ Elijas lo que elijas, el servicio cumple lo mismo:
 Así, cambiar de lenguaje para un servicio no cambia cómo se opera la
 plataforma.
 
-## 5. Plantillas: qué existe y qué falta
+## 6. Plantillas: qué existe y qué falta
 
 | Plantilla | Estado |
 |---|---|
