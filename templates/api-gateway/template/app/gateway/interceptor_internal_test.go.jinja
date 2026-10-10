@@ -1,0 +1,50 @@
+package gateway
+
+import (
+	"context"
+	"testing"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+
+	"{{ module_path }}/app/auth"
+	"{{ module_path }}/app/reqctx"
+)
+
+func TestOutgoingSoloParaLaRutaAutorizada(t *testing.T) {
+	info := &reqctx.Info{RequestID: "rid-12345678", Method: "example.v1.ItemService/GetItem",
+		Identity: &auth.Identity{Subject: "u1", Roles: []string{"a", "b"}, Kind: "jwt"}}
+	// Metadata "colada" (p. ej. Authorization que grpc-gateway reenvía por
+	// compatibilidad): tiene que desaparecer.
+	base := metadata.NewOutgoingContext(reqctx.With(context.Background(), info),
+		metadata.Pairs("authorization", "Bearer x", "x-user-id", "admin"))
+
+	ctx, err := outgoing(base, "/example.v1.ItemService/GetItem")
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, _ := metadata.FromOutgoingContext(ctx)
+	if got := md.Get(MDUserID); len(got) != 1 || got[0] != "u1" {
+		t.Fatalf("x-user-id = %v", got)
+	}
+	if got := md.Get(MDRoles); len(got) != 1 || got[0] != "a,b" {
+		t.Fatalf("x-roles = %v", got)
+	}
+	if len(md.Get("authorization")) != 0 {
+		t.Fatal("authorization del cliente no puede llegar al servicio")
+	}
+
+	// Un método distinto del autorizado no sale.
+	if _, err := outgoing(base, "/example.v1.ItemService/CreateItem"); status.Code(err) != codes.Internal {
+		t.Fatalf("método no autorizado: esperaba Internal, vino %v", err)
+	}
+	// Sin info de ruta tampoco.
+	if _, err := outgoing(context.Background(), "/example.v1.ItemService/GetItem"); status.Code(err) != codes.Internal {
+		t.Fatalf("sin ruta: esperaba Internal, vino %v", err)
+	}
+	// Llamadas internas (health) pasan sin metadata.
+	if _, err := outgoing(reqctx.Internal(context.Background()), "/grpc.health.v1.Health/Check"); err != nil {
+		t.Fatal(err)
+	}
+}

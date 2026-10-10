@@ -1,0 +1,75 @@
+# =============================================================================
+# Tabla de rutas de {{ repo_name }} — DENEGAR POR DEFECTO
+# =============================================================================
+#
+# Las rutas HTTP salen de las anotaciones google.api.http de los .proto
+# (grpc-gateway). Este archivo decide cuáles se EXPONEN y con qué permiso:
+#
+#   - Un método gRPC SIN entrada acá no se expone: responde 404 aunque tenga
+#     anotación (al arrancar se loguea un warning y el test de rutas falla).
+#   - Una entrada de un método que no existe (o sin google.api.http) impide
+#     arrancar: los typos no pasan en silencio.
+#   - Campos desconocidos son error (un "role:" mal escrito no deja una ruta
+#     abierta).
+#
+# Clave: <paquete>.<Servicio>/<Método> (el nombre gRPC completo).
+# Cada entrada declara EXACTAMENTE una de:
+#   public: true          sin credenciales (si llega una válida, se usa para
+#                         identidad y rate limit; una inválida se ignora)
+#   roles: [a, b]         hace falta UNO de esos roles{% if a_key %} (scopes de la API key){% elif a_jwt %} (claim AUTH_ROLES_CLAIM del token){% endif %}
+#   deny: true            declarada pero cerrada (404), p. ej. un RPC interno
+# Opcionales (pisan `defaults`):
+#   timeout: 5s           deadline de la llamada gRPC (< HTTP_WRITE_TIMEOUT)
+#   max_body_bytes: 65536 413 por encima (subidas: más alto, máx. 32 MiB)
+#   rate_limit:           bucket PROPIO de la ruta (token bucket por usuario,
+#     per_minute: 30      o por IP si es anónimo). Sin rate_limit, la ruta
+#     burst: 10           usa el bucket global de `defaults`.
+#   sunset: 2027-01-31    ruta deprecada: cabeceras Deprecation + Sunset
+#
+# Al agregar una ruta: anotación en el .proto -> regenerar -> entrada acá ->
+# go test ./... (los tests de autorización se generan desde esta tabla).
+# Rutas de administración: prefijo propio en el .proto (/v1/admin/...) y su rol.
+# =============================================================================
+
+version: 1
+
+defaults:
+  timeout: 10s
+  max_body_bytes: 1048576   # 1 MiB
+  rate_limit:
+    per_minute: 600
+    burst: 100
+
+routes:
+{%- if a_none %}
+  # auth = ninguno: todas las rutas son públicas (no hay con qué verificar
+  # roles). Para proteger alguna: copier update --data auth=<firebase|oidc|api-key>.
+  example.v1.ItemService/ListItems:
+    public: true
+
+  example.v1.ItemService/GetItem:
+    public: true
+
+  example.v1.ItemService/CreateItem:
+    public: true
+    max_body_bytes: 65536
+    rate_limit:
+      per_minute: 30
+      burst: 10
+{%- else %}
+  # Listado público (ejemplo de ruta abierta).
+  example.v1.ItemService/ListItems:
+    public: true
+
+  example.v1.ItemService/GetItem:
+    roles: [items.read, items.admin]
+
+  # Escritura: rol propio, body chico y límite más estricto que el global.
+  example.v1.ItemService/CreateItem:
+    roles: [items.write, items.admin]
+    timeout: 5s
+    max_body_bytes: 65536
+    rate_limit:
+      per_minute: 30
+      burst: 10
+{%- endif %}

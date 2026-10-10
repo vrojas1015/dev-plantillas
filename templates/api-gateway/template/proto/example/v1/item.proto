@@ -1,0 +1,84 @@
+// Contrato de EJEMPLO de la plantilla api-gateway.
+//
+// Es el mismo example.v1.ItemService que traen las plantillas go-grpc-service
+// y protos, más las anotaciones google.api.http que definen las rutas REST.
+// Existe solo para que el gateway generado compile, arranque y tenga tests sin
+// depender de un repo de protos externo.
+//
+// Con un repo de protos real (plantilla `protos` con http_gateway=true), las
+// anotaciones y el código del gateway (*.pb.gw.go) viven allá: borrá este
+// archivo junto con gen/, buf.* y cambiá el import en app/upstream/registry.go
+// (ver CLAUDE.md, "Pasar al repo de protos").
+//
+// Para regenerar el código después de editarlo: `make proto` (usa buf).
+syntax = "proto3";
+
+package example.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+// ItemService es el CRUD reducido de ejemplo.
+service ItemService {
+  // POST /v1/items con el Item en el body.
+  rpc CreateItem(CreateItemRequest) returns (CreateItemResponse) {
+    option (google.api.http) = {
+      post: "/v1/items"
+      body: "*"
+    };
+  }
+  // GET /v1/items/{id}.
+  rpc GetItem(GetItemRequest) returns (GetItemResponse) {
+    option (google.api.http) = {get: "/v1/items/{id}"};
+  }
+  // GET /v1/items?page.cursor=...&page.limit=...
+  rpc ListItems(ListItemsRequest) returns (ListItemsResponse) {
+    option (google.api.http) = {get: "/v1/items"};
+  }
+}
+
+message Item {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// PageRequest: paginación por cursor opaco. limit <= 0 usa el default del servicio.
+message PageRequest {
+  string cursor = 1;
+  int32 limit = 2;
+}
+
+// PageResponse: next_cursor vacío y has_next=false en la última página.
+message PageResponse {
+  string next_cursor = 1;
+  bool has_next = 2;
+}
+
+message CreateItemRequest {
+  string name = 1;
+  string description = 2;
+}
+
+message CreateItemResponse {
+  Item item = 1;
+}
+
+message GetItemRequest {
+  string id = 1;
+}
+
+message GetItemResponse {
+  Item item = 1;
+}
+
+message ListItemsRequest {
+  PageRequest page = 1;
+}
+
+message ListItemsResponse {
+  repeated Item items = 1;
+  PageResponse page = 2;
+}

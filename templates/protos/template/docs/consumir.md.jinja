@@ -41,6 +41,24 @@ import `<servicio>/gen/go/example/v1` por
 protobuf-go entra en pánico si dos paquetes registran el mismo archivo
 `.proto` (`{{ first_package }}/v1/item.proto`).
 {%- endif %}
+{%- if l_gw %}
+
+## REST (api-gateway)
+
+Las anotaciones `google.api.http` generan, en el mismo paquete Go,
+`RegisterXxxServiceHandler` (grpc-gateway) y un OpenAPI v2 de todas las
+rutas en `gen/openapi/api.swagger.json` (paquete Go
+`{{ module_path }}/gen/openapi`, variable `openapi.Spec`).
+
+Gateway generado con la plantilla `api-gateway`: responder
+`protos_module={{ module_path }}` y seguir "Pasar al repo de protos" de su
+`CLAUDE.md` (cambiar los imports de `gen/go/example/v1` y `gen/openapi`). Cada
+RPC nuevo se expone recién al agregarlo a su `routes.yaml`.
+
+Clientes web/móviles tipados: generarlos desde el OpenAPI (p. ej.
+`openapi-generator` o `openapi-typescript` sobre `api.swagger.json`) o usar
+directamente los tipos de los protos.
+{%- endif %}
 {%- if l_py %}
 
 ## Python

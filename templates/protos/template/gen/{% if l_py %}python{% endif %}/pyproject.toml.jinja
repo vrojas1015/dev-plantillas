@@ -15,6 +15,10 @@ requires-python = ">=3.10"
 dependencies = [
   "protobuf>=7.36.2,<8",
   "grpcio>=1.66,<2",
+{%- if l_gw %}
+  # google.api.http (anotaciones REST): el código generado importa google.api.
+  "googleapis-common-protos>=1.75,<2",
+{%- endif %}
 ]
 
 [project.urls]

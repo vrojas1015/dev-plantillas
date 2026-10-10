@@ -30,6 +30,10 @@ dependencies {
     api("com.google.protobuf:protobuf-java:$protobufVersion")
     api("io.grpc:grpc-protobuf:$grpcVersion")
     api("io.grpc:grpc-stub:$grpcVersion")
+{%- if l_gw %}
+    // google.api.http (anotaciones REST): el descriptor generado depende de google/api.
+    api("com.google.api.grpc:proto-google-common-protos:2.78.0")
+{%- endif %}
 {%- if l_kt %}
     api("com.google.protobuf:protobuf-kotlin:$protobufVersion")
     api("io.grpc:grpc-kotlin-stub:$grpcKotlinVersion")

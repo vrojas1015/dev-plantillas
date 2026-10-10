@@ -15,14 +15,41 @@ syntax = "proto3";
 
 package {{ first_package }}.v1;
 
+{% if l_gw -%}
+import "google/api/annotations.proto";
+{% endif -%}
 import "google/protobuf/timestamp.proto";
 
 // ItemService es el CRUD reducido de ejemplo.
+{%- if l_gw %}
+//
+// Las opciones google.api.http definen las rutas REST que expone el
+// api-gateway (grpc-gateway). Una ruta anotada NO queda pública por estar
+// acá: el gateway la expone solo si figura en su routes.yaml.
+service ItemService {
+  // POST /v1/items con el Item en el body.
+  rpc CreateItem(CreateItemRequest) returns (CreateItemResponse) {
+    option (google.api.http) = {
+      post: "/v1/items"
+      body: "*"
+    };
+  }
+  // GET /v1/items/{id}.
+  rpc GetItem(GetItemRequest) returns (GetItemResponse) {
+    option (google.api.http) = {get: "/v1/items/{id}"};
+  }
+  // GET /v1/items?page.cursor=...&page.limit=...
+  rpc ListItems(ListItemsRequest) returns (ListItemsResponse) {
+    option (google.api.http) = {get: "/v1/items"};
+  }
+}
+{%- else %}
 service ItemService {
   rpc CreateItem(CreateItemRequest) returns (CreateItemResponse);
   rpc GetItem(GetItemRequest) returns (GetItemResponse);
   rpc ListItems(ListItemsRequest) returns (ListItemsResponse);
 }
+{%- endif %}
 
 message Item {
   string id = 1;

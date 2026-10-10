@@ -1,0 +1,38 @@
+{#- En la plantilla este archivo se llama .gitignore.jinja para que git no lo aplique
+    dentro del repo de la plantilla (ocultaría template/.env.example.jinja). -#}
+# Binarios
+bin/
+dist/
+*.exe
+*.out
+image.tar
+
+# Archivos de entorno y secretos (nunca commitear)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+api-keys*.yaml
+
+# Go
+vendor/
+*.test
+*.prof
+coverage.out
+
+# Workspace local (ver `make workspace`)
+go.work
+go.work.sum
+
+# Claude Code: settings personales (los compartidos van en .claude/settings.json)
+.claude/settings.local.json
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

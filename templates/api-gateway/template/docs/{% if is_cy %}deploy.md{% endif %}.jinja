@@ -1,0 +1,96 @@
+# Deploy en Coolify v4 — {{ repo_name }}
+
+Setup **de una sola vez**. La CI ({% if ci_gl %}GitLab CI → GitLab Container Registry{% else %}GitHub Actions → GHCR{% endif %})
+corre tests, govulncheck y Trivy, publica **la imagen escaneada** y dispara el
+deploy por la API de Coolify.
+
+```bash
+git tag qa-v0.1.0   && git push origin qa-v0.1.0
+git tag prod-v0.1.0 && git push origin prod-v0.1.0
+```
+
+```
+Internet ─https─▶ Traefik (Coolify) ─▶ {{ repo_name }} ──gRPC plaintext, red interna──▶ items-service
+                  TLS + dominio          TRUSTED_PROXY_HOPS=1                             (sin puertos publicados)
+```
+
+> Los nombres de menús de Coolify cambian entre versiones de v4: los pasos
+> dicen **qué** configurar; buscá el equivalente en tu versión.
+
+## 1. Acceso del VPS al registry
+
+```bash
+{%- if ci_gl %}
+# Deploy token (Settings > Repository > Deploy tokens) con read_registry
+docker login {{ image_repo_default.split('/')[0] }} -u <usuario-del-deploy-token> --password-stdin
+{%- else %}
+# Token con read:packages (de una cuenta de servicio, no personal)
+docker login ghcr.io -u <usuario> --password-stdin
+{%- endif %}
+```
+
+## 2. Recurso (QA; repetir para prod)
+
+1. **New resource** → repositorio git → build pack **Docker Compose**,
+   archivo `/docker-compose.coolify.yml`. Sin auto-deploy por push: lo dispara
+   la CI con el tag.
+2. **Dominio** del servicio `gateway` (p. ej. `https://api.qa.ejemplo.com`):
+   Coolify configura Traefik y el certificado. El gateway es lo único con dominio.
+3. **Red**: activá *Connect to Predefined Network* en este recurso **y** en
+   el de cada servicio gRPC; así el gateway los resuelve por nombre de
+   contenedor. Los servicios no necesitan dominio ni puertos publicados.
+4. Anotá el UUID del recurso (`COOLIFY_RESOURCE_UUID_QA` / `_PROD`).
+
+## 3. Variables del recurso
+
+| Variable | Ejemplo | Notas |
+|---|---|---|
+| `IMAGE_TAG` | `qa` / `prod` | Tag móvil. Rollback: un tag inmutable (`prod-v1.2.2`) + Redeploy |
+| `UPSTREAM_ITEMS_ADDR` | `<contenedor-del-servicio>:5000` | `docker ps` en el VPS muestra el nombre (incluye el UUID del recurso) |
+| `CORS_ALLOWED_ORIGINS` | `https://app.qa.ejemplo.com` | Orígenes exactos, separados por coma. Nunca `*` |
+{%- if a_fb %}
+| `FIREBASE_PROJECT_ID` | `{{ firebase_project }}` | El proyecto de Firebase de ESE entorno |
+{%- elif a_oidc %}
+| `OIDC_ISSUER` | `{{ oidc_issuer }}` | Idéntico al `iss` de los tokens |
+| `OIDC_AUDIENCE` | `{{ oidc_audience }}` | |
+{%- elif a_key %}
+| `API_KEYS` | YAML con los hashes | Secreta. Ver docs/auth.md |
+{%- endif %}
+| `APP_ENV` / `SERVICE_ENV` / `LOG_LEVEL` | `production` / `qa` / `info` | Opcionales (defaults de prod) |
+| `OPENAPI_ENABLED` | `true` en QA | Default `false` |
+
+## 4. Variables de la CI
+{% if ci_gl %}
+Settings > CI/CD > Variables: `COOLIFY_URL` (sin `/` final), `COOLIFY_TOKEN`
+(masked), `COOLIFY_RESOURCE_UUID_QA`, `COOLIFY_RESOURCE_UUID_PROD`.
+Protected tags: `prod-v*` → Maintainers; `qa-v*` → Developers + Maintainers.
+Los jobs `image` y `release` usan Docker-in-Docker (runner con `privileged`).
+{%- if protos_module %}
+Repo de protos: allowlist del `CI_JOB_TOKEN` de este proyecto.
+{%- endif %}
+{% else %}
+Settings > Secrets and variables > Actions: variables `COOLIFY_URL`,
+`COOLIFY_RESOURCE_UUID_QA`, `COOLIFY_RESOURCE_UUID_PROD`; secret
+`COOLIFY_TOKEN`. Environments `qa`/`prod` (prod: solo tags `prod-v*` y
+reviewers).
+{%- if protos_module %}
+Secret `PROTOS_TOKEN` (lectura del repo de protos).
+{%- endif %}
+{% endif %}
+## 5. Verificar
+
+```bash
+curl -sI https://api.qa.ejemplo.com/healthz          # 200 + cabeceras de seguridad
+curl -s  https://api.qa.ejemplo.com/readyz           # {"status":"ok"} si llega a los upstreams
+curl -s  https://api.qa.ejemplo.com/v1/items         # ruta pública de ejemplo
+```
+
+`/readyz` en `unavailable`: revisar `UPSTREAM_*_ADDR` y que los dos recursos
+estén en la red predefinida (`docker network inspect coolify`).
+
+## Mudar a Cloud Run
+
+`copier update --data deploy_target=cloud-run --data gcp_project=<id>` en una
+rama: aparecen `cloudrun.*.yaml`, `cloudbuild.yaml` y `docs/ci-cd-setup.md`;
+desaparecen este archivo y `docker-compose.coolify.yml`. El código no cambia:
+en Cloud Run los upstreams pasan a `UPSTREAM_TLS=true` + `UPSTREAM_AUTH=google-idtoken`.

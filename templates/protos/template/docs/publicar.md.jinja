@@ -97,6 +97,9 @@ archivos: hacelo en un MR propio, con `make generate` y el bump de runtime.
 {%- if l_go %}
 | `protocolbuffers/go:v1.36.12`, `grpc/go:v1.6.2` | `google.golang.org/protobuf v1.36.12`, `google.golang.org/grpc` >= 1.64 (`go.mod`) |
 {%- endif %}
+{%- if l_gw %}
+| `grpc-ecosystem/gateway:v2.30.0`, `grpc-ecosystem/openapiv2:v2.30.0` | `github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0` y `google.golang.org/genproto/googleapis/api` (`go.mod`); googleapis fijado en `buf.lock`{% if l_py %}; Python: `googleapis-common-protos`{% endif %}{% if l_ts %}; TS: `google/api/*` se genera junto (`include_imports`){% endif %}{% if l_jvm %}; JVM: `proto-google-common-protos`{% endif %} |
+{%- endif %}
 {%- if l_py %}
 | `protocolbuffers/python:v36.2` (+ `pyi`), `grpc/python:v1.84.0` | `protobuf>=7.36.2,<8` (se valida al importar), `grpcio` |
 {%- endif %}

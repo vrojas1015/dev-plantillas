@@ -1,0 +1,52 @@
+// Package reqctx guarda en el context los datos de cada request que necesitan
+// varias capas (logs, auth, interceptor gRPC, errores).
+package reqctx
+
+import (
+	"context"
+
+	"{{ module_path }}/app/auth"
+)
+
+// Info se crea en el middleware de request-id y lo completan los siguientes.
+// Un request lo procesa una sola goroutine: no hace falta lock.
+type Info struct {
+	RequestID string
+	ClientIP  string
+	Method    string         // método gRPC resuelto (example.v1.ItemService/GetItem); "" = no es ruta del mux
+	Identity  *auth.Identity // nil = anónimo
+}
+
+type infoKey struct{}
+type internalKey struct{}
+
+// With devuelve un context con info.
+func With(ctx context.Context, info *Info) context.Context {
+	return context.WithValue(ctx, infoKey{}, info)
+}
+
+// From devuelve la Info del request (nil fuera de un request HTTP).
+func From(ctx context.Context) *Info {
+	info, _ := ctx.Value(infoKey{}).(*Info)
+	return info
+}
+
+// RequestID es atajo de From(ctx).RequestID ("" si no hay).
+func RequestID(ctx context.Context) string {
+	if info := From(ctx); info != nil {
+		return info.RequestID
+	}
+	return ""
+}
+
+// Internal marca una llamada gRPC hecha por el propio gateway (health de los
+// upstreams), que no pasa por la tabla de rutas.
+func Internal(ctx context.Context) context.Context {
+	return context.WithValue(ctx, internalKey{}, true)
+}
+
+// IsInternal informa si ctx viene de Internal.
+func IsInternal(ctx context.Context) bool {
+	v, _ := ctx.Value(internalKey{}).(bool)
+	return v
+}

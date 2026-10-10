@@ -19,6 +19,9 @@ Nada de lógica de negocio.
 {%- if l_go %}
 | `go.mod` + `gen/go/` | Módulo Go `{{ module_path }}` (import `{{ module_path }}/gen/go/<paquete>/vN`) |
 {%- endif %}
+{%- if l_gw %}
+| `gen/go/**/*.pb.gw.go`, `gen/openapi/` | REST del api-gateway (grpc-gateway): `RegisterXxxHandler` y OpenAPI v2 (`api.swagger.json`, embebido en el paquete `openapi`) |
+{%- endif %}
 {%- if l_py %}
 | `gen/python/` | Paquete `{{ python_package }}` (`pyproject.toml` a mano, el resto generado) |
 {%- endif %}
@@ -60,6 +63,14 @@ coincida con `proto/` (`git diff --exit-code gen/`).
    nunca `float`/`double`.
 9. Comentá cada servicio, RPC y campo no obvio: el comentario viaja al código
    generado de todos los lenguajes.
+{%- if l_gw %}
+10. REST: un RPC que el api-gateway expone lleva `option (google.api.http)`
+    con versión en el path (`/v1/...`) y `body: "*"` en las escrituras;
+    administración bajo `/v1/admin/...`. Anotar NO lo hace público: el gateway
+    lo expone recién cuando se agrega a su `routes.yaml` (denegar por defecto).
+    Cambiar el path o el verbo de una ruta publicada rompe clientes: tratarlo
+    como cambio incompatible (ruta nueva + `sunset` en la vieja).
+{%- endif %}
 
 ## Versionado (semver del repo)
 
@@ -102,8 +113,14 @@ commitear `proto/` y `gen/` juntos.
    opciones de lenguaje: el managed mode de `buf.gen.yaml` las pone).
 2. `make lint generate check`. Ningún cambio en el empaquetado: todo lo que hay
    en `proto/` se publica.
+{%- if l_gw %}
+3. googleapis ya está en `buf.yaml` (fijado en `buf.lock`) y excluido del
+   managed mode. Otro dep de la BSR: `deps` en `buf.yaml`, `buf dep update` y
+   `disable` para ese módulo en `buf.gen.yaml`.
+{%- else %}
 3. Nuevo dep de la BSR (ej. googleapis): `deps` en `buf.yaml`, `buf dep update`
    y `disable` del managed mode para ese módulo (ver `buf.gen.yaml`).
+{%- endif %}
 
 ## Ejemplo
 

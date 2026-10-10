@@ -1,0 +1,158 @@
+# CI/CD y Cloud Run — {{ repo_name }}
+
+Setup **de una sola vez** para que la pipeline
+({% if ci_gl %}`.gitlab-ci.yml`{% else %}`.github/workflows/ci.yml` + `deploy.yml`{% endif %})
+construya con Cloud Build y despliegue a Cloud Run **sin claves JSON**
+(Workload Identity Federation). Ningún secreto, audience, project number ni
+email vive en el repo.
+
+```bash
+git tag qa-v0.1.0   && git push origin qa-v0.1.0     # tests + govulncheck + Trivy + deploy a QA
+git tag prod-v0.1.0 && git push origin prod-v0.1.0   # idem prod
+```
+
+```
+Internet ─▶ {{ repo_name }} (público, allUsers) ──TLS + ID token──▶ items-service (interno)
+            SA {{ repo_name }}-sa                                   run.invoker: {{ repo_name }}-sa
+```
+
+## 1. Variables de trabajo
+
+```bash
+export PROJECT_ID={{ gcp_project }}
+export REGION={{ gcp_region }}
+export REPO_NAME={{ artifact_repo }}
+export DEPLOYER_SA=ci-deployer                # puede ser el mismo de los micros
+export RUNTIME_SA={{ repo_name }}-sa
+export POOL_ID=ci-pool
+{%- if ci_gl %}
+export PROVIDER_ID=gitlab-provider
+export REPO_PATH=<grupo>/{{ repo_name }}
+{%- else %}
+export PROVIDER_ID=github-provider
+export REPO_PATH=<owner>/{{ repo_name }}
+{%- endif %}
+export PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+export DEPLOYER_SA_EMAIL="${DEPLOYER_SA}@${PROJECT_ID}.iam.gserviceaccount.com"
+```
+
+## 2. Runtime: SA, Artifact Registry, invoker sobre los servicios{% if a_key %}, secreto de API keys{% endif %}
+
+```bash
+UPSTREAM_SERVICES="items-service-qa" ./scripts/setup_cloud_run.sh qa
+UPSTREAM_SERVICES="items-service"    ./scripts/setup_cloud_run.sh prod
+```
+
+Crea `{{ repo_name }}-sa` **sin roles de proyecto**, el repo `{{ artifact_repo }}`
+y le da `roles/run.invoker` **sobre cada servicio** listado (no sobre el
+proyecto).{% if a_key %} Crea el secreto `{{ repo_name }}-api-keys-<entorno>` (empieza
+con `keys: []`) con acceso de lectura solo para ese SA.{% endif %} Volvé a
+correrlo después del primer deploy: hace público al gateway (`allUsers`
+invoker). Si la organización prohíbe `allUsers` (*domain restricted
+sharing*), poné un Load Balancer externo delante (y entonces
+`TRUSTED_PROXY_HOPS=2`).
+
+## 3. Upstreams en `cloudrun.<env>.yaml`
+
+Completá `UPSTREAM_ITEMS_ADDR` (host de Cloud Run del servicio + `:443`):
+
+```bash
+gcloud run services describe items-service-qa --region "$REGION" --format='value(status.url)'
+# https://items-service-qa-abc123-uc.a.run.app  ->  items-service-qa-abc123-uc.a.run.app:443
+```
+
+`UPSTREAM_TLS=true` + `UPSTREAM_AUTH=google-idtoken`: el gateway pide al
+servidor de metadata un ID token con audience `https://<host>` (o
+`UPSTREAM_<NAME>_AUDIENCE`) y lo manda en cada llamada; Cloud Run lo valida
+contra el `run.invoker`. También completá `CORS_ALLOWED_ORIGINS` con el
+dominio exacto del front de cada entorno.
+
+## 4. Service account deployer
+
+```bash
+gcloud iam service-accounts create "$DEPLOYER_SA" --display-name="CI deployer" --project "$PROJECT_ID" || true
+for ROLE in roles/cloudbuild.builds.editor roles/storage.admin roles/run.admin; do
+  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${DEPLOYER_SA_EMAIL}" --role="$ROLE"
+done
+gcloud iam service-accounts add-iam-policy-binding "${RUNTIME_SA}@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --member="serviceAccount:${DEPLOYER_SA_EMAIL}" --role="roles/iam.serviceAccountUser" --project "$PROJECT_ID"
+gcloud artifacts repositories add-iam-policy-binding "$REPO_NAME" --location="$REGION" --project "$PROJECT_ID" \
+  --member="serviceAccount:${DEPLOYER_SA_EMAIL}" --role="roles/artifactregistry.reader"
+```
+
+## 5. Workload Identity Federation
+
+Si ya hay pool/provider para otros repos, sumá este al `attribute-condition`
+del provider existente. Desde cero:
+
+```bash
+gcloud iam workload-identity-pools create "$POOL_ID" --location=global --project "$PROJECT_ID" || true
+{%- if ci_gl %}
+gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
+  --location=global --project "$PROJECT_ID" --workload-identity-pool="$POOL_ID" \
+  --issuer-uri="https://gitlab.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.project_path=assertion.project_path,attribute.ref=assertion.ref" \
+  --attribute-condition="assertion.project_path in ['${REPO_PATH}']"
+gcloud iam service-accounts add-iam-policy-binding "$DEPLOYER_SA_EMAIL" --project "$PROJECT_ID" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.project_path/${REPO_PATH}"
+{%- else %}
+gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
+  --location=global --project "$PROJECT_ID" --workload-identity-pool="$POOL_ID" \
+  --issuer-uri="https://token.actions.githubusercontent.com" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository,attribute.ref=assertion.ref" \
+  --attribute-condition="assertion.repository in ['${REPO_PATH}']"
+gcloud iam service-accounts add-iam-policy-binding "$DEPLOYER_SA_EMAIL" --project "$PROJECT_ID" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${REPO_PATH}"
+{%- endif %}
+```
+
+## 6. Variables de la CI y protección de tags
+{% if ci_gl %}
+Settings > CI/CD > Variables:
+
+| Variable | Valor |
+|---|---|
+| `GCP_DEPLOYER_SA` | `$DEPLOYER_SA_EMAIL` |
+| `GCP_WIF_AUD` | `https://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}` |
+| `GCP_PROJECT` | opcional; pisa `{{ gcp_project }}` |
+
+Protected tags: `prod-v*` → Maintainers; `qa-v*` → Developers + Maintainers
+(proteger los tags **antes** de marcar variables como *Protected*).
+{%- if protos_module %}
+Repo de protos (`{{ protos_module }}`): Settings > CI/CD > Job token
+permissions → agregar este proyecto a la allowlist.
+{%- endif %}
+{% else %}
+Settings > Secrets and variables > Actions > Variables:
+
+| Variable | Valor |
+|---|---|
+| `GCP_DEPLOYER_SA` | `$DEPLOYER_SA_EMAIL` |
+| `GCP_WIF_PROVIDER` | `projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}` |
+| `GCP_PROJECT` | opcional; pisa `{{ gcp_project }}` |
+
+Environments `qa` y `prod` (en `prod`: solo tags `prod-v*` y *Required
+reviewers*) y un tag ruleset sobre `prod-v*`.
+{%- if protos_module %}
+Secret `PROTOS_TOKEN`: token de solo lectura al repo de protos.
+{%- endif %}
+{% endif %}
+## Qué corre la pipeline
+
+1. `test`: `go mod verify`, gofmt, `go vet`, `go test` (con los tests de
+   autorización generados desde `routes.yaml`), `govulncheck`, `go mod vendor`.
+2. `image` + Trivy: `docker build` del mismo commit y `vendor/`; falla con
+   vulnerabilidades HIGH/CRITICAL que tengan fix.
+3. Release (tag): Cloud Build construye y publica en Artifact Registry con el
+   mismo Dockerfile y `vendor/`, y `gcloud run services replace`. Recomendado:
+   activar el escaneo de Artifact Registry para vigilar la imagen publicada.
+
+## Rollback
+
+```bash
+./scripts/rollback.sh qa                 # imágenes y revisiones disponibles
+./scripts/rollback.sh prod prod-v0.1.0   # redespliega una imagen existente (pide confirmación)
+```

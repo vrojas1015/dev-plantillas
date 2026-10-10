@@ -1,0 +1,259 @@
+// Package gateway arma el handler HTTP del gateway: grpc-gateway (REST ->
+// gRPC, rutas desde las anotaciones google.api.http) envuelto en el pipeline
+// común de seguridad.
+//
+// Orden de los controles (docs/05-api-gateway.md §1):
+//
+//	middleware.Context        request-id (+ x-request-id hacia el servicio) e IP del cliente
+//	middleware.AccessLog      una línea JSON por request, sin secretos
+//	middleware.Recover        panic -> 500 genérico
+//	middleware.SecurityHeaders
+//	middleware.CORS           lista de orígenes por entorno
+//	middleware.StripSpoofable borra x-user-id/x-roles/Grpc-* que mande el cliente
+//	builtin                   /healthz, /readyz, /openapi.json
+//	runtime.ServeMux          match de la ruta -> routeMiddleware:
+//	    ruta declarada (si no, 404) -> límite de body (413) -> auth (401/503)
+//	    -> roles (403) -> rate limit (429) -> Content-Type (415) -> deadline
+//	interceptor gRPC          metadata de identidad armada desde cero
+//	errorHandler              formato único, 5xx sin detalles
+package gateway
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/protobuf/encoding/protojson"
+
+	"{{ module_path }}/app/auth"
+	"{{ module_path }}/app/middleware"
+	"{{ module_path }}/app/ratelimit"
+	"{{ module_path }}/app/reqctx"
+	"{{ module_path }}/app/routes"
+	"{{ module_path }}/app/upstream"
+)
+
+// Upstream es un servicio con su conexión ya abierta (con DialOptions()).
+type Upstream struct {
+	Service upstream.Service
+	Conn    *grpc.ClientConn
+}
+
+// Options configura New.
+type Options struct {
+	Logger    *slog.Logger
+	Routes    *routes.Table
+	Auth      auth.Authenticator
+	Limiter   ratelimit.Limiter
+	Upstreams []Upstream
+	CORS      middleware.CORSConfig
+	// TrustedProxyHops: proxies propios delante (Cloud Run / Traefik = 1).
+	TrustedProxyHops int
+	// OpenAPI: si no es nil se sirve en GET /openapi.json.
+	OpenAPI []byte
+	// Challenge: valor de WWW-Authenticate en los 401 ("Bearer" con JWT).
+	Challenge string
+}
+
+// Report resume la validación de rutas que hace New.
+type Report struct {
+	Bindings   []routes.Binding // rutas HTTP de los servicios registrados
+	Undeclared []string         // métodos con google.api.http SIN entrada en routes.yaml (quedan en 404)
+}
+
+type gw struct {
+	log       *slog.Logger
+	routes    *routes.Table
+	auth      auth.Authenticator
+	limiter   ratelimit.Limiter
+	byKey     map[string]routes.Binding
+	challenge string
+}
+
+// New valida la tabla de rutas contra los servicios registrados y devuelve
+// el handler. Política (README de la plantilla, "Rutas"):
+//   - entrada de routes.yaml que no existe como método con google.api.http
+//     en un servicio registrado -> error (el gateway no arranca);
+//   - método anotado sin entrada -> queda en 404 y aparece en
+//     Report.Undeclared (main lo avisa; el test de rutas lo hace fallar en CI);
+//   - auth=ninguno y una ruta con roles -> error.
+func New(ctx context.Context, o Options) (http.Handler, *Report, error) {
+	if o.Logger == nil || o.Routes == nil || o.Auth == nil || o.Limiter == nil {
+		return nil, nil, errors.New("gateway: Logger, Routes, Auth y Limiter son obligatorios")
+	}
+	services := make([]string, 0, len(o.Upstreams))
+	for _, u := range o.Upstreams {
+		services = append(services, u.Service.GRPCService)
+	}
+	bindings, err := routes.BindingsFor(services)
+	if err != nil {
+		return nil, nil, err
+	}
+	rep, byKey, err := validate(o, bindings)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	g := &gw{log: o.Logger, routes: o.Routes, auth: o.Auth, limiter: o.Limiter, byKey: byKey, challenge: o.Challenge}
+	mux := runtime.NewServeMux(
+		runtime.WithMiddlewares(g.routeMiddleware),
+		// Hacia el servicio NO pasa ninguna cabecera del cliente: la metadata
+		// la arma el interceptor (request-id e identidad verificada).
+		runtime.WithIncomingHeaderMatcher(func(string) (string, bool) { return "", false }),
+		// Hacia el cliente NO pasa metadata interna de los servicios.
+		runtime.WithOutgoingHeaderMatcher(func(string) (string, bool) { return "", false }),
+		runtime.WithOutgoingTrailerMatcher(func(string) (string, bool) { return "", false }),
+		runtime.WithErrorHandler(g.errorHandler),
+		runtime.WithStreamErrorHandler(g.streamErrorHandler),
+		runtime.WithRoutingErrorHandler(g.routingErrorHandler),
+		// Sin trucos para cambiar el verbo HTTP (X-HTTP-Method-Override, POST form -> GET).
+		runtime.WithDisableHTTPMethodOverride(),
+		runtime.WithDisablePathLengthFallback(),
+		// JSON estricto: campos desconocidos -> 400 (docs/05 §5).
+		runtime.WithMarshalerOption(runtime.MIMEWildcard, &runtime.HTTPBodyMarshaler{
+			Marshaler: &runtime.JSONPb{
+				MarshalOptions:   protojson.MarshalOptions{EmitUnpopulated: true},
+				UnmarshalOptions: protojson.UnmarshalOptions{DiscardUnknown: false},
+			},
+		}),
+	)
+	for _, u := range o.Upstreams {
+		if err := u.Service.Register(ctx, mux, u.Conn); err != nil {
+			return nil, nil, fmt.Errorf("registrando %s: %w", u.Service.GRPCService, err)
+		}
+	}
+
+	h := builtin(o, mux)
+	h = middleware.Chain(h,
+		middleware.Context(o.TrustedProxyHops),
+		middleware.AccessLog(o.Logger),
+		middleware.Recover(o.Logger),
+		middleware.SecurityHeaders,
+		middleware.CORS(o.CORS),
+		middleware.StripSpoofable,
+	)
+	return h, rep, nil
+}
+
+func validate(o Options, bindings []routes.Binding) (*Report, map[string]routes.Binding, error) {
+	byKey := make(map[string]routes.Binding, len(bindings))
+	withHTTP := map[string]bool{}
+	var errs []error
+	for _, b := range bindings {
+		if prev, dup := byKey[b.Key()]; dup && prev.Method != b.Method {
+			errs = append(errs, fmt.Errorf("ruta HTTP %s duplicada: %s y %s", b.Key(), prev.Method, b.Method))
+		}
+		byKey[b.Key()] = b
+		withHTTP[b.Method] = true
+	}
+	_, noAuth := o.Auth.(auth.None)
+	for _, m := range o.Routes.Methods() {
+		if !withHTTP[m] {
+			errs = append(errs, fmt.Errorf("routes.yaml: %s no existe en los servicios registrados o no tiene google.api.http", m))
+		}
+		if p := o.Routes.Policy(m); noAuth && len(p.Roles) > 0 {
+			errs = append(errs, fmt.Errorf("routes.yaml: %s pide roles pero el gateway no tiene auth (auth=ninguno)", m))
+		}
+	}
+	if len(errs) > 0 {
+		return nil, nil, errors.Join(errs...)
+	}
+	rep := &Report{Bindings: bindings}
+	for m := range withHTTP {
+		if o.Routes.Policy(m) == nil {
+			rep.Undeclared = append(rep.Undeclared, m)
+		}
+	}
+	sort.Strings(rep.Undeclared)
+	return rep, byKey, nil
+}
+
+// builtin atiende los endpoints propios del gateway (fuera de routes.yaml:
+// no llegan a ningún servicio ni devuelven datos de negocio).
+func builtin(o Options, next http.Handler) http.Handler {
+	ready := &readiness{ups: o.Upstreams}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			next.ServeHTTP(w, r)
+			return
+		}
+		switch r.URL.Path {
+		case "/healthz":
+			writeJSON(w, http.StatusOK, `{"status":"ok"}`)
+		case "/readyz":
+			if err := ready.check(r.Context()); err != nil {
+				o.Logger.WarnContext(r.Context(), "readyz: upstream no disponible", slog.String("error", err.Error()))
+				writeJSON(w, http.StatusServiceUnavailable, `{"status":"unavailable"}`)
+				return
+			}
+			writeJSON(w, http.StatusOK, `{"status":"ok"}`)
+		case "/openapi.json":
+			if o.OpenAPI == nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(o.OpenAPI)
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
+}
+
+func writeJSON(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write([]byte(body))
+}
+
+// readiness cachea el resultado 5 s: /readyz es público y no puede servir
+// para multiplicar llamadas hacia los servicios.
+type readiness struct {
+	ups []Upstream
+
+	mu      sync.Mutex
+	checked time.Time
+	last    error
+}
+
+func (rd *readiness) check(ctx context.Context) error {
+	rd.mu.Lock()
+	defer rd.mu.Unlock()
+	if time.Since(rd.checked) < 5*time.Second {
+		return rd.last
+	}
+	rd.last = checkUpstreams(ctx, rd.ups)
+	rd.checked = time.Now()
+	return rd.last
+}
+
+// checkUpstreams consulta grpc.health.v1 de cada upstream (2 s en total).
+func checkUpstreams(ctx context.Context, ups []Upstream) error {
+	ctx, cancel := context.WithTimeout(reqctx.Internal(ctx), 2*time.Second)
+	defer cancel()
+	seen := map[*grpc.ClientConn]bool{}
+	var failed []string
+	for _, u := range ups {
+		if seen[u.Conn] {
+			continue
+		}
+		seen[u.Conn] = true
+		resp, err := grpc_health_v1.NewHealthClient(u.Conn).Check(ctx, &grpc_health_v1.HealthCheckRequest{})
+		if err != nil || resp.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
+			failed = append(failed, u.Service.Name)
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("sin respuesta SERVING: %s", strings.Join(failed, ", "))
+	}
+	return nil
+}

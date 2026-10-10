@@ -1,0 +1,15 @@
+# Módulo buf del proto LOCAL de ejemplo (proto/). Cuando el gateway pase a usar
+# el repo de protos compartido, borrá este archivo, buf.lock, buf.gen.yaml,
+# proto/ y gen/ (ver CLAUDE.md).
+version: v2
+modules:
+  - path: proto
+deps:
+  # google/api/annotations.proto (opciones google.api.http).
+  - buf.build/googleapis/googleapis
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

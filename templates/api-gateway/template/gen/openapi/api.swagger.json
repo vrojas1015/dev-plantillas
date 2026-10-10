@@ -1,0 +1,194 @@
+{
+  "swagger": "2.0",
+  "info": {
+    "title": "example/v1/item.proto",
+    "version": "version not set"
+  },
+  "tags": [
+    {
+      "name": "ItemService",
+      "description": "ItemService es el CRUD reducido de ejemplo."
+    }
+  ],
+  "consumes": [
+    "application/json"
+  ],
+  "produces": [
+    "application/json"
+  ],
+  "paths": {
+    "/v1/items": {
+      "get": {
+        "summary": "GET /v1/items?page.cursor=...\u0026page.limit=...",
+        "operationId": "ItemService_ListItems",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1ListItemsResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "page.cursor",
+            "in": "query",
+            "required": false,
+            "type": "string"
+          },
+          {
+            "name": "page.limit",
+            "in": "query",
+            "required": false,
+            "type": "integer",
+            "format": "int32"
+          }
+        ],
+        "tags": [
+          "ItemService"
+        ]
+      },
+      "post": {
+        "summary": "POST /v1/items con el Item en el body.",
+        "operationId": "ItemService_CreateItem",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1CreateItemResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/v1CreateItemRequest"
+            }
+          }
+        ],
+        "tags": [
+          "ItemService"
+        ]
+      }
+    },
+    "/v1/items/{id}": {
+      "get": {
+        "summary": "GET /v1/items/{id}.",
+        "operationId": "ItemService_GetItem",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/v1GetItemResponse"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "type": "string"
+          }
+        ],
+        "tags": [
+          "ItemService"
+        ]
+      }
+    }
+  },
+  "definitions": {
+    "v1CreateItemRequest": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    },
+    "v1CreateItemResponse": {
+      "type": "object",
+      "properties": {
+        "item": {
+          "$ref": "#/definitions/v1Item"
+        }
+      }
+    },
+    "v1GetItemResponse": {
+      "type": "object",
+      "properties": {
+        "item": {
+          "$ref": "#/definitions/v1Item"
+        }
+      }
+    },
+    "v1Item": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "v1ListItemsResponse": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "$ref": "#/definitions/v1Item"
+          }
+        },
+        "page": {
+          "$ref": "#/definitions/v1PageResponse"
+        }
+      }
+    },
+    "v1PageRequest": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "integer",
+          "format": "int32"
+        }
+      },
+      "description": "PageRequest: paginación por cursor opaco. limit \u003c= 0 usa el default del servicio."
+    },
+    "v1PageResponse": {
+      "type": "object",
+      "properties": {
+        "nextCursor": {
+          "type": "string"
+        },
+        "hasNext": {
+          "type": "boolean"
+        }
+      },
+      "description": "PageResponse: next_cursor vacío y has_next=false en la última página."
+    }
+  }
+}

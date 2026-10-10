@@ -1,0 +1,270 @@
+# =============================================================================
+# CI/CD {{ repo_name }}{% if is_cr %} — tests + seguridad + Cloud Build + Cloud Run{% elif is_cy %} — tests + seguridad + registry de GitLab + Coolify{% else %} — tests + seguridad (sin deploy){% endif %}
+# =============================================================================
+#
+#   - Merge request -> test, govulncheck, imagen + Trivy.
+{%- if has_cd %}
+#   - Tag qa-v*     -> lo mismo + deploy a QA.
+#   - Tag prod-v*   -> lo mismo + deploy a prod.
+{%- endif %}
+#
+# Seguridad (docs/05-api-gateway.md §8):
+#   govulncheck  vulnerabilidades ALCANZABLES en dependencias y stdlib.
+#   Trivy        escanea la imagen; falla con HIGH/CRITICAL que tengan fix.
+#                Para aceptar un riesgo puntual: .trivyignore con el CVE, el
+#                motivo y la fecha de revisión (queda en el MR).
+{%- if is_cr %}
+#
+# Auth KEYLESS a GCP con Workload Identity Federation (sin claves JSON). La
+# imagen que despliega Cloud Build sale del mismo commit, vendor/ y Dockerfile
+# que la imagen escaneada por Trivy.
+#
+# PRERREQUISITOS (una vez — docs/ci-cd-setup.md):
+#   Variables CI/CD (NUNCA en este archivo):
+#     GCP_DEPLOYER_SA = email del SA deployer
+#     GCP_WIF_AUD     = https://iam.googleapis.com/projects/<NUM>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+#     GCP_PROJECT     = (opcional) pisa el default de abajo
+#   Protected tags: prod-v* (Maintainers), qa-v* (Developers + Maintainers).
+{%- elif is_cy %}
+#
+# La imagen que se publica es EXACTAMENTE la escaneada (image.tar del job
+# `image`): tag inmutable ($CI_COMMIT_TAG) + móvil (qa|prod). Coolify la baja
+# con pull_policy: always al recibir el deploy por API.
+#
+# PRERREQUISITOS (una vez — docs/deploy.md):
+#   Variables CI/CD (NUNCA en este archivo): COOLIFY_URL, COOLIFY_TOKEN (masked),
+#   COOLIFY_RESOURCE_UUID_QA, COOLIFY_RESOURCE_UUID_PROD.
+#   Protected tags: prod-v* (Maintainers), qa-v* (Developers + Maintainers).
+{%- endif %}
+{%- if protos_module %}
+#   Allowlist del CI_JOB_TOKEN de este repo en el repo de protos
+#   ({{ protos_module }}) — Settings > CI/CD > Job token permissions.
+{%- endif %}
+# =============================================================================
+
+stages:
+  - test
+  - image
+  - scan
+{%- if has_cd %}
+  - release
+{%- endif %}
+
+variables:
+{%- if is_cr %}
+  GCP_PROJECT: {{ gcp_project }}
+  REGION: {{ gcp_region }}
+  REPO_NAME: {{ artifact_repo }}
+  IMAGE_NAME: {{ repo_name }}
+{%- endif %}
+  GO_IMAGE: golang:{{ go_version }}
+  GOVULNCHECK_VERSION: v1.8.0
+  TRIVY_IMAGE: aquasec/trivy:0.74.0
+  GOWORK: "off"
+{%- if protos_module %}
+  GOPRIVATE: {{ protos_module }}
+{%- endif %}
+
+workflow:
+  rules:
+{%- if has_cd %}
+    - if: '$CI_COMMIT_TAG =~ /^(qa|prod)-v/'
+{%- endif %}
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - when: never
+
+.go:
+  image: $GO_IMAGE
+{%- if protos_module %}
+  before_script:
+    # Módulo privado de protos con el token del job (requiere la allowlist).
+    - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/".insteadOf "https://${CI_SERVER_HOST}/"
+{%- endif %}
+
+# -----------------------------------------------------------------------------
+# TEST (+ vendor/ para el build de la imagen, que no tiene red ni credenciales)
+# -----------------------------------------------------------------------------
+test:
+  extends: .go
+  stage: test
+  script:
+    - go mod download
+    - go mod verify
+    - test -z "$(gofmt -l app cli)" || { gofmt -l app cli; echo "gofmt pendiente"; exit 1; }
+    - go vet ./...
+    # Incluye los tests de autorización generados desde routes.yaml.
+    - go test ./... -count=1 -timeout=180s
+    - go mod vendor
+  artifacts:
+    paths:
+      - vendor/
+      - go.mod
+      - go.sum
+    expire_in: 1 hour
+
+govulncheck:
+  extends: .go
+  stage: test
+  script:
+    - go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+
+# -----------------------------------------------------------------------------
+# IMAGEN + TRIVY
+# -----------------------------------------------------------------------------
+image:
+  stage: image
+  image: docker:27
+  services:
+    - docker:27-dind
+  needs: [test]
+  variables:
+    DOCKER_BUILDKIT: "1"
+    DOCKER_TLS_CERTDIR: "/certs"
+  script:
+    - docker build -t "{{ repo_name }}:${CI_COMMIT_SHORT_SHA}" .
+    - docker save -o image.tar "{{ repo_name }}:${CI_COMMIT_SHORT_SHA}"
+  artifacts:
+    paths:
+      - image.tar
+    expire_in: 1 day
+
+trivy:
+  stage: scan
+  image:
+    name: $TRIVY_IMAGE
+    entrypoint: [""]
+  needs: [image]
+  variables:
+    TRIVY_CACHE_DIR: .trivycache/
+  cache:
+    key: trivy-db
+    paths:
+      - .trivycache/
+  script:
+    - trivy image --input image.tar --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --no-progress
+{%- if is_cr %}
+
+# -----------------------------------------------------------------------------
+# RELEASE: Cloud Build (build + push a Artifact Registry) + Cloud Run
+# -----------------------------------------------------------------------------
+.release:
+  stage: release
+  image: google/cloud-sdk:slim
+  needs: [test, govulncheck, trivy]
+  id_tokens:
+    GCP_ID_TOKEN:
+      aud: "$GCP_WIF_AUD"
+  script:
+    - |
+      case "$CI_COMMIT_TAG" in
+        "${TARGET_ENV}"-v*) ;;
+        *) echo "El tag '$CI_COMMIT_TAG' no corresponde al entorno '$TARGET_ENV'"; exit 1 ;;
+      esac
+    # --- 1. Auth keyless (WIF / external_account) ---
+    - echo "$GCP_ID_TOKEN" > /tmp/gitlab_oidc_token
+    - export GCP_STS_AUDIENCE="//${GCP_WIF_AUD#https://}"
+    - |
+      cat > /tmp/gcp_creds.json <<EOF
+      {
+        "type": "external_account",
+        "audience": "${GCP_STS_AUDIENCE}",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+        "token_url": "https://sts.googleapis.com/v1/token",
+        "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${GCP_DEPLOYER_SA}:generateAccessToken",
+        "credential_source": {
+          "file": "/tmp/gitlab_oidc_token",
+          "format": { "type": "text" }
+        }
+      }
+      EOF
+    - gcloud auth login --cred-file=/tmp/gcp_creds.json --quiet
+    - gcloud config set project "$GCP_PROJECT"
+    # --- 2. Build + push (Cloud Build) ---
+    - export IMAGE_TAG="$CI_COMMIT_TAG"
+    - export REMOTE_IMAGE="${REGION}-docker.pkg.dev/${GCP_PROJECT}/${REPO_NAME}/${IMAGE_NAME}:${IMAGE_TAG}"
+    - gcloud builds submit --config=cloudbuild.yaml --substitutions=_IMAGE="$REMOTE_IMAGE" --project="$GCP_PROJECT" .
+    # --- 3. Deploy (la policy pública se configura una vez; replace no la toca) ---
+    - export DEPLOY_TIME="$(date -u +%Y%m%dT%H%M%SZ)"
+    - |
+      sed -e "s|__PROJECT_ID__|${GCP_PROJECT}|g" -e "s|__REGION__|${REGION}|g" \
+          -e "s|__IMAGE_TAG__|${IMAGE_TAG}|g" -e "s|__DEPLOY_TIME__|${DEPLOY_TIME}|g" \
+          "$CLOUDRUN_YAML" > /tmp/cloudrun.yaml
+    - gcloud run services replace /tmp/cloudrun.yaml --region="$REGION" --project="$GCP_PROJECT"
+    - gcloud run services describe "$SERVICE_NAME" --region="$REGION" --project="$GCP_PROJECT" --format="value(status.url)"
+
+release:qa:
+  extends: .release
+  variables:
+    TARGET_ENV: qa
+    SERVICE_NAME: {{ repo_name }}-qa
+    CLOUDRUN_YAML: cloudrun.qa.yaml
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^qa-v/'
+  environment:
+    name: qa
+
+release:prod:
+  extends: .release
+  variables:
+    TARGET_ENV: prod
+    SERVICE_NAME: {{ repo_name }}
+    CLOUDRUN_YAML: cloudrun.prod.yaml
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^prod-v/'
+  environment:
+    name: prod
+{%- elif is_cy %}
+
+# -----------------------------------------------------------------------------
+# RELEASE: push de la imagen ESCANEADA + deploy por la API de Coolify
+# -----------------------------------------------------------------------------
+.release:
+  stage: release
+  image: docker:27
+  services:
+    - docker:27-dind
+  needs: [govulncheck, image, trivy]
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  script:
+    - |
+      case "$CI_COMMIT_TAG" in
+        "${TARGET_ENV}"-v*) ;;
+        *) echo "El tag '$CI_COMMIT_TAG' no corresponde al entorno '$TARGET_ENV'"; exit 1 ;;
+      esac
+    - docker load -i image.tar
+    - echo "$CI_JOB_TOKEN" | docker login -u gitlab-ci-token --password-stdin "$CI_REGISTRY"
+    - docker tag "{{ repo_name }}:${CI_COMMIT_SHORT_SHA}" "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+    - docker tag "{{ repo_name }}:${CI_COMMIT_SHORT_SHA}" "$CI_REGISTRY_IMAGE:$TARGET_ENV"
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+    - docker push "$CI_REGISTRY_IMAGE:$TARGET_ENV"
+    - apk add --no-cache curl >/dev/null
+    - |
+      : "${COOLIFY_URL:?Falta la variable COOLIFY_URL}"
+      : "${COOLIFY_TOKEN:?Falta la variable COOLIFY_TOKEN}"
+      : "${COOLIFY_RESOURCE_UUID:?Falta el UUID del recurso de Coolify de $TARGET_ENV}"
+      curl -fsS "$COOLIFY_URL/api/v1/deploy?uuid=$COOLIFY_RESOURCE_UUID&force=false" \
+        -H "Authorization: Bearer $COOLIFY_TOKEN"
+      echo
+      echo "Deploy encolado en Coolify. Seguilo en el panel (Deployments) del recurso."
+
+release:qa:
+  extends: .release
+  variables:
+    TARGET_ENV: qa
+    COOLIFY_RESOURCE_UUID: $COOLIFY_RESOURCE_UUID_QA
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^qa-v/'
+  environment:
+    name: qa
+
+release:prod:
+  extends: .release
+  variables:
+    TARGET_ENV: prod
+    COOLIFY_RESOURCE_UUID: $COOLIFY_RESOURCE_UUID_PROD
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^prod-v/'
+  environment:
+    name: prod
+{%- endif %}

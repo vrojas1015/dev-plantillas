@@ -1,0 +1,30 @@
+# Contexto que se sube a Cloud Build (`gcloud builds submit`).
+#
+# CRÍTICO: si este archivo NO existe, gcloud usa .gitignore como fallback, y
+# .gitignore excluye vendor/ -> el `COPY vendor ./vendor` del Dockerfile falla
+# en Cloud Build (y en local funciona, lo que lo hace difícil de diagnosticar).
+# Este ignore explícito SÍ conserva vendor/ (generado en el stage `test`).
+#
+# NO agregues vendor/ acá.
+
+.git/
+.github/
+.gitlab-ci.yml
+.idea/
+.vscode/
+.claude/
+*.log
+tmp/
+bin/
+dist/
+build/
+.env
+.env.*
+
+# Tests y docs no hacen falta para construir la imagen.
+**/*_test.go
+docs/
+
+# go.work es local del dev (ver `make workspace`) y rompe `-mod=vendor`.
+go.work
+go.work.sum

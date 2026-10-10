@@ -48,6 +48,11 @@ replace() {
 {%- if l_go %}
 replace gen/go
 {%- endif %}
+{%- if l_gw %}
+# OpenAPI: solo el .json (gen/openapi/openapi.go, que lo embebe, es fijo).
+mkdir -p gen/openapi
+mv "$TMP/gen/openapi/api.swagger.json" gen/openapi/api.swagger.json
+{%- endif %}
 {%- if l_py %}
 replace "gen/python/{{ python_package }}"
 {%- endif %}
