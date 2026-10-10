@@ -1,0 +1,67 @@
+/**
+ * Playwright: proyectos por tipo (api{% if web %}, web por navegador{% endif %}) y, para cada uno, su
+ * gemelo "-inestable" con los tests en cuarentena (@inestable).
+ *
+ *   - Los proyectos normales excluyen @inestable; los "-inestable" corren sólo
+ *     esos. Todos salen en el mismo reporte HTML y en registro.json (⚠️).
+ *   - Qué bloquea lo decide scripts/registro.ts --bloquear (npm run e2e y CI):
+ *     falla si falló algún test que NO es @inestable.
+ *   - Trazas, video y captura sólo al fallar; reintentos sólo en CI.
+ *   - Ambiente: E2E_AMBIENTE (tests/fixtures/ambiente.ts). En prod sólo @smoke.
+ */
+import { defineConfig{% if web %}, devices{% endif %}, type Project } from '@playwright/test';
+
+import { cargarAmbiente } from './tests/fixtures/ambiente.ts';
+
+const ambiente = cargarAmbiente();
+const CI = !!process.env['CI'];
+const INESTABLE = /@inestable/;
+
+/** El proyecto normal (sin @inestable) y su gemelo en cuarentena (fuera de prod). */
+function conCuarentena(p: Project): Project[] {
+  const normal: Project = { ...p, grepInvert: INESTABLE };
+  if (ambiente.esProd) return [normal];
+  return [normal, { ...p, name: `${p.name}-inestable`, grep: INESTABLE }];
+}
+
+export default defineConfig({
+  testDir: './tests',
+  outputDir: 'reportes/artefactos',
+  fullyParallel: true,
+  forbidOnly: CI,
+  retries: CI ? 2 : 0,
+  workers: CI ? 2 : 4,
+  timeout: 30_000,
+  expect: { timeout: 10_000 },
+  // En prod sólo smoke: nada de escrituras ni flujos largos contra producción.
+  grep: ambiente.esProd ? /@smoke/ : undefined,
+  reporter: [
+    [process.env['GITHUB_ACTIONS'] ? 'github' : 'list'],
+    ['html', { outputFolder: 'reportes/html', open: 'never' }],
+    ['json', { outputFile: 'reportes/playwright.json' }],
+    ['junit', { outputFile: 'reportes/junit.xml' }],
+  ],
+  // Va al reporte JSON: scripts/registro.ts lo copia a registro.json.
+  metadata: { ambiente: ambiente.nombre, corrida: process.env['E2E_CORRIDA'], prefijo: ambiente.prefijo },
+  globalTeardown: './tests/fixtures/limpieza-global.ts',
+  use: {
+    trace: 'retain-on-failure',
+    video: 'retain-on-failure',
+    screenshot: 'only-on-failure',
+    locale: 'es-AR',
+  },
+  projects: [
+    ...conCuarentena({
+      name: 'api',
+      testDir: './tests/api',
+      use: { baseURL: `${ambiente.apiBaseUrl}/` },
+    }),
+{%- if web %}{%- for n in navegadores %}
+    ...conCuarentena({
+      name: 'web-{{ n }}',
+      testDir: './tests/web',
+      use: { ...devices['{{ {"chromium": "Desktop Chrome", "firefox": "Desktop Firefox", "webkit": "Desktop Safari"}[n] }}'], baseURL: `${ambiente.webBaseUrl}/` },
+    }),
+{%- endfor %}{%- endif %}
+  ],
+});

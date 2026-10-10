@@ -1,0 +1,155 @@
+/**
+ * Credenciales por rol (auth del gateway: {{ auth }}). Ver docs/usuarios-de-prueba.md.
+ *
+ * Un usuario de prueba por rol, con credenciales SÓLO en variables de entorno
+ * (gestor de secretos del CI o ambientes/<ambiente>.env, ignorado por git):
+ *
+ *   rol        variables
+ *   sin-rol    E2E_SIN_ROL_*     usuario válido sin ningún rol  -> 403 en rutas con roles
+ *   lector     E2E_LECTOR_*      sólo lectura
+ *   escritor   E2E_ESCRITOR_*    lectura y escritura
+ *   admin      E2E_ADMIN_*       rol de administración
+{%- if a_fb %}
+ *
+ * Firebase: E2E_<ROL>_USUARIO (email) y E2E_<ROL>_CLAVE; FIREBASE_API_KEY (la
+ * "Web API key" del proyecto de QA; no es secreta pero va por ambiente). Con
+ * FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 usa el emulador.
+{%- elif a_oidc %}
+ *
+ * OIDC: OIDC_GRANT=password (default; E2E_<ROL>_USUARIO y E2E_<ROL>_CLAVE con
+ * OIDC_CLIENT_ID [+ OIDC_CLIENT_SECRET]) o client_credentials (un cliente por
+ * rol: E2E_<ROL>_USUARIO = client_id, E2E_<ROL>_CLAVE = client_secret). El
+ * token_endpoint sale del discovery de OIDC_ISSUER (u OIDC_TOKEN_URL).
+{%- elif a_key %}
+ *
+ * API keys: E2E_<ROL>_API_KEY (una key por rol, con los scopes del rol).
+{%- else %}
+ *
+ * auth = ninguno: no hay credenciales; todos los "roles" son anónimos.
+{%- endif %}
+ *
+ * Para cualquier modo, E2E_<ROL>_TOKEN (un token ya emitido) tiene prioridad.
+ * Nunca se loguean ni se escriben a disco: viven en memoria de cada proceso.
+ */
+import { cargarAmbiente, requerida } from './ambiente.ts';
+
+export const ROLES = ['sin-rol', 'lector', 'escritor', 'admin'] as const;
+export type Rol = (typeof ROLES)[number];
+/** Un rol o nadie (sin credencial). */
+export type Quien = Rol | 'anonimo';
+
+/** Nombre de la cabecera de la credencial ('{{ auth_header }}'). */
+export const CABECERA = '{{ auth_header }}';
+/** Si el gateway verifica credenciales (false con auth = ninguno). */
+export const HAY_AUTH: boolean = {{ 'false' if a_none else 'true' }};
+
+const cache = new Map<Rol, Promise<string>>();
+
+function variable(rol: Rol, sufijo: string): string {
+  return `E2E_${rol.toUpperCase().replace('-', '_')}_${sufijo}`;
+}
+
+/** Valor de la cabecera {{ auth_header }} para un rol (vacío si es anónimo). */
+export async function credencial(quien: Quien): Promise<string> {
+  if (quien === 'anonimo' || !HAY_AUTH) return '';
+  let valor = cache.get(quien);
+  if (!valor) {
+    valor = obtener(quien);
+    cache.set(quien, valor);
+    valor.catch(() => cache.delete(quien));
+  }
+  return valor;
+}
+
+/** Cabeceras para un request como `quien` ({} si es anónimo). */
+export async function cabeceras(quien: Quien): Promise<Record<string, string>> {
+  const valor = await credencial(quien);
+  return valor ? { [CABECERA]: valor } : {};
+}
+
+async function obtener(rol: Rol): Promise<string> {
+  cargarAmbiente();
+  const token = process.env[variable(rol, 'TOKEN')];
+{%- if a_key %}
+  return token || requerida(variable(rol, 'API_KEY'));
+{%- else %}
+  if (token) return `Bearer ${token}`;
+  return `Bearer ${await emitir(rol)}`;
+{%- endif %}
+}
+{%- if a_fb %}
+
+/** ID token de Firebase con email y clave (Identity Toolkit, o el emulador). */
+async function emitir(rol: Rol): Promise<string> {
+  const emulador = process.env['FIREBASE_AUTH_EMULATOR_HOST'];
+  const base = emulador
+    ? `http://${emulador}/identitytoolkit.googleapis.com`
+    : 'https://identitytoolkit.googleapis.com';
+  const url = `${base}/v1/accounts:signInWithPassword?key=${encodeURIComponent(requerida('FIREBASE_API_KEY'))}`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email: requerida(variable(rol, 'USUARIO')),
+      password: requerida(variable(rol, 'CLAVE')),
+      returnSecureToken: true,
+    }),
+  });
+  if (!res.ok) throw new Error(`Firebase rechazó al usuario de prueba "${rol}" (HTTP ${res.status})`);
+  const cuerpo = (await res.json()) as { idToken?: string };
+  if (!cuerpo.idToken) throw new Error(`Firebase no devolvió idToken para "${rol}"`);
+  return cuerpo.idToken;
+}
+{%- elif a_oidc %}
+
+let endpoint: Promise<string> | undefined;
+
+async function tokenEndpoint(): Promise<string> {
+  const fijo = process.env['OIDC_TOKEN_URL'];
+  if (fijo) return fijo;
+  endpoint ??= (async () => {
+    const issuer = requerida('OIDC_ISSUER').replace(/\/+$/, '');
+    const res = await fetch(`${issuer}/.well-known/openid-configuration`);
+    if (!res.ok) throw new Error(`Discovery de ${issuer} respondió HTTP ${res.status}`);
+    const cuerpo = (await res.json()) as { token_endpoint?: string };
+    if (!cuerpo.token_endpoint) throw new Error(`El discovery de ${issuer} no tiene token_endpoint`);
+    return cuerpo.token_endpoint;
+  })();
+  return endpoint;
+}
+
+/** Token del IdP con el grant configurado (password o client_credentials). */
+async function emitir(rol: Rol): Promise<string> {
+  const grant = process.env['OIDC_GRANT'] || 'password';
+  const form = new URLSearchParams({ grant_type: grant, scope: process.env['OIDC_SCOPE'] || 'openid' });
+  if (grant === 'client_credentials') {
+    form.set('client_id', requerida(variable(rol, 'USUARIO')));
+    form.set('client_secret', requerida(variable(rol, 'CLAVE')));
+  } else if (grant === 'password') {
+    form.set('client_id', requerida('OIDC_CLIENT_ID'));
+    const secreto = process.env['OIDC_CLIENT_SECRET'];
+    if (secreto) form.set('client_secret', secreto);
+    form.set('username', requerida(variable(rol, 'USUARIO')));
+    form.set('password', requerida(variable(rol, 'CLAVE')));
+  } else {
+    throw new Error(`OIDC_GRANT=${grant} no soportado (password | client_credentials)`);
+  }
+  const audiencia = process.env['OIDC_AUDIENCE'];
+  if (audiencia) form.set('audience', audiencia); // Auth0 y otros la piden explícita
+  const res = await fetch(await tokenEndpoint(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form,
+  });
+  if (!res.ok) throw new Error(`El IdP rechazó al usuario de prueba "${rol}" (HTTP ${res.status})`);
+  const campo = process.env['OIDC_CAMPO_TOKEN'] || 'access_token';
+  const token = ((await res.json()) as Record<string, unknown>)[campo];
+  if (typeof token !== 'string') throw new Error(`La respuesta del IdP no trae ${campo} para "${rol}"`);
+  return token;
+}
+{%- elif a_none %}
+
+async function emitir(_rol: Rol): Promise<string> {
+  return '';
+}
+{%- endif %}

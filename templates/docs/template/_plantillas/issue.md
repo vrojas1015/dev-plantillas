@@ -23,6 +23,8 @@ relacionados: []
 
 ## Criterios de aceptación
 
+<!-- Escenarios con id: - **CU-__ID__-1** Dado …, cuando …, entonces … (el test e2e lleva @CU-__ID__-1). -->
+
 - [ ] <!-- Verificable: un test, un comando, una respuesta HTTP concreta. -->
 
 ## Repos y orden

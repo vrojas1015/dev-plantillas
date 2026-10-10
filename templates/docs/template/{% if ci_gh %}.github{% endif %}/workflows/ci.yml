@@ -18,6 +18,11 @@ permissions:
 jobs:
   verificar:
     runs-on: ubuntu-latest
+    env:
+      # Opcional: registro de la suite e2e (README › Estado de escenarios e2e).
+      # Vacío = sin página de escenarios ni regla de validar.
+      REGISTRO_E2E: ${{ vars.REGISTRO_E2E }}
+      REGISTRO_E2E_TOKEN: ${{ secrets.REGISTRO_E2E_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

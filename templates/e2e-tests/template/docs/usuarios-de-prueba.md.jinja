@@ -1,0 +1,87 @@
+# Usuarios de prueba por rol (auth: `{{ auth }}`)
+
+La suite prueba la autorización del gateway con **un usuario de prueba por
+rol**. Las credenciales viven **sólo** en el gestor de secretos del CI (o en
+`ambientes/<ambiente>.env`, ignorado por git): nunca en el código, los
+reportes ni los logs. `tests/fixtures/credenciales.ts` obtiene el token de
+cada rol al primer uso y lo guarda en memoria del proceso.
+
+| Rol | Variables | Qué tiene en el IdP | Qué espera la suite |
+|---|---|---|---|
+| `anonimo` | — | — | 401 en rutas con roles; 200 en públicas |
+| `sin-rol` | `E2E_SIN_ROL_*` | usuario válido, **sin roles** | 403 en rutas con roles |
+| `lector` | `E2E_LECTOR_*` | rol de lectura (ej. `items.read`) | 200 en lecturas, 403 en escrituras |
+| `escritor` | `E2E_ESCRITOR_*` | lectura y escritura (ej. `items.read`, `items.write`) | 200 en escrituras |
+| `admin` | `E2E_ADMIN_*` | rol de administración (ej. `items.admin`) | 200 en todo lo suyo |
+
+Los nombres de roles reales (`items.read`…) son los de `routes.yaml` del
+gateway; la fila de cada ruta en `tests/api/autorizacion.spec.ts` dice qué rol
+de prueba debe pasar y cuál no.
+
+Para cualquier modo, `E2E_<ROL>_TOKEN` (un token ya emitido) tiene prioridad:
+sirve para depurar o para un IdP sin grant automatizable. Probar un rol sin
+ver el token: `npm run token -- lector` (muestra `sub`, `iss`, `aud` y `exp`).
+{% if a_fb %}
+## Firebase Auth
+
+Cada rol es un usuario email/clave del proyecto de Firebase **de QA** con sus
+roles en custom claims (los setea un backend con el Admin SDK, igual que a
+cualquier usuario; ver `docs/auth.md` del gateway):
+
+```js
+await admin.auth().setCustomUserClaims(uidLector, { roles: ['items.read'] });
+```
+
+| Variable | Valor |
+|---|---|
+| `FIREBASE_API_KEY` | "Web API key" del proyecto (Configuración del proyecto > General). No es secreta, pero es por ambiente |
+| `E2E_<ROL>_USUARIO` / `E2E_<ROL>_CLAVE` | email y clave del usuario de prueba (secretos) |
+| `FIREBASE_AUTH_EMULATOR_HOST` | opcional: `localhost:9099` para el emulador de Auth en local |
+
+El token se pide a `identitytoolkit.googleapis.com/v1/accounts:signInWithPassword`
+(el mismo login que hace el SDK web) y se manda como `Authorization: Bearer <idToken>`.
+Usar emails de un dominio de prueba propio (`e2e-lector@qa.example.com`): nunca
+cuentas de personas.
+{% elif a_oidc %}
+## OIDC
+
+El token sale del `token_endpoint` del discovery de `OIDC_ISSUER` (o de
+`OIDC_TOKEN_URL`, que salta el discovery). Dos grants:
+
+| `OIDC_GRANT` | Uso | Variables por rol |
+|---|---|---|
+| `password` (default) | Un **usuario** de prueba por rol en el IdP (Keycloak: "Direct access grants" habilitado en el cliente de pruebas; Auth0: grant "Password" en la aplicación de pruebas) | `E2E_<ROL>_USUARIO`, `E2E_<ROL>_CLAVE` + `OIDC_CLIENT_ID` (y `OIDC_CLIENT_SECRET` si el cliente es confidencial) |
+| `client_credentials` | Un **cliente** máquina a máquina por rol (IdPs que no permiten el grant password) | `E2E_<ROL>_USUARIO` = client_id, `E2E_<ROL>_CLAVE` = client_secret |
+
+| Variable | Default | Para qué |
+|---|---|---|
+| `OIDC_ISSUER` | `{{ oidc_issuer }}` | Discovery |
+| `OIDC_CLIENT_ID` | `{{ oidc_client_id }}` | Cliente de pruebas (grant password) |
+| `OIDC_SCOPE` | `openid` | Scopes pedidos |
+| `OIDC_AUDIENCE` | — | Parámetro `audience` (Auth0 lo exige para que el access token tenga el `aud` del gateway) |
+| `OIDC_CAMPO_TOKEN` | `access_token` | `id_token` si el gateway valida id tokens (`aud` = client id) |
+
+El token tiene que cumplir lo que valida el gateway (`OIDC_ISSUER`,
+`OIDC_AUDIENCE` y el claim de roles `AUTH_ROLES_CLAIM`). El grant password
+está desaconsejado para usuarios reales (OAuth 2.1); acá se usa sólo con
+cuentas de prueba sin MFA, en un cliente exclusivo de pruebas y sólo en QA.
+{% elif a_key %}
+## API keys
+
+Una key por rol, generada en el gateway (`make apikey ID=e2e-lector SCOPES="items.read"`)
+con los scopes del rol, cargada como secreto `E2E_<ROL>_API_KEY` del ambiente.
+Se manda en `X-API-Key`. Rotarlas como cualquier key (docs/auth.md del gateway).
+{% else %}
+## Sin auth
+
+Con `auth = ninguno` todas las rutas del gateway son públicas: no hay roles que
+probar y todos los "roles" de la suite son anónimos. Al agregar auth al
+gateway: `copier update --data auth=<firebase|oidc|api-key>` en este repo.
+{% endif %}
+## Reglas
+
+- Usuarios **sintéticos** y exclusivos de la suite; nunca cuentas de personas
+  ni datos personales.
+- Cada ambiente tiene sus propios usuarios (los de QA no existen en prod).
+- En prod, si se corre el smoke autenticado, con el **mínimo** de permisos.
+- Si una credencial se filtra: rotarla en el IdP y en el CI, y revisar los logs.

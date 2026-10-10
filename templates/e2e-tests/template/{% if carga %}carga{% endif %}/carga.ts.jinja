@@ -1,0 +1,71 @@
+/**
+ * Carga con k6 {{ v_k6 }}: corre los escenarios de carga/ y falla si alguno no
+ * cumple sus umbrales (k6 sale con 99).
+ *
+ *   npm run carga                          umbrales + rate limit
+ *   npm run carga -- umbrales              uno solo
+ *   CARGA_P95_MS=200 CARGA_RPS=8 CARGA_DURACION=1m npm run carga -- umbrales
+ *
+ * Escenarios:
+ *   umbrales     lectura constante (CARGA_RPS, CARGA_DURACION) con p95 y tasa de
+ *                errores (CARGA_P95_MS, CARGA_ERRORES), como el rol lector
+ *   rate-limit   ráfaga anónima que tiene que ver 429 con Retry-After
+ *
+ * Por Docker (grafana/k6:{{ v_k6 }}) o con el binario k6 del PATH
+ * (E2E_HERRAMIENTAS=local). Resumen JSON en reportes/carga/<escenario>.json.
+ * Nunca contra prod.
+ */
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { cargarAmbiente, RAIZ } from '../tests/fixtures/ambiente.ts';
+import { CABECERA, credencial, HAY_AUTH } from '../tests/fixtures/credenciales.ts';
+import { correr, type Herramienta, rutaParaHerramienta, urlParaHerramienta } from '../scripts/herramientas.ts';
+
+const K6: Herramienta = { imagen: 'grafana/k6:{{ v_k6 }}', local: ['k6'] };
+const ESCENARIOS = ['umbrales', 'rate-limit'];
+
+const amb = cargarAmbiente();
+if (amb.esProd) {
+  console.error('carga: nunca contra prod');
+  process.exit(2);
+}
+const elegidos = process.argv.slice(2).length ? process.argv.slice(2) : ESCENARIOS;
+for (const e of elegidos) {
+  if (!ESCENARIOS.includes(e)) {
+    console.error(`carga: escenario desconocido "${e}" (${ESCENARIOS.join(', ')})`);
+    process.exit(2);
+  }
+}
+
+// Variables que lee k6 (__ENV): se pasan por nombre, nunca en la línea de comandos.
+const variables = Object.fromEntries(
+  ['CARGA_RPS', 'CARGA_DURACION', 'CARGA_P95_MS', 'CARGA_ERRORES', 'RATE_LIMIT_REQUESTS', 'RATE_LIMIT_RUTA']
+    .filter((k) => process.env[k])
+    .map((k) => [k, process.env[k] as string]),
+);
+const base = {
+  ...variables,
+  API_BASE_URL: urlParaHerramienta(amb.apiBaseUrl),
+  E2E_CABECERA: CABECERA,
+  E2E_CREDENCIAL: HAY_AUTH ? await credencial('lector') : '',
+  K6_NO_USAGE_REPORT: 'true',
+};
+
+mkdirSync(join(RAIZ, 'reportes', 'carga'), { recursive: true });
+const resultados: Array<[string, number]> = [];
+for (const e of elegidos) {
+  console.log(`\n=== carga: ${e} ===`);
+  const codigo = correr(
+    K6,
+    ['run', '--quiet', '--summary-export', rutaParaHerramienta(`reportes/carga/${e}.json`), rutaParaHerramienta(`carga/${e}.js`)],
+    base,
+  );
+  resultados.push([e, codigo]);
+}
+
+console.log('\ncarga:');
+for (const [e, codigo] of resultados) {
+  console.log(`  ${codigo === 0 ? '✅' : '❌'} ${e}${codigo === 99 ? ' (umbral superado)' : ''}`);
+}
+process.exit(resultados.some(([, c]) => c !== 0) ? 1 : 0);

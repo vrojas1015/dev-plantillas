@@ -1,0 +1,69 @@
+# CI: variables y secretos por ambiente
+
+Las suites leen la configuración de variables de entorno (ver
+`tests/fixtures/ambiente.ts`). En el CI, cada ambiente remoto ({{ amb_ci | join(', ') if amb_ci else 'ninguno todavía' }}) tiene
+las suyas{% if ci_gh %} en un **environment** de GitHub con el mismo nombre (Settings > Environments){% else %} como variables CI/CD con **environment scope** = el ambiente (Settings > CI/CD > Variables){% endif %}.
+Lo que no esté definido sale de `ambientes/<ambiente>.env.example` del repo.
+
+| Variable | Tipo | Para qué |
+|---|---|---|
+| `API_BASE_URL` | variable | URL del gateway (pisa la del `.env.example`) |
+{%- if web %}
+| `WEB_BASE_URL` | variable | URL del front |
+{%- endif %}
+| `OPENAPI_URL` | variable | OpenAPI del gateway (default `{{ api_gateway_openapi_url }}`) |
+{%- if a_fb %}
+| `FIREBASE_API_KEY` | variable | Web API key del proyecto de Firebase del ambiente |
+{%- elif a_oidc %}
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_GRANT`, `OIDC_SCOPE`, `OIDC_AUDIENCE`, `OIDC_TOKEN_URL`, `OIDC_CAMPO_TOKEN` | variables | IdP y cliente de pruebas (docs/usuarios-de-prueba.md) |
+| `OIDC_CLIENT_SECRET` | **secreto** | Sólo si el cliente de pruebas es confidencial |
+{%- endif %}
+{%- if a_key %}
+| `E2E_SIN_ROL_API_KEY`, `E2E_LECTOR_API_KEY`, `E2E_ESCRITOR_API_KEY`, `E2E_ADMIN_API_KEY` | **secretos** | Una API key por rol |
+{%- elif not a_none %}
+| `E2E_SIN_ROL_USUARIO`/`_CLAVE`, `E2E_LECTOR_…`, `E2E_ESCRITOR_…`, `E2E_ADMIN_…` | **secretos** | Usuario de prueba por rol |
+{%- endif %}
+
+{%- if ci_gl %}
+
+En GitLab, los secretos van **Masked** y **Protected** (y la rama `main`
+protegida); las variables no secretas, sin máscara. Las variables de un
+pipeline disparado desde otro proyecto (`E2E_AMBIENTE`, `E2E_SUITES`…) no
+pueden traer credenciales: las credenciales son siempre las de este proyecto.
+{%- else %}
+
+En GitHub, protegé el environment `prod` (reviewers o rama `main`) si la
+suite de prod usa credenciales. Los secretos de un environment sólo llegan a
+los jobs que declaran ese `environment:` (e2e{{ ', robustez' if robustez }}{{ ', carga' if carga }}).
+{%- endif %}
+
+## Versiones fijadas
+
+| Herramienta | Versión | Dónde |
+|---|---|---|
+| Playwright | `{{ v_playwright }}` | `package.json`{% if ci_gl %}; imagen `mcr.microsoft.com/playwright:v{{ v_playwright }}-noble` en el CI (tienen que coincidir){% endif %} |
+| TypeScript | `7.0.2` | `package.json` (sólo typecheck) |
+{%- if robustez %}
+| Schemathesis | `{{ v_schemathesis }}` | `robustez/robustez.ts` (imagen Docker y `uvx`){% if ci_gl %}; `uv {{ v_uv }}` en el CI{% endif %} |
+{%- endif %}
+{%- if carga %}
+| k6 | `{{ v_k6 }}` | `carga/carga.ts` (imagen Docker){% if ci_gl %}; binario en el CI{% endif %} |
+{%- endif %}
+| Node | 24 | `package.json` (`engines`) y CI |
+
+Al subir Playwright, subir también la imagen del CI y correr
+`npx playwright install` local. Renovate/Dependabot proponen los bumps de
+`package.json`; las imágenes se actualizan desde la plantilla (`copier update`).
+
+## Artefactos
+
+| Artefacto | Contenido |
+|---|---|
+| {{ 'e2e-reporte-<ambiente>' if ci_gh else 'reportes/ del job e2e' }} | `reportes/html/` (abrir `index.html` o `npx playwright show-report reportes/html`), `playwright.json`, `junit.xml`, `artefactos/` (trazas, videos y capturas de lo que falló) |
+| {{ 'registro-e2e' if ci_gh else 'reportes/registro.json del job e2e' }} | `registro.json` (docs/registro.md) |
+{%- if robustez %}
+| {{ 'robustez-<ambiente>' if ci_gh else 'reportes/robustez/' }} | JUnit de Schemathesis por rol |
+{%- endif %}
+{%- if carga %}
+| {{ 'carga-<ambiente>' if ci_gh else 'reportes/carga/' }} | Resumen JSON de k6 por escenario |
+{%- endif %}

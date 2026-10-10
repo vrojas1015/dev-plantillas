@@ -16,3 +16,4 @@ ignores:
   - ".venv/**"
   - "venv/**"
   - "node_modules/**"
+  - ".e2e/**"

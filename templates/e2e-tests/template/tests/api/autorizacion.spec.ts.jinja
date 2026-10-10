@@ -1,0 +1,101 @@
+/**
+ * Autorización por rol contra el gateway desplegado: sin credencial -> 401,
+ * credencial válida sin el rol -> 403, con el rol -> 200. Complementa los tests
+ * generados del gateway (que usan un upstream falso) con el sistema real.
+ *
+ * Una fila por ruta, con los roles de routes.yaml del gateway. Al agregar rutas
+ * al gateway, agregar su fila acá.
+ */
+import type { APIRequestContext, APIResponse } from '@playwright/test';
+
+import { expect, type Quien, test } from '../fixtures/index.ts';
+
+interface Contexto {
+  /** Id de un ítem existente (creado en beforeAll). */
+  id: string;
+  nombre: (base: string) => string;
+}
+
+interface Ruta {
+  nombre: string;
+  /** Roles con permiso; 'publica' = responde sin credencial. */
+  permitidos: Quien[] | 'publica';
+  /** Usuarios válidos SIN el rol -> 403. */
+  denegados: Quien[];
+  llamar: (api: APIRequestContext, ctx: Contexto) => Promise<APIResponse>;
+}
+
+const RUTAS: Ruta[] = [
+  {
+    nombre: 'GET /v1/items',
+    permitidos: 'publica',
+    denegados: [],
+    llamar: (api) => api.get('v1/items'),
+  },
+{%- if not a_none %}
+  {
+    nombre: 'GET /v1/items/{id}',
+    permitidos: ['lector', 'admin'],
+    denegados: ['sin-rol'],
+    llamar: (api, { id }) => api.get(`v1/items/${id}`),
+  },
+  {
+    nombre: 'POST /v1/items',
+    permitidos: ['escritor', 'admin'],
+    denegados: ['sin-rol', 'lector'],
+    llamar: (api, { nombre }) =>
+      api.post('v1/items', { data: { name: nombre('autz'), description: 'Ítem sintético e2e' } }),
+  },
+{%- endif %}
+];
+
+test.describe('autorización por rol', { tag: ['@smoke', '@CU-001-2'] }, () => {
+  // En orden y en un solo worker: crea un único ítem base y no gasta el rate
+  // limit de escritura (CreateItem: burst 10 por usuario en el gateway de ejemplo).
+  test.describe.configure({ mode: 'default' });
+
+  let id = 'no-existe';
+
+  test.beforeAll(async ({ nuevaApi, ambiente }) => {
+{%- if a_none %}
+    void nuevaApi;
+    void ambiente;
+{%- else %}
+    // Un ítem existente: sin él, un 404 taparía al 403/200 de las rutas por id.
+    const api = await nuevaApi('escritor');
+    const res = await api.post('v1/items', {
+      data: { name: `${ambiente.prefijo}-autz-base-${Date.now().toString(36)}`, description: 'base' },
+    });
+    expect(res.status(), await res.text()).toBe(200);
+    id = ((await res.json()) as { item: { id: string } }).item.id;
+    await api.dispose();
+{%- endif %}
+  });
+
+  for (const ruta of RUTAS) {
+    const ctx = (nombre: Contexto['nombre']): Contexto => ({ id, nombre });
+    if (ruta.permitidos === 'publica') {
+      test(`${ruta.nombre}: pública, sin credencial -> 200`, async ({ apiComo, datos }) => {
+        const res = await ruta.llamar(await apiComo('anonimo'), ctx((b) => datos.nombre(b)));
+        expect(res.status()).toBe(200);
+      });
+      continue;
+    }
+    test(`${ruta.nombre}: sin credencial -> 401`, async ({ apiComo, datos }) => {
+      const res = await ruta.llamar(await apiComo('anonimo'), ctx((b) => datos.nombre(b)));
+      expect(res.status()).toBe(401);
+    });
+    for (const rol of ruta.denegados) {
+      test(`${ruta.nombre}: ${rol} -> 403`, async ({ apiComo, datos }) => {
+        const res = await ruta.llamar(await apiComo(rol), ctx((b) => datos.nombre(b)));
+        expect(res.status()).toBe(403);
+      });
+    }
+    for (const rol of ruta.permitidos) {
+      test(`${ruta.nombre}: ${rol} -> 200`, async ({ apiComo, datos }) => {
+        const res = await ruta.llamar(await apiComo(rol), ctx((b) => datos.nombre(b)));
+        expect(res.status(), await res.text()).toBe(200);
+      });
+    }
+  }
+});

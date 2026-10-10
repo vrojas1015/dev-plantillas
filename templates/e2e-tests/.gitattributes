@@ -1,0 +1,2 @@
+# La plantilla genera scripts y YAML de CI: forzar LF también en el repo de la plantilla.
+* text=auto eol=lf
