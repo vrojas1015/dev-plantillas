@@ -30,6 +30,7 @@ guías de cómo se organizan carpetas, repos y trabajo con agentes.
 | `docs/10-base-comun-de-repos.md` | Base común de todos los repos: seguridad, Renovate, protección de ramas, releases y conexión con el repo de documentación |
 | `docs/11-pipelines.md` | Repo `ci` de pipelines reutilizables (GitHub reusable workflows y GitLab CI/CD components) |
 | `docs/12-pruebas.md` | Pruebas dentro del flujo de desarrollo (controles por etapa, trazabilidad, bugs e inestables) y especificación de `e2e-tests` |
+| `docs/13-elegir-tecnologia.md` | Qué lenguaje de backend y qué herramienta de front o móvil usar según el problema, y el costo de sumar una tecnología |
 
 ## Requisitos
 
