@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run typecheck:*)",
+      "Bash(npm run listar:*)",
+      "Bash(npm run registro:*)",
+      "Bash(npx playwright test --list:*)",
+      "Bash(npx tsc --noEmit:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git ls-files:*)",
+      "Bash(ls:*)"
+    ],
+    "deny": [
+      "Read(./ambientes/*.env)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Bash(npm run token:*)"
+    ]
+  }
+}

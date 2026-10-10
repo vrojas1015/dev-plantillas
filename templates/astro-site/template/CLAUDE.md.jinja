@@ -1,0 +1,102 @@
+# {{ repo_name }} — contexto para Claude
+
+{{ site_name }}: sitio público en Astro que tiene que posicionar en buscadores. Las
+reglas comunes del front y de la plataforma están en los `CLAUDE.md` de las carpetas
+padre; acá sólo lo propio.
+
+## Stack
+
+- Astro 7 ({{ 'SSG + rutas SSR con @astrojs/node' if hib else 'SSG: todo se genera en el build' }}), islas de React 19, TypeScript estricto
+- SEO: `<Seo>` + `<JsonLd>` (schema-dts), `@astrojs/sitemap`, robots.txt por ambiente{% if blog %}, RSS{% endif %}
+- Idiomas: {{ idiomas | join(', ') }} (default `{{ idioma }}` sin prefijo{% if i18n %}; el resto en `/<idioma>/`, con hreflang{% endif %})
+{%- if blog %}
+- Contenido: colección `blog` (Markdown/MDX con esquema zod) en `src/content/blog/<idioma>/`
+{%- endif %}
+{%- if ent %}
+- Entidades: catálogo desde el api-gateway (`src/lib/api`); en dev y CI, fixture local (`PUBLIC_API_FUENTE=mock`)
+{%- endif %}
+- Calidad: prettier + eslint, `astro check`, test de SEO y de JSON-LD sobre `dist/`, lychee, Lighthouse CI
+
+## Estructura
+
+| Carpeta | Qué va |
+|---|---|
+| `src/pages/` | Rutas. Envoltorios finos que eligen idioma y datos; nada de markup largo{% if i18n %}. `[lang]/` = idiomas con prefijo{% endif %} |
+| `src/vistas/` | El contenido de cada tipo de página (una vista sirve a todos los idiomas) |
+| `src/layouts/Base.astro` | `<html lang>`, `<Seo>`, JSON-LD, skip-link, cabecera y pie. **Toda página lo usa** |
+| `src/components/seo/` | `Seo.astro` (title, description, canonical, OG, hreflang, robots) y `JsonLd.astro` |
+{%- if ent %}
+| `src/components/islands/` | Islas de React (`Buscador.tsx`: estado en la URL, caché, scroll, sin respuestas viejas) |
+| `src/lib/api/` | Contratos (`tipos.ts`) y cliente del catálogo (api / mock) |
+{%- endif %}
+| `src/lib/` | `seo.ts` (títulos, URLs, JSON-LD comunes), `i18n.ts` (rutas por idioma){% if blog %}, `blog.ts`{% endif %} |
+| `src/i18n/textos.ts` | Todo texto de interfaz, por idioma |
+| `sitio.config.mjs` | Nombre, URL, idiomas: única fuente para config, código y scripts |
+| `redirects.json` | Redirecciones 301: **el único lugar** donde se declaran |
+| `scripts/` | Tests de SEO, JSON-LD y redirecciones sobre el build |
+
+## Reglas
+
+- **Toda página usa `<Base>`** con `titulo` (≤ 60 con « · Sitio») y `descripcion`
+  (70–160) **propios**. El test de SEO falla si falta algo o si se repiten.
+- **Un solo `<h1>`** por página, encabezados en orden, `alt` en toda imagen con contenido.
+- **Cero JS por defecto.** Islas con `client:visible` o `client:idle`; `client:load`
+  sólo si la isla tiene que responder antes de que la página termine de cargar, y
+  con el motivo escrito al lado.
+- **Slugs estables** y legibles (kebab-case, sin ids). Si una URL publicada cambia o
+  se borra, va a `redirects.json` (el CI compara contra el sitemap de prod).
+- URLs **siempre con barra final**; canónicas absolutas sin parámetros.
+- Imágenes con `astro:assets` (`<Image>`/`<Picture>`, con `widths` y `sizes`); la del
+  LCP con `loading="eager"` y `fetchpriority="high"`. Nada de imágenes enormes en `public/`.
+- Datos estructurados siempre con tipos de `schema-dts` vía `<Base jsonLd={[...]}>`.
+- Textos de UI en `src/i18n/textos.ts`, nunca sueltos en componentes.
+- Variables por ambiente con `astro:env` (esquema en `astro.config.mjs`); `PUBLIC_ENTORNO`
+  decide indexación: sólo `prod` indexa.
+- Nada de scripts de terceros fuera de `Analitica.astro`{% if ga4 %} (GA4 sólo después de aceptar el banner){% endif %}.
+{%- if ent %}
+- Una entidad inexistente devuelve **404 real**; los resultados iniciales del buscador
+  van en el HTML (la isla toma el control después).
+{%- endif %}
+
+## Comandos
+
+```bash
+npm run dev                 # http://localhost:4321 (copiar antes .env.example a .env)
+npm run verificar           # lint + astro check + build + test de SEO + JSON-LD
+npm run build               # astro check + astro build
+npm run test:seo            # sobre dist/ (PUBLIC_ENTORNO define qué se espera)
+npm run test:jsonld -- --detalle
+npm run lighthouse          # Lighthouse CI con presupuestos (necesita Chrome)
+npm run format              # prettier --write
+```
+
+Build como en el CI: `PUBLIC_ENTORNO=prod{% if ent %} PUBLIC_API_FUENTE=mock{% endif %} npm run build`.
+
+## Deploy
+
+{%- if d_fb %}
+
+- Firebase Hosting{% if hib %} + Cloud Run para las rutas SSR (rewrites de `firebase.json`){% endif %}, desde el CI, sin claves (WIF).
+- Push/merge a `main` → **producción**. Tag `qa-vX.Y.Z` → **QA** (noindex).
+{%- elif d_cy %}
+
+- Coolify v4: imagen Docker ({{ 'Node con el server de Astro' if hib else 'Caddy sirviendo dist/' }}) → registry → webhook de Coolify.
+- Tag `qa-vX.Y.Z` → **QA** (noindex). Tag `prod-vX.Y.Z` → **producción**. Una imagen por ambiente.
+- Probar la imagen: `docker compose up --build` → http://localhost:8080.
+{%- elif d_cr %}
+
+- Cloud Run (el server de Node sirve todo el sitio), Cloud Build + WIF.
+- Tag `qa-vX.Y.Z` → **QA** (noindex). Tag `prod-vX.Y.Z` → **producción**.
+{%- else %}
+
+- Sin deploy automático: el CI sólo verifica.
+{%- endif %}
+- **No desplegar a mano.** Setup, variables del CI y Search Console: `docs/deploy.md`,
+  `docs/search-console.md`. Reglas de SEO y cómo correr cada control: `docs/seo.md`.
+{%- if ent %}
+
+## Backend: si falta un endpoint
+
+No inventarlo ni agregarlo sólo al fixture. Confirmar que no existe, abrir un issue en
+el repo de documentación con el contrato propuesto y seguir cuando esté acordado.
+{%- endif %}

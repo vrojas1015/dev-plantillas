@@ -1,0 +1,26 @@
+// RSS del blog (idioma default). Se anuncia en el <head> de todas las páginas.
+import rss from '@astrojs/rss'
+import type { APIRoute } from 'astro'
+
+import { t } from '@/i18n/textos'
+import { postsDe, urlDe } from '@/lib/blog'
+import { idiomaDefault } from '@/lib/i18n'
+import { sitio } from '../../sitio.config.mjs'
+
+export const prerender = true
+
+export const GET: APIRoute = async ({ site }) => {
+  const posts = await postsDe(idiomaDefault)
+  return rss({
+    title: sitio.nombre,
+    description: t(idiomaDefault, 'blog.descripcion'),
+    site: site ?? sitio.url,
+    items: posts.map((post) => ({
+      title: post.data.title,
+      description: post.data.description,
+      pubDate: post.data.publishDate,
+      link: urlDe(post),
+    })),
+    customData: `<language>${idiomaDefault}</language>`,
+  })
+}

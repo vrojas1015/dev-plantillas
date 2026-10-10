@@ -1,0 +1,96 @@
+# {{ repo_name }} — contexto para Claude
+
+{{ descripcion }}
+
+Prueba **la plataforma completa desplegada** (un ambiente: {{ ambientes | join(', ') }}), no un
+servicio suelto. Auth del gateway: **{{ auth }}**. Generado desde la plantilla
+Copier `e2e-tests` (`.copier-answers.yml`). Estándar: docs/12-pruebas.md.
+
+## Layout
+
+| Path | Qué |
+|---|---|
+| `tests/api/` | API del gateway: autorización por rol (401/403/200), flujos, smoke |
+{%- if web %}
+| `tests/web/` + `paginas/` | Flujos de usuario en el navegador, SÓLO vía Page Objects |
+{%- endif %}
+| `tests/fixtures/` | `test`/`expect` con fixtures: `apiComo(rol)`, `datos`, `ambiente` |
+| `scripts/registro.ts` | Reporte de Playwright → `reportes/registro.json` (docs/registro.md) |
+{%- if robustez %}
+| `robustez/` | Schemathesis contra el OpenAPI del gateway, por rol |
+{%- endif %}
+{%- if carga %}
+| `carga/` | k6: umbrales (p95, errores) y rate limit (429) |
+{%- endif %}
+| `ambientes/*.env.example` | URLs por ambiente (sin secretos); credenciales en `*.env` o el CI |
+
+## Un test por escenario
+
+Cada escenario de aceptación de un issue en `docs` (`CU-<issue>-<n>`, Dado /
+Cuando / Entonces) tiene **su** test, etiquetado con su id:
+
+```ts
+import { expect, test } from '../fixtures/index.ts';   // nunca de '@playwright/test'
+
+test('aplicar descuento dentro del tope', { tag: ['@CU-042-1', '@regresion'] }, async ({ apiComo, datos }) => {
+  const api = await apiComo('escritor');                       // Dado
+  const res = await api.post('v1/pedidos', { data: { nombre: datos.nombre('pedido'), total: 100 } });
+  // Cuando … / Entonces …
+  expect(res.status()).toBe(200);
+});
+```
+
+- El título dice el comportamiento; el `Dado/Cuando/Entonces` se lee en el cuerpo.
+- Rutas relativas (`'v1/...'`, sin `/` inicial): la base es la del ambiente.
+- Un bug: **primero** el test que lo reproduce (rojo), después el arreglo.
+{%- if web %}
+- Web: preparar datos por API (rápido) y verificar en la UI con un Page Object
+  (`tests/web/paginas/`); nada de selectores sueltos en los tests.
+{%- endif %}
+
+## Etiquetas
+
+| Etiqueta | Uso |
+|---|---|
+| `@CU-<issue>-<n>` | El escenario que cubre (va a `registro.json` y a la página de estado de docs) |
+| `@smoke` | Lo mínimo que tiene que andar después de cada deploy. **Único que corre en prod** |
+| `@regresion` | Todo lo demás de la suite |
+| `@inestable` | Cuarentena: corre, sale en el reporte y en el registro (⚠️), **no bloquea**. Exige issue y plazo de 2 semanas; después se arregla o se borra |
+
+## Datos (no negociable)
+
+- **Nunca datos reales** ni personales: valores sintéticos y obviamente falsos.
+- Todo lo que se crea lleva el prefijo de la corrida: `datos.nombre('item')`.
+- Cada test crea lo suyo y no depende del orden ni de otros tests.
+- Limpieza: `datos.alLimpiar(() => …)` en el test; barrido por prefijo en
+  `LIMPIADORES` (`tests/fixtures/datos.ts`).
+- Ojo con el rate limit del gateway (escrituras: ráfaga chica por usuario):
+  no crear datos de más.
+
+## Roles
+
+`anonimo`, `sin-rol`, `lector`, `escritor`, `admin`: un usuario de prueba por
+rol, credenciales SÓLO en variables de entorno (docs/usuarios-de-prueba.md).
+Nunca imprimir, loguear ni adjuntar tokens. Una ruta nueva del gateway → su
+fila en `tests/api/autorizacion.spec.ts` con los roles de `routes.yaml`.
+
+## Comandos
+
+```bash
+npm install && npx playwright install{{ (' ' ~ navegadores | join(' ')) if web }}   # una vez
+npm run typecheck && npm run listar          # sin tocar ningún ambiente
+E2E_AMBIENTE={{ ambientes[0] }} npm run e2e                 # suite + registro.json (bloquea como el CI)
+npm run e2e -- --grep @CU-042-1              # un escenario
+npm run test:smoke                           # sólo @smoke
+npm run reporte                              # abre el HTML del último reporte
+{%- if robustez %}
+npm run robustez                             # Schemathesis (Docker)
+{%- endif %}
+{%- if carga %}
+npm run carga                                # k6 (Docker)
+{%- endif %}
+```
+
+Trazas, video y captura sólo de lo que falla (`reportes/artefactos/`);
+reintentos sólo en CI. Qué bloquea: `scripts/registro.ts --bloquear`.
+CI y disparo desde otros repos: docs/disparo.md y docs/ci.md.

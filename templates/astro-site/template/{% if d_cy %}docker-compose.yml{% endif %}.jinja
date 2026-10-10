@@ -1,0 +1,17 @@
+# Probar la imagen en local:
+#   docker compose up --build                       → http://localhost:8080 (build de prod)
+#   PUBLIC_ENTORNO=qa docker compose up --build     → build de QA (noindex)
+#
+# En Coolify se recomienda el recurso "Docker Image" con la imagen que publica el
+# CI (ver docs/deploy.md). Si usás el build pack "Docker Compose", sacá `ports`:
+# Coolify enruta el dominio al puerto {{ '8080' if hib else '80' }} del contenedor por su proxy.
+services:
+  web:
+    build:
+      context: .
+      args:
+        PUBLIC_ENTORNO: ${PUBLIC_ENTORNO:-prod}
+    image: {{ repo_name }}:${PUBLIC_ENTORNO:-prod}
+    ports:
+      - '${HOST_PORT:-8080}:{{ '8080' if hib else '80' }}'
+    restart: unless-stopped

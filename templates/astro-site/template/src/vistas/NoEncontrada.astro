@@ -1,0 +1,28 @@
+---
+// 404 propia. El hosting la sirve con status 404 (nunca 200) y lleva noindex.
+import { t } from '@/i18n/textos'
+import Base from '@/layouts/Base.astro'
+import { ruta, type Idioma } from '@/lib/i18n'
+
+interface Props {
+  idioma: Idioma
+}
+
+const { idioma } = Astro.props
+---
+
+<Base
+  titulo={t(idioma, 'error404.titulo')}
+  descripcion={t(idioma, 'error404.descripcion')}
+  camino="/404/"
+  idioma={idioma}
+  noindex
+>
+  <div class="contenedor">
+    <h1>{t(idioma, 'error404.titulo')}</h1>
+    <p>{t(idioma, 'error404.descripcion')}</p>
+    <p>
+      <a href={ruta(idioma, '/')}>{t(idioma, 'error404.volver')}</a>
+    </p>
+  </div>
+</Base>

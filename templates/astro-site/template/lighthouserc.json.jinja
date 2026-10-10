@@ -1,0 +1,59 @@
+{
+  "ci": {
+    "collect": {
+{%- if hib %}
+      "startServerCommand": "node servidor.mjs 4329",
+      "startServerReadyPattern": "Servidor escuchando",
+      "url": [
+        "http://127.0.0.1:4329/"{% if blog %},
+        "http://127.0.0.1:4329/blog/primer-post/"{% endif %}{% if ent %},
+        "http://127.0.0.1:4329/catalogo/",
+        "http://127.0.0.1:4329/catalogo/lampara-de-escritorio-nordica/"{% endif %}
+      ],
+{%- else %}
+      "staticDistDir": "./dist",
+      "url": [
+        "http://localhost/"{% if blog %},
+        "http://localhost/blog/primer-post/"{% endif %}{% if ent %},
+        "http://localhost/catalogo/",
+        "http://localhost/catalogo/lampara-de-escritorio-nordica/"{% endif %}
+      ],
+{%- endif %}
+      "numberOfRuns": 1,
+      "settings": {
+        "chromeFlags": "--headless=new --no-sandbox"
+      }
+    },
+    "assert": {
+      "assertMatrix": [
+        {
+          "matchingUrlPattern": ".*",
+          "assertions": {
+            "categories:seo": ["error", { "minScore": 1 }],
+            "categories:accessibility": ["error", { "minScore": 0.95 }],
+            "categories:best-practices": ["error", { "minScore": 0.95 }],
+            "categories:performance": ["error", { "minScore": 0.9 }],
+            "largest-contentful-paint": ["error", { "maxNumericValue": 2500 }],
+            "cumulative-layout-shift": ["error", { "maxNumericValue": 0.1 }]
+          }
+        },
+        {
+          "matchingUrlPattern": "^(?!.*/catalogo/$).*$",
+          "assertions": {
+            "resource-summary:script:size": ["error", { "maxNumericValue": 51200 }]
+          }
+        }{% if ent %},
+        {
+          "matchingUrlPattern": ".*/catalogo/$",
+          "assertions": {
+            "resource-summary:script:size": ["error", { "maxNumericValue": 122880 }]
+          }
+        }{% endif %}
+      ]
+    },
+    "upload": {
+      "target": "filesystem",
+      "outputDir": ".lighthouseci/reportes"
+    }
+  }
+}

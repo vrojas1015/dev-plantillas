@@ -1,0 +1,25 @@
+---
+// Migas de pan visibles. El JSON-LD BreadcrumbList sale de los mismos datos
+// (seo.migas) en la vista que lo usa.
+import type { Miga } from '@/lib/seo'
+
+interface Props {
+  items: Miga[]
+}
+
+const { items } = Astro.props
+---
+
+<nav class="migas" aria-label="Breadcrumb">
+  <ol>
+    {items.map((m, i) =>
+      i === items.length - 1 ? (
+        <li aria-current="page">{m.nombre}</li>
+      ) : (
+        <li>
+          <a href={m.camino}>{m.nombre}</a>
+        </li>
+      ),
+    )}
+  </ol>
+</nav>

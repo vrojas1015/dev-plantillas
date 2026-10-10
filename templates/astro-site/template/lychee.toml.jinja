@@ -1,0 +1,14 @@
+# lychee: enlaces rotos en el build (https://lychee.cli.rs).
+#   MR / PR:          con --offline → sólo enlaces internos (rápido, sin red)
+#   rama principal:   sin --offline → también los externos
+# Uso (ver docs/seo.md):
+#   lychee --config lychee.toml --offline --root-dir "$PWD/{{ 'dist/client' if hib else 'dist' }}" '{{ 'dist/client' if hib else 'dist' }}/**/*.html'
+
+# Las URLs absolutas del propio sitio (canonical, og:url, hreflang) apuntan a
+# producción, que puede no tener todavía este build: no se chequean por red.
+exclude = ['^{{ site_url | replace('.', '\\.') }}', '^https?://localhost']
+exclude_all_private = true
+
+max_retries = 2
+timeout = 20
+accept = ['200..=299', '429']

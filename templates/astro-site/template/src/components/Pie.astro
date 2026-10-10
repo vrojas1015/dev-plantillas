@@ -1,0 +1,20 @@
+---
+import { t } from '@/i18n/textos'
+import type { Idioma } from '@/lib/i18n'
+import { sitio } from '../../sitio.config.mjs'
+
+interface Props {
+  idioma: Idioma
+}
+
+const { idioma } = Astro.props
+const anio = new Date().getFullYear()
+---
+
+<footer class="pie">
+  <div class="contenedor">
+    <p>
+      © {anio} {sitio.nombre}. {t(idioma, 'pie.derechos')}
+    </p>
+  </div>
+</footer>

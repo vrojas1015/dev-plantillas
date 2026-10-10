@@ -1,0 +1,82 @@
+# Calidad en cada PR y en cada push a main (docs/seo.md, «CI»):
+#   lint (prettier + eslint) → astro check + build (prod, API mock) → test de SEO
+#   → JSON-LD → redirecciones vs sitemap de prod → enlaces (lychee) → Lighthouse CI.
+#
+# Variable opcional del repo (Settings › Secrets and variables › Actions › Variables):
+#   SITEMAP_PROD   https://<dominio>/sitemap-index.xml  (activa el chequeo de redirecciones)
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-{% raw %}${{ github.ref }}{% endraw %}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    env:
+      PUBLIC_ENTORNO: prod
+{%- if ent %}
+      PUBLIC_API_FUENTE: mock
+{%- endif %}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - name: astro check + build
+        run: npm run build
+{%- if hib %}
+      # Las páginas SSR no están en dist/: los tests las piden a un server levantado.
+      - name: Server SSR para los tests
+        run: |
+          (node servidor.mjs 4322 > "$RUNNER_TEMP/server.log" 2>&1 &)
+          for _ in $(seq 1 30); do curl -fsS -o /dev/null http://localhost:4322/ && break; sleep 1; done
+{%- endif %}
+      - name: Test de SEO
+        run: npm run test:seo
+{%- if hib %}
+        env:
+          SEO_SERVIDOR: http://localhost:4322
+{%- endif %}
+      - name: JSON-LD
+        run: npm run test:jsonld
+{%- if hib %}
+        env:
+          SEO_SERVIDOR: http://localhost:4322
+{%- endif %}
+      - name: Redirecciones (rutas del sitemap de prod sin 301)
+        env:
+          SITEMAP_PROD: {% raw %}${{ vars.SITEMAP_PROD }}{% endraw %}
+        run: npm run test:redirecciones
+
+      # Internos en cada PR (sin red); externos también en main.
+      - name: Enlaces (lychee)
+        uses: lycheeverse/lychee-action@v2
+        with:
+          fail: true
+          args: >-
+            --config lychee.toml
+            {% raw %}${{ github.event_name == 'pull_request' && '--offline' || '' }}{% endraw %}
+            --root-dir {% raw %}${{ github.workspace }}{% endraw %}/{{ 'dist/client' if hib else 'dist' }}
+            '{{ 'dist/client' if hib else 'dist' }}/**/*.html'
+
+      - name: Lighthouse CI (SEO 100, a11y ≥ 95, best practices ≥ 95, perf ≥ 90 móvil)
+        run: npx lhci autorun
+      - name: Reportes de Lighthouse
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse
+          path: .lighthouseci/
+          if-no-files-found: ignore

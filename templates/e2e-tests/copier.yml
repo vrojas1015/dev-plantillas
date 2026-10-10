@@ -1,0 +1,248 @@
+# =============================================================================
+# Plantilla Copier: e2e-tests (pruebas de punta a punta de la plataforma)
+# =============================================================================
+# Ver README.md (al lado de este archivo) para generar/actualizar proyectos.
+# Todo lo que vive en template/ es el contenido del repo generado; lo que está
+# acá afuera (este archivo, README.md) no se copia.
+# Especificación: docs/12-pruebas.md del repo de plantillas.
+# =============================================================================
+
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_answers_file: .copier-answers.yml
+_templates_suffix: .jinja
+
+_message_after_copy: |
+  Repo {{ repo_name }} generado (auth: {{ auth }}, ambientes: {{ ambientes | join(', ') }}).
+
+  Siguientes pasos:
+    1. cd {{ _copier_conf.dst_path }}
+    2. npm install && npx playwright install{% if web %} --with-deps {{ navegadores | join(' ') }}{% endif %}
+    3. cp ambientes/{{ ambientes[0] }}.env.example ambientes/{{ ambientes[0] }}.env   (completar credenciales de prueba)
+    4. npm run typecheck && npm run listar
+    5. E2E_AMBIENTE={{ ambientes[0] }} npm run e2e      (suite + registro.json; ver README.md)
+  {%- if robustez %}
+    6. npm run robustez   (Schemathesis por Docker)
+  {%- endif %}
+  {%- if carga %}
+    7. npm run carga      (k6 por Docker)
+  {%- endif %}
+    git init && git add . && git commit -m "Scaffold inicial desde e2e-tests"
+
+# -----------------------------------------------------------------------------
+# Preguntas
+# -----------------------------------------------------------------------------
+
+repo_name:
+  type: str
+  help: "Nombre del repo"
+  default: e2e-tests
+  validator: >-
+    {% if not (repo_name | regex_search('^[a-z][a-z0-9-]*[a-z0-9]$')) %}
+    Solo minúsculas, dígitos y guiones; debe empezar con letra y no terminar en guion.
+    {% endif %}
+
+descripcion:
+  type: str
+  help: "Descripción de una línea (va a CLAUDE.md y README.md)"
+  default: "Pruebas de punta a punta de la plataforma desplegada: UI, API por rol, robustez y carga."
+
+ci_provider:
+  type: str
+  help: "Proveedor de CI/CD"
+  choices:
+    GitLab CI: gitlab
+    GitHub Actions: github
+  default: gitlab
+
+ambientes:
+  type: str
+  help: >-
+    Ambientes contra los que corre la suite (local = docker compose de la
+    plataforma; prod sólo corre @smoke)
+  choices:
+    local: local
+    qa: qa
+    prod: prod
+  multiselect: true
+  default: [local, qa]
+  validator: >-
+    {% if not ambientes %}Elegí al menos un ambiente.{% endif %}
+
+web:
+  type: bool
+  help: "¿La plataforma tiene front web (proyectos de navegador + Page Objects)?"
+  default: true
+
+navegadores:
+  type: str
+  help: "Navegadores de los proyectos web (chromium siempre conviene; los otros duplican el tiempo)"
+  choices:
+    chromium: chromium
+    firefox: firefox
+    webkit: webkit
+  multiselect: true
+  default: [chromium]
+  when: "{{ web }}"
+  validator: >-
+    {% if web and not navegadores %}Elegí al menos un navegador.{% endif %}
+
+api_base_url_local:
+  type: str
+  help: "URL base del API gateway en local"
+  default: "http://localhost:8080"
+  when: "{{ 'local' in ambientes }}"
+
+api_base_url_qa:
+  type: str
+  help: "URL base del API gateway en QA"
+  default: "https://api-qa.example.com"
+  when: "{{ 'qa' in ambientes }}"
+
+api_base_url_prod:
+  type: str
+  help: "URL base del API gateway en producción"
+  default: "https://api.example.com"
+  when: "{{ 'prod' in ambientes }}"
+
+web_base_url_local:
+  type: str
+  help: "URL del front web en local"
+  default: "http://localhost:4200"
+  when: "{{ web and 'local' in ambientes }}"
+
+web_base_url_qa:
+  type: str
+  help: "URL del front web en QA"
+  default: "https://qa.example.com"
+  when: "{{ web and 'qa' in ambientes }}"
+
+web_base_url_prod:
+  type: str
+  help: "URL del front web en producción"
+  default: "https://example.com"
+  when: "{{ web and 'prod' in ambientes }}"
+
+api_gateway_openapi_url:
+  type: str
+  help: >-
+    OpenAPI del gateway: ruta relativa a la URL del API (empieza con /, ej.
+    /openapi.json con OPENAPI_ENABLED=true), URL absoluta, o archivo del repo
+    (ej. openapi/api.swagger.json copiado del repo de protos)
+  default: "/openapi.json"
+
+auth:
+  type: str
+  help: "Auth del gateway (la misma respuesta que en la plantilla api-gateway)"
+  choices:
+    "Firebase Auth (usuarios de prueba con email y clave)": firebase
+    "OIDC genérico (grant password o client_credentials por rol)": oidc
+    "API keys (una key por rol)": api-key
+    "Ninguna (sólo rutas públicas)": ninguno
+  default: firebase
+
+oidc_issuer:
+  type: str
+  help: "Issuer OIDC (el mismo OIDC_ISSUER del gateway; de acá sale el token_endpoint)"
+  default: "https://auth.ejemplo.com/"
+  when: "{{ auth == 'oidc' }}"
+
+oidc_client_id:
+  type: str
+  help: "client_id del cliente OIDC de pruebas (público; el secreto, si hay, va en el CI)"
+  default: "{{ repo_name }}"
+  when: "{{ auth == 'oidc' }}"
+
+robustez:
+  type: bool
+  help: "¿Incluir robustez de API con Schemathesis (contra el OpenAPI del gateway)?"
+  default: true
+
+carga:
+  type: bool
+  help: "¿Incluir carga con k6 (umbrales p95/errores y verificación del rate limit)?"
+  default: true
+
+# -----------------------------------------------------------------------------
+# Valores derivados (no se preguntan ni se guardan; se recalculan en cada
+# copy/update). Flags cortos para nombres de archivo condicionales: Windows
+# corta las rutas en 260 caracteres.
+# -----------------------------------------------------------------------------
+
+ci_gl:
+  type: bool
+  default: "{{ ci_provider == 'gitlab' }}"
+  when: false
+
+ci_gh:
+  type: bool
+  default: "{{ ci_provider == 'github' }}"
+  when: false
+
+amb_local:
+  type: bool
+  default: "{{ 'local' in ambientes }}"
+  when: false
+
+amb_qa:
+  type: bool
+  default: "{{ 'qa' in ambientes }}"
+  when: false
+
+amb_prod:
+  type: bool
+  default: "{{ 'prod' in ambientes }}"
+  when: false
+
+# Ambientes remotos (los que el CI puede elegir); local no corre en el CI.
+amb_ci:
+  type: yaml
+  default: "[{% for a in ambientes if a != 'local' %}{{ a }}{{ ', ' if not loop.last }}{% endfor %}]"
+  when: false
+
+a_fb:
+  type: bool
+  default: "{{ auth == 'firebase' }}"
+  when: false
+
+a_oidc:
+  type: bool
+  default: "{{ auth == 'oidc' }}"
+  when: false
+
+a_key:
+  type: bool
+  default: "{{ auth == 'api-key' }}"
+  when: false
+
+a_none:
+  type: bool
+  default: "{{ auth == 'ninguno' }}"
+  when: false
+
+# Cabecera de la credencial (Schemathesis/k6).
+auth_header:
+  type: str
+  default: "{% if auth == 'api-key' %}X-API-Key{% else %}Authorization{% endif %}"
+  when: false
+
+# Versiones fijadas (se actualizan en la plantilla; README.md › Versiones).
+v_playwright:
+  type: str
+  default: "1.64.0"
+  when: false
+
+v_schemathesis:
+  type: str
+  default: "4.30.0"
+  when: false
+
+v_k6:
+  type: str
+  default: "2.3.0"
+  when: false
+
+v_uv:
+  type: str
+  default: "0.13.0"
+  when: false

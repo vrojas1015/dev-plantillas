@@ -1,0 +1,86 @@
+# Robustez{{ ' y carga' if carga }}
+
+Las herramientas corren **sin instalarlas**: por Docker (default: local y
+GitHub Actions) o, con `E2E_HERRAMIENTAS=local`, con el binario del PATH (lo
+usa el CI de GitLab, sin Docker). Así quien sólo tiene Node no necesita
+Python ni Go. Nunca contra prod.
+
+Con Docker, `scripts/herramientas.ts` monta el repo en `/trabajo` y reescribe
+`localhost` para que el contenedor llegue al host (`--network host` en Linux,
+`host.docker.internal` en Windows y macOS). Las credenciales viajan como
+variables de entorno heredadas (`-e NOMBRE`), nunca en la línea de comandos.
+{%- if robustez %}
+
+## Robustez: Schemathesis {{ v_schemathesis }}
+
+```bash
+npm run robustez                                   # todos los roles
+ROBUSTEZ_ROLES=anonimo,escritor npm run robustez   # algunos
+ROBUSTEZ_ARGS="--max-examples 200 --seed 42" npm run robustez
+```
+
+Lee el OpenAPI del gateway (`OPENAPI_URL`, default `{{ api_gateway_openapi_url }}`)
+y genera entradas válidas e inválidas para cada operación, **una vez por rol**
+(cada rol ve otras respuestas: 401/403/2xx). Configuración en
+`robustez/schemathesis.toml`:
+
+| Check | Falla si |
+|---|---|
+| `not_a_server_error` | alguna respuesta es 5xx (una entrada no controlada: siempre es un bug) |
+| `response_schema_conformance` | el cuerpo no cumple el schema del OpenAPI |
+| `content_type_conformance` | el Content-Type no es el documentado |
+| `max_response_time` | alguna respuesta tarda más de 2 s |
+
+`status_code_conformance` está apagado: el OpenAPI que genera grpc-gateway
+sólo documenta el 200, y cada 400/401/403/404/409/429 correcto saldría como
+"no documentado". Prenderlo cuando los protos documenten los errores.
+
+Ejecución: imagen `schemathesis/schemathesis:{{ v_schemathesis }}` o
+`uvx --from schemathesis=={{ v_schemathesis }} schemathesis` (con
+[uv](https://docs.astral.sh/uv/)). Reporte JUnit por rol en
+`reportes/robustez/<rol>/`. Cada falla trae el `curl` para reproducirla.
+
+Límites conocidos (verificados contra el gateway y el servicio de ejemplo):
+
+- **Escrituras y rate limit**: las rutas de escritura tienen un `rate_limit`
+  propio y chico (CreateItem: 30/min, ráfaga 10 por usuario), así que la
+  mayoría de los POST generados reciben 429 y llegan pocos al servicio. Para
+  fuzzear escrituras: `ROBUSTEZ_ARGS="--rate-limit auto"` (respeta
+  `Retry-After`; mucho más lento) y/o un límite mayor para los usuarios de
+  prueba en QA.
+- **Cuerpos rechazados**: el OpenAPI de grpc-gateway no marca campos
+  obligatorios ni prohíbe campos extra, y el gateway rechaza campos
+  desconocidos: muchos cuerpos "válidos según el schema" son 400 (Schemathesis
+  avisa *Schema validation mismatch*). Se arregla en los protos
+  (`field_behavior = REQUIRED`, `protovalidate`), no acá.
+- Los parámetros de query y path sí se exploran bien (enteros extremos,
+  strings raros): es donde más rinde.
+
+Ojo: la robustez **crea datos** (POST con entradas generadas) que no llevan el
+prefijo de la suite. En QA está bien (es un ambiente de prueba); si molesta,
+`ROBUSTEZ_ARGS="--exclude-method POST"` para una corrida de sólo lectura.
+{%- endif %}
+{%- if carga %}
+
+## Carga: k6 {{ v_k6 }}
+
+```bash
+npm run carga                                        # todos los escenarios
+npm run carga -- umbrales                            # uno
+CARGA_RPS=8 CARGA_DURACION=2m CARGA_P95_MS=300 npm run carga -- umbrales
+```
+
+| Escenario | Qué hace | Falla si |
+|---|---|---|
+| `carga/umbrales.js` | `CARGA_RPS` requests/s (default 5) durante `CARGA_DURACION` (30s) a `GET /v1/items` como lector | p95 ≥ `CARGA_P95_MS` (500 ms) o errores ≥ `CARGA_ERRORES` (0.01 = 1 %) |
+| `carga/rate-limit.js` | ráfaga anónima de `RATE_LIMIT_REQUESTS` (300) a `RATE_LIMIT_RUTA` (`v1/items`) | ningún 429, algún 429 sin `Retry-After`, o alguna respuesta que no sea 200/429 |
+
+k6 sale con código 99 cuando se supera un umbral; `npm run carga` lo informa
+como "umbral superado". Resumen JSON por escenario en `reportes/carga/`.
+
+**Rate limit vs. carga**: el gateway limita por usuario (o por IP si es
+anónimo). La carga de un solo usuario de prueba por encima de su límite son
+429 = errores. Para medir más alto: varios usuarios de prueba, o un límite
+propio para QA en `routes.yaml`. Correr la carga **después** del e2e y de la
+robustez (el CI lo hace en ese orden).
+{%- endif %}

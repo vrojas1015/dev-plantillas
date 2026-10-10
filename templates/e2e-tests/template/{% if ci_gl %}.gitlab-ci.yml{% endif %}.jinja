@@ -1,0 +1,188 @@
+{%- set def_suites = 'e2e' ~ (',robustez' if robustez else '') -%}
+# =============================================================================
+# CI de {{ repo_name }} — verificación en cada MR + suites contra un ambiente
+# =============================================================================
+#
+#   MR / push a la rama principal -> verificar (typecheck + playwright --list); no toca ambientes.
+{%- if amb_ci %}
+#   Disparos que corren suites (docs/disparo.md):
+#     - Manual: Build > Pipelines > Run pipeline (E2E_AMBIENTE, E2E_SUITES, E2E_GREP).
+#     - Desde otro proyecto: trigger multi-proyecto con `strategy: depend`
+#       (docs/ejemplos/gitlab-disparar-e2e.yml): el pipeline del servicio
+#       espera este resultado y NO promueve a prod si falla.
+#     - Trigger token (API): POST /projects/:id/trigger/pipeline con variables.
+#     - Programado: Build > Pipeline schedules (nocturno: E2E_SUITES={{ def_suites }};
+#       semanal{{ ': E2E_SUITES=' ~ def_suites ~ ',carga' if carga else '' }}).
+#
+#   Suites: e2e (Playwright){{ ', robustez (Schemathesis)' if robustez }}{{ ', carga (k6)' if carga }}, en ese orden (comparten
+#   el rate limit). En prod sólo e2e con @smoke.
+#   Bloquea: un test que falla y NO es @inestable (scripts/registro.ts
+#   --bloquear). Los @inestable corren, salen en el reporte y en registro.json
+#   (⚠️) y no bloquean.
+#
+#   Credenciales: variables CI/CD (Settings > CI/CD > Variables) con
+#   environment scope = el ambiente ({{ amb_ci | join(', ') }}), Masked y Protected
+#   (docs/ci.md). Nada de credenciales en el repo.
+#   Artefactos: reportes/ (HTML, registro.json, JUnit, trazas).
+{%- endif %}
+#
+# Migración al repo `ci` (docs/11-pipelines.md): los jobs de abajo se
+# reemplazan por `include: - component: <host>/<org>/ci/e2e@<versión>`.
+# =============================================================================
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Evita pipelines duplicados (rama + MR) cuando la rama tiene un MR abierto.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"
+      when: never
+    - if: $CI_PIPELINE_SOURCE =~ /^(web|api|trigger|pipeline|schedule)$/
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+variables:
+{%- if amb_ci %}
+  E2E_AMBIENTE:
+    value: "{{ amb_ci[0] }}"
+    options: [{% for a in amb_ci %}"{{ a }}"{{ ', ' if not loop.last }}{% endfor %}]
+    description: "Ambiente contra el que corren las suites"
+  E2E_SUITES:
+    value: "{{ def_suites }}"
+    description: "Suites separadas por coma: e2e{{ ',robustez' if robustez }}{{ ',carga' if carga }}"
+  E2E_GREP:
+    value: ""
+    description: "Filtro de Playwright (ej. @smoke, @CU-042-1); vacío = todo"
+  E2E_ORIGEN:
+    value: ""
+    description: "Quién dispara (proyecto@sha); informativo"
+{%- endif %}
+  npm_config_cache: $CI_PROJECT_DIR/.npm
+
+stages:
+  - verificar
+{%- if amb_ci %}
+  - e2e
+{%- if robustez %}
+  - robustez
+{%- endif %}
+{%- if carga %}
+  - carga
+{%- endif %}
+{%- endif %}
+
+.dependencias: &dependencias
+  - if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+
+# Typecheck + listado de tests (la config carga y los tests compilan).
+verificar:
+  stage: verificar
+  image: node:24
+  variables:
+    E2E_AMBIENTE: "{{ ambientes[0] }}"
+  cache:
+    key:
+      files: [package.json]
+    paths: [.npm/]
+  script:
+    - *dependencias
+    - npx tsc --noEmit
+    - npx playwright test --list
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_PIPELINE_SOURCE == "push"
+{%- if amb_ci %}
+
+.suite:
+  # Una suite por ambiente a la vez: comparten usuarios de prueba y rate limit.
+  resource_group: e2e-$E2E_AMBIENTE
+  environment:
+    name: $E2E_AMBIENTE
+    action: verify   # sólo para scopear variables; no registra un deploy
+  cache:
+    key:
+      files: [package.json]
+    paths: [.npm/]
+    policy: pull-push
+
+e2e:
+  extends: .suite
+  stage: e2e
+  # Imagen oficial con los navegadores de la MISMA versión de @playwright/test.
+  image: mcr.microsoft.com/playwright:v{{ v_playwright }}-noble
+  timeout: 30 minutes
+  script:
+    - *dependencias
+    - |
+      case " {{ amb_ci | join(' ') }} " in *" $E2E_AMBIENTE "*) ;; *) echo "E2E_AMBIENTE '$E2E_AMBIENTE' no válido ({{ amb_ci | join(' ') }})"; exit 1 ;; esac
+    # No bloquea: su código incluye los @inestable. Bloquea el registro.
+    - npx playwright test ${E2E_GREP:+--grep "$E2E_GREP"} || echo "playwright terminó con $? (decide el registro)"
+    - node scripts/registro.ts --bloquear
+  artifacts:
+    when: always
+    name: "e2e-$E2E_AMBIENTE"
+    paths: [reportes/]
+    reports:
+      junit: reportes/junit.xml
+    expire_in: 30 days
+  rules:
+    - if: $CI_PIPELINE_SOURCE =~ /^(web|api|trigger|pipeline|schedule)$/ && $E2E_SUITES =~ /(^|,)e2e(,|$)/
+{%- if robustez %}
+
+# Schemathesis con uvx (el runner no necesita Docker). Después del e2e aunque falle.
+robustez:
+  extends: .suite
+  stage: robustez
+  image: node:24
+  timeout: 30 minutes
+  needs:
+    - job: e2e
+      optional: true
+  variables:
+    E2E_HERRAMIENTAS: local
+  before_script:
+    - curl -LsSf https://astral.sh/uv/{{ v_uv }}/install.sh | sh
+    - export PATH="$HOME/.local/bin:$PATH"
+  script:
+    - *dependencias
+    - node robustez/robustez.ts
+  artifacts:
+    when: always
+    paths: [reportes/robustez/]
+    reports:
+      junit: reportes/robustez/*/junit*.xml
+    expire_in: 30 days
+  rules:
+    - if: $E2E_AMBIENTE == "prod"
+      when: never
+    - if: $CI_PIPELINE_SOURCE =~ /^(web|api|trigger|pipeline|schedule)$/ && $E2E_SUITES =~ /(^|,)robustez(,|$)/
+      when: always
+{%- endif %}
+{%- if carga %}
+
+# k6 con el binario oficial fijado (el runner no necesita Docker).
+carga:
+  extends: .suite
+  stage: carga
+  image: node:24
+  timeout: 30 minutes
+  needs:
+    - job: {{ 'robustez' if robustez else 'e2e' }}
+      optional: true
+  variables:
+    E2E_HERRAMIENTAS: local
+    K6_VERSION: "{{ v_k6 }}"
+  before_script:
+    - curl -fsSL "https://github.com/grafana/k6/releases/download/v${K6_VERSION}/k6-v${K6_VERSION}-linux-amd64.tar.gz" | tar -xz -C /usr/local/bin --strip-components=1 "k6-v${K6_VERSION}-linux-amd64/k6"
+  script:
+    - *dependencias
+    - node carga/carga.ts
+  artifacts:
+    when: always
+    paths: [reportes/carga/]
+    expire_in: 30 days
+  rules:
+    - if: $E2E_AMBIENTE == "prod"
+      when: never
+    - if: $CI_PIPELINE_SOURCE =~ /^(web|api|trigger|pipeline|schedule)$/ && $E2E_SUITES =~ /(^|,)carga(,|$)/
+      when: always
+{%- endif %}
+{%- endif %}

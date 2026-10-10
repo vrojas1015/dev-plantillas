@@ -1,0 +1,188 @@
+# SEO técnico de {{ site_name }}
+
+Qué trae el sitio, qué controla el CI y cómo correr cada control en local.
+Especificación de origen: `docs/07-frontend-y-seo.md` del repo de plantillas.
+
+## Metadatos (`src/components/seo/Seo.astro`)
+
+Lo usa el layout `Base`, así que **toda página** lo tiene. Props tipadas:
+
+| Elemento | Regla | Lo controla |
+|---|---|---|
+| `<title>` | `Página · {{ site_name }}`, ≤ 60 caracteres, único por idioma | `test:seo` (y zod en los posts) |
+| `description` | 70–160 caracteres, única por idioma | `test:seo` (y zod en los posts) |
+| `canonical` | Absoluta sobre `{{ site_url }}`, con barra final, sin parámetros | `test:seo` |
+| Open Graph / Twitter | `og:title`, `og:description`, `og:image` (1200×630), `og:type`, `twitter:card` | `test:seo` |
+| `robots` | `index,follow` sólo con `PUBLIC_ENTORNO=prod`; si no, `noindex,nofollow` | `test:seo` |
+{%- if i18n %}
+| `hreflang` | Una entrada por idioma + `x-default` (el idioma default) | `test:seo` |
+{%- endif %}
+| `<html lang>` y un solo `<h1>` | Siempre | `test:seo` |
+
+El test falla diciendo **qué página y qué campo**:
+
+```
+✗ Test de SEO: 2 error(es) en dist/ (ambiente prod)
+
+  ✗ /blog/mi-post/  [description] falta
+  ✗ /catalogo/  [title] duplicado en 2 páginas (/catalogo/, /blog/): "Blog · {{ site_name }}"
+```
+
+## Datos estructurados (`src/components/seo/JsonLd.astro`)
+
+Se pasan como `jsonLd={[...]}` a `Base` con tipos de `schema-dts`: un objeto que no
+cumple el tipo de schema.org **no compila** (`astro check`).
+
+| Tipo | Dónde |
+|---|---|
+| `Organization` + `WebSite`{% if ent %} (con `SearchAction`){% endif %} | Home |
+| `BreadcrumbList` | Toda página con jerarquía (helper `migas()` de `src/lib/seo.ts`) |
+{%- if blog %}
+| `BlogPosting` | Posts |
+{%- endif %}
+{%- if ent %}
+| `Product` (tipo de la entidad) | Páginas del catálogo. Para otra entidad: `School`, `LocalBusiness`, `Event`... |
+{%- endif %}
+| `FAQPage` | Páginas con preguntas frecuentes (agregar cuando exista una) |
+
+`npm run test:jsonld` valida que cada bloque sea JSON, tenga `@context` y `@type`,
+las propiedades mínimas de cada tipo y el tipo esperado por ruta (`ESPERADOS` en
+`scripts/verificar-jsonld.mjs`: agregar ahí las rutas nuevas). Con `--detalle`
+lista los tipos por página. Antes de publicar un tipo nuevo, probarlo en la
+[prueba de resultados enriquecidos](https://search.google.com/test/rich-results).
+
+## Indexación
+
+- **Sitemap** (`@astrojs/sitemap`): `/sitemap-index.xml`, con `lastmod` real (fecha
+  de actualización del post / de la entidad, `src/lib/sitemap-fechas.ts`){% if i18n %} y
+  `xhtml:link hreflang` entre las versiones de cada página{% endif %}.{% if ent and hib %} Las entidades
+  son SSR: se agregan al sitemap desde la misma lista de la API (`customPages`).{% endif %}
+- **robots.txt** por ambiente (`src/pages/robots.txt.ts`): en prod abierto y con
+  el sitemap; en cualquier otro, `Disallow: /`.
+- **404 real**: `src/pages/404.astro`; el hosting la sirve con status 404 y lleva `noindex`.
+- **URLs**: minúsculas, kebab-case, **siempre con barra final** (`trailingSlash:
+  'always'`); sin barra, el hosting redirige.
+{%- if blog %}
+- **RSS**: `/rss.xml` (idioma default), anunciado en el `<head>`.
+{%- endif %}
+
+### Redirecciones 301
+
+Se declaran **sólo** en `redirects.json` (`{ "/ruta-vieja/": "/ruta-nueva/" }`):
+
+- Astro las aplica en dev{% if hib %} y en el server de Node{% endif %} y deja una página con meta refresh
+  en el build estático (red de seguridad).
+{%- if d_fb %}
+- Firebase Hosting: el deploy corre `npm run redirecciones:firebase`, que las copia a
+  `firebase.json` como 301.
+{%- elif caddy %}
+- Caddy: el `Dockerfile` corre `node scripts/redirecciones.mjs caddy` y el `Caddyfile`
+  las importa como 301.
+{%- endif %}
+
+**Ninguna URL publicada desaparece sin redirección.** `npm run test:redirecciones`
+lee el sitemap de **producción** (lo que Google ya conoce) y lo compara con el del
+build: cada ruta que ya no existe tiene que estar en `redirects.json`.
+
+```bash
+SITEMAP_PROD={{ site_url }}/sitemap-index.xml npm run test:redirecciones
+SITEMAP_PROD=./sitemap-guardado.xml npm run test:redirecciones   # archivo local
+```
+
+En el CI se activa definiendo la variable `SITEMAP_PROD` (sin ella, o si el sitio
+todavía no está publicado, el paso no hace nada). Entidad retirada del backend: 301
+a la más parecida (o 410 si no hay ninguna) antes de que desaparezca del sitemap.
+
+## Rendimiento (Core Web Vitals)
+
+| Métrica | Objetivo | Cómo |
+|---|---|---|
+| LCP | < 2,5 s | Imagen principal con `astro:assets` (`<Picture>` AVIF/WebP, `widths`/`sizes`, `loading="eager"`, `fetchpriority="high"`) |
+| CLS | < 0,1 | `width`/`height` en toda imagen (los pone `astro:assets`); fuentes del sistema |
+| INP | < 200 ms | Pocas islas, hidratadas tarde (`client:idle`/`client:visible`) |
+
+- **Fuentes**: el sitio usa las del sistema (cero descargas). Para una fuente de
+  marca, usar la [API de fuentes de Astro](https://docs.astro.build/en/guides/fonts/):
+  la descarga en el build, la sirve desde el propio sitio con `font-display: swap`
+  y genera métricas de fallback. Nunca `<link>` a Google Fonts.
+- **Presupuesto de JS**: ≤ 50 KB por página fuera de las islas (Lighthouse CI,
+  `resource-summary:script:size`){% if ent %}; la página del buscador tiene su propio
+  presupuesto (120 KB, incluye React){% endif %}.
+
+## Accesibilidad
+
+HTML semántico, un `<h1>`, encabezados en orden, `alt`, contraste AA (tokens de
+`src/styles/global.css`), foco visible y skip-link. Lighthouse exige ≥ 95; probar
+además con teclado y lector de pantalla.
+{%- if ent %}
+
+## Páginas de entidades (SEO programático)
+
+`src/pages/catalogo/[slug].astro`{% if i18n %} (y `[lang]/catalogo/[slug].astro`){% endif %}. Estrategias:
+
+| Estrategia | Cómo | Cuándo |
+|---|---|---|
+| SSG | `getStaticPaths` pide la lista al gateway en el build; un webhook del backend dispara un rebuild cuando cambian los datos | Hasta unos miles de entidades que cambian pocas veces al día |
+| SSR + caché del CDN | `export const prerender = false`, `Cache-Control: s-maxage=…, stale-while-revalidate=…` | Muchas entidades o datos que cambian seguido |
+
+Este sitio usa **{{ 'SSR' if hib else 'SSG' }}**. {% if hib %}La variante SSG es la de abajo{% else %}Para pasar a SSR: `copier update --data render=hibrido` (agrega el adapter de Node) o, a mano{% endif %}:
+
+```astro
+---
+{%- if hib %}
+// SSG
+export const getStaticPaths = (async () => {
+  const productos = await catalogo.listarTodos(idiomaDefault)
+  return productos.map((producto) => ({ params: { slug: producto.slug }, props: { producto } }))
+}) satisfies GetStaticPaths
+const { producto } = Astro.props
+{%- else %}
+// SSR (requiere adapter)
+export const prerender = false
+const producto = await catalogo.obtener(Astro.params.slug ?? '', idiomaDefault)
+if (!producto) return Astro.rewrite('/404/')
+Astro.response.headers.set('Cache-Control', 'public, max-age=60, s-maxage=600, stale-while-revalidate=86400')
+{%- endif %}
+---
+```
+
+Reglas: slug estable y legible (si cambia, 301); contenido único por entidad;
+inexistente → **404 real**; el sitemap sale de la misma lista. La fuente se elige
+con `PUBLIC_API_FUENTE` (`api` en deploy, `mock` = `src/lib/api/fixtures/catalogo.json`
+en dev y CI). Con `api`, los textos de la API llegan por idioma (`?lang=`); la
+`description` se recorta a 160 caracteres (`descripcionMeta`).
+
+### Islas (buscador)
+
+`src/components/islands/Buscador.tsx`, hidratado con `client:idle`:
+
+- **Resultados iniciales en el HTML** (props desde la página): sin JS se ven y se rastrean.
+- **Estado en la URL** (`?q=…&cat=…`, hook `useEstadoUrl`): recargar o compartir
+  mantiene la búsqueda; back/forward funcionan. La URL se lee **después** de
+  hidratar (si no, el HTML del servidor no coincide). La canónica sigue siendo
+  `/catalogo/`: las combinaciones de filtros no se indexan.
+- **Respuestas viejas descartadas**: id por pedido + `AbortController`.
+- **Caché y scroll** en `sessionStorage` (5 min): volver del detalle es instantáneo.
+{%- endif %}
+
+## Lighthouse CI
+
+`lighthouserc.json`: home{% if blog %}, un post{% endif %}{% if ent %}, el catálogo y una entidad{% endif %}, en móvil. Falla con
+SEO < 100, accesibilidad < 95, buenas prácticas < 95, rendimiento < 90, LCP > 2,5 s,
+CLS > 0,1 o más JS que el presupuesto. Local (necesita Chrome):
+
+```bash
+PUBLIC_ENTORNO=prod{% if ent %} PUBLIC_API_FUENTE=mock{% endif %} npm run build && npm run lighthouse
+```
+
+Los reportes HTML quedan en `.lighthouseci/` (en el CI, como artefacto).
+
+## Enlaces (lychee)
+
+```bash
+# Internos (como en los MR). En Windows, por Docker:
+docker run --rm -v "${PWD}:/sitio" -w /sitio lycheeverse/lychee:0.24.2-alpine \
+  --config lychee.toml --offline --root-dir /sitio/{{ 'dist/client' if hib else 'dist' }} '{{ 'dist/client' if hib else 'dist' }}/**/*.html'
+```
+
+Sin `--offline` (rama principal) también se validan los externos.

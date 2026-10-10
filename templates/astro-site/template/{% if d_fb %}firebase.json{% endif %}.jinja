@@ -1,0 +1,31 @@
+{
+  "hosting": {
+    "public": "{{ 'dist/client' if hib else 'dist' }}",
+    "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
+    "cleanUrls": false,
+    "trailingSlash": true,
+    "redirects": [],
+{%- if hib %}
+    "rewrites": [
+      {
+        "source": "/catalogo/**",
+        "run": { "serviceId": "{{ repo_name }}", "region": "{{ gcp_region }}" }
+      }{% if i18n %},
+      {
+        "source": "/*/catalogo/**",
+        "run": { "serviceId": "{{ repo_name }}", "region": "{{ gcp_region }}" }
+      }{% endif %}
+    ],
+{%- endif %}
+    "headers": [
+      {
+        "source": "/_astro/**",
+        "headers": [{ "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }]
+      },
+      {
+        "source": "**/*.@(html|xml|txt)",
+        "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }]
+      }
+    ]
+  }
+}

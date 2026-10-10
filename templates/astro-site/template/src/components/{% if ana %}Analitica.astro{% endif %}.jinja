@@ -1,0 +1,116 @@
+{%- if ga4 -%}
+---
+// GA4 con Consent Mode v2 en modo básico: hasta que la persona acepta NO se
+// carga gtag.js, así que no hay cookies de analítica ni requests a Google.
+// La decisión se guarda en localStorage (no es una cookie). Sólo en prod.
+import { PUBLIC_ENTORNO, PUBLIC_GA4_ID } from 'astro:env/client'
+
+import { t } from '@/i18n/textos'
+import type { Idioma } from '@/lib/i18n'
+
+interface Props {
+  idioma: Idioma
+}
+
+const { idioma } = Astro.props
+const activo = PUBLIC_ENTORNO === 'prod' && Boolean(PUBLIC_GA4_ID)
+---
+
+{activo && (
+  <div
+    id="consentimiento"
+    class="consentimiento"
+    role="region"
+    aria-label="Cookies"
+    data-ga4={PUBLIC_GA4_ID}
+    hidden
+  >
+    <p>{t(idioma, 'consentimiento.texto')}</p>
+    <div class="consentimiento__acciones">
+      <button type="button" class="boton" data-consentimiento="granted">
+        {t(idioma, 'consentimiento.aceptar')}
+      </button>
+      <button type="button" class="boton boton--secundario" data-consentimiento="denied">
+        {t(idioma, 'consentimiento.rechazar')}
+      </button>
+    </div>
+  </div>
+)}
+
+<script>
+  const CLAVE = 'consentimiento-analitica'
+
+  declare global {
+    interface Window {
+      dataLayer: unknown[]
+    }
+  }
+
+  const banner = document.getElementById('consentimiento')
+  const id = banner?.dataset.ga4
+
+  if (banner && id) {
+    window.dataLayer = window.dataLayer || []
+    // gtag.js exige el objeto `arguments` (con un array no procesa el comando).
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const gtag = function (..._args: unknown[]) {
+      // eslint-disable-next-line prefer-rest-params
+      window.dataLayer.push(arguments)
+    }
+    gtag('consent', 'default', {
+      ad_storage: 'denied',
+      ad_user_data: 'denied',
+      ad_personalization: 'denied',
+      analytics_storage: 'denied',
+    })
+
+    let cargado = false
+    const cargarGa4 = () => {
+      if (cargado) return
+      cargado = true
+      gtag('consent', 'update', { analytics_storage: 'granted' })
+      const script = document.createElement('script')
+      script.async = true
+      script.src = `https://www.googletagmanager.com/gtag/js?id=${encodeURIComponent(id)}`
+      document.head.append(script)
+      gtag('js', new Date())
+      gtag('config', id)
+    }
+
+    let decision: string | null = null
+    try {
+      decision = localStorage.getItem(CLAVE)
+    } catch {
+      // Storage bloqueado: se pregunta en cada visita.
+    }
+    if (decision === 'granted') cargarGa4()
+    else if (decision !== 'denied') banner.hidden = false
+
+    banner.addEventListener('click', (evento) => {
+      const boton = (evento.target as HTMLElement).closest<HTMLButtonElement>(
+        'button[data-consentimiento]',
+      )
+      if (!boton) return
+      const valor = boton.dataset.consentimiento === 'granted' ? 'granted' : 'denied'
+      try {
+        localStorage.setItem(CLAVE, valor)
+      } catch {
+        // Sin storage la decisión vale sólo para esta página.
+      }
+      banner.hidden = true
+      if (valor === 'granted') cargarGa4()
+    })
+  }
+</script>
+{%- else -%}
+---
+// Plausible: no usa cookies (no hace falta banner). Script con `defer`, sólo en prod.
+import { PUBLIC_ENTORNO, PUBLIC_PLAUSIBLE_DOMAIN, PUBLIC_PLAUSIBLE_SRC } from 'astro:env/client'
+
+const activo = PUBLIC_ENTORNO === 'prod' && Boolean(PUBLIC_PLAUSIBLE_DOMAIN)
+---
+
+{activo && (
+  <script is:inline defer data-domain={PUBLIC_PLAUSIBLE_DOMAIN} src={PUBLIC_PLAUSIBLE_SRC} />
+)}
+{%- endif %}

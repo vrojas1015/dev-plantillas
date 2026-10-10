@@ -1,0 +1,12 @@
+---
+import type { GetStaticPaths } from 'astro'
+
+import { rutasDeIdiomas, type Idioma } from '@/lib/i18n'
+import Catalogo from '@/vistas/Catalogo.astro'
+
+export const getStaticPaths = (() => rutasDeIdiomas()) satisfies GetStaticPaths
+
+const lang = Astro.params.lang as Idioma
+---
+
+<Catalogo idioma={lang} />

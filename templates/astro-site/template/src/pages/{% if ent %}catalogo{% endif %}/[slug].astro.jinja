@@ -1,0 +1,55 @@
+---
+{%- if hib %}
+// Entidad en SSR (render: hibrido): se renderiza en cada request contra la API,
+// con caché del CDN. Para muchas entidades o datos que cambian seguido.
+// Entidad inexistente → 404 real. Retirada → 410 o 301 a la más parecida
+// (redirects.json). La variante SSG (getStaticPaths) está en docs/seo.md.
+import { catalogo } from '@/lib/api'
+import { idiomaDefault } from '@/lib/i18n'
+import Entidad from '@/vistas/Entidad.astro'
+import NoEncontrada from '@/vistas/NoEncontrada.astro'
+
+export const prerender = false
+
+const producto = await catalogo.obtener(Astro.params.slug ?? '', idiomaDefault)
+if (producto) {
+  // El CDN sirve 10 min sin volver a pedir y hasta 1 día una copia vieja
+  // mientras revalida en segundo plano.
+  Astro.response.headers.set(
+    'Cache-Control',
+    'public, max-age=60, s-maxage=600, stale-while-revalidate=86400',
+  )
+} else {
+  // 404 real (status 404 + la página 404 propia), nunca un 200 vacío.
+  Astro.response.status = 404
+}
+{%- else %}
+// Entidad en SSG: getStaticPaths pide la lista al gateway en el build (un
+// webhook del backend dispara un rebuild cuando cambian los datos). Una entidad
+// que no está en la lista no tiene página → el hosting responde 404 real.
+// Para SSR (muchas entidades / datos que cambian seguido): docs/seo.md.
+import type { GetStaticPaths } from 'astro'
+
+import { catalogo, type Producto } from '@/lib/api'
+import { idiomaDefault } from '@/lib/i18n'
+import Entidad from '@/vistas/Entidad.astro'
+
+export const getStaticPaths = (async () => {
+  const productos = await catalogo.listarTodos(idiomaDefault)
+  return productos.map((producto) => ({ params: { slug: producto.slug }, props: { producto } }))
+}) satisfies GetStaticPaths
+
+const { producto } = Astro.props as { producto: Producto }
+{%- endif %}
+---
+{%- if hib %}
+
+{producto ? (
+  <Entidad idioma={idiomaDefault} producto={producto} />
+) : (
+  <NoEncontrada idioma={idiomaDefault} />
+)}
+{%- else %}
+
+<Entidad idioma={idiomaDefault} producto={producto} />
+{%- endif %}

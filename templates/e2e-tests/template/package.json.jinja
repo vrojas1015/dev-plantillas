@@ -1,0 +1,34 @@
+{
+  "name": "{{ repo_name }}",
+  "private": true,
+  "type": "module",
+  "description": "{{ descripcion | replace('"', '\\"') }}",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "e2e": "node scripts/suite.ts",
+    "test": "playwright test",
+    "test:api": "playwright test --project=api*",
+{%- if web %}
+    "test:web": "playwright test --project=web-*",
+{%- endif %}
+    "test:smoke": "playwright test --grep @smoke",
+    "listar": "playwright test --list",
+    "reporte": "playwright show-report reportes/html",
+    "registro": "node scripts/registro.ts",
+{%- if robustez %}
+    "robustez": "node robustez/robustez.ts",
+{%- endif %}
+{%- if carga %}
+    "carga": "node carga/carga.ts",
+{%- endif %}
+    "token": "node scripts/token.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "{{ v_playwright }}",
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}

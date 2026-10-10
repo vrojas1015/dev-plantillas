@@ -260,6 +260,161 @@ jobs:
           curl -fsS http://localhost:8080/issues/001-issue-de-ejemplo/issue/ | grep -q 'class="metadatos"'
           curl -fsS http://localhost:8080/_generado/servicios/ | grep -q 'class="mermaid"'
 
+  # e2e-tests: genera variantes (auth × CI × web), typecheck, `playwright test
+  # --list`, YAML/actionlint, y corre la suite api contra un servidor mínimo que
+  # imita al gateway de ejemplo (.github/e2e-tests/servidor-prueba.mjs: mismas
+  # rutas, roles, errores y rate limit; levantar protos + servicio + Postgres +
+  # gateway en cada PR no se justifica). verificar.sh: la suite pasa, un
+  # @inestable que falla no bloquea y queda ⚠️, un test rojo sí bloquea, y
+  # registro.json cumple su esquema. En una variante, además, Schemathesis y
+  # k6 cortos (Docker) y la plantilla docs leyendo el registro.
+  e2e-tests:
+    name: e2e-tests (${{ matrix.auth }}, ${{ matrix.ci }}, web=${{ matrix.web }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { auth: oidc,     ci: github, web: true,  extra: true }
+          - { auth: firebase, ci: gitlab, web: false, extra: false }
+          - { auth: api-key,  ci: github, web: false, extra: false }
+          - { auth: ninguno,  ci: gitlab, web: true,  extra: false }
+    env:
+      E2E_AMBIENTE: local
+      API_BASE_URL: http://localhost:8080
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - run: pip install copier jsonschema pyyaml
+      - name: Generar
+        run: |
+          copier copy --defaults --trust \
+            -d auth=${{ matrix.auth }} -d ci_provider=${{ matrix.ci }} -d web=${{ matrix.web }} \
+            -d 'ambientes=[local, qa, prod]' -d api_base_url_local=http://localhost:8080 \
+            templates/e2e-tests "$RUNNER_TEMP/e2e"
+      - name: npm install, typecheck y listado
+        working-directory: ${{ runner.temp }}/e2e
+        run: |
+          npm install --no-audit --no-fund
+          npx tsc --noEmit
+          npx playwright test --list
+          E2E_AMBIENTE=prod npx playwright test --list   # en prod: sólo @smoke, sin proyectos -inestable
+      - name: YAML válidos y actionlint
+        working-directory: ${{ runner.temp }}/e2e
+        run: |
+          python - <<'PY'
+          import pathlib, yaml
+          for p in pathlib.Path('.').rglob('*.y*ml'):
+              if 'node_modules' not in p.parts:
+                  yaml.safe_load(p.read_text(encoding='utf-8')); print('ok', p)
+          PY
+          if [ -d .github/workflows ]; then
+            cp docs/ejemplos/github-disparar-e2e.yml .github/workflows/zz-ejemplo-disparo.yml
+            git init -q
+            docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint:1.7.12 -color
+            rm .github/workflows/zz-ejemplo-disparo.yml
+          fi
+      - name: Servidor de prueba
+        run: |
+          SIN_AUTH=${{ matrix.auth == 'ninguno' && '1' || '0' }} \
+            node .github/e2e-tests/servidor-prueba.mjs templates/api-gateway/template/gen/openapi/api.swagger.json &
+          for _ in $(seq 1 20); do curl -fsS -o /dev/null http://localhost:8080/v1/items && break; sleep 0.5; done
+      - name: Suite api, @inestable y registro
+        run: bash .github/e2e-tests/verificar.sh "$RUNNER_TEMP/e2e" ${{ matrix.auth }}
+      - name: Robustez (Schemathesis) y carga (k6) cortas
+        if: matrix.extra
+        working-directory: ${{ runner.temp }}/e2e
+        env:
+          OIDC_ISSUER: http://localhost:8080
+          OIDC_CLIENT_ID: e2e-tests
+          E2E_ESCRITOR_USUARIO: e2e-escritor
+          E2E_ESCRITOR_CLAVE: clave-escritor
+          E2E_LECTOR_USUARIO: e2e-lector
+          E2E_LECTOR_CLAVE: clave-lector
+          ROBUSTEZ_ROLES: anonimo,escritor
+          ROBUSTEZ_ARGS: --max-examples 5 --phases coverage,fuzzing
+          CARGA_DURACION: 5s
+        run: |
+          npm run robustez
+          sleep 11   # que se recargue el bucket de la IP antes de la ráfaga
+          npm run carga
+          CARGA_P95_MS=0.001 CARGA_DURACION=3s npm run carga -- umbrales && { echo "k6 no falló con el umbral bajado"; exit 1; } || echo "k6 falló con el umbral bajado, como corresponde"
+      - name: docs lee registro.json
+        if: matrix.extra
+        run: |
+          copier copy --defaults --trust -d org_name=demo -d ci_provider=github -d deploy_target=ninguno \
+            -d 'repos_iniciales=[protos, api-gateway]' templates/docs "$RUNNER_TEMP/docs"
+          cd "$RUNNER_TEMP/docs"
+          pip install -r requirements.txt
+          git init -q -b main && git add -A && git -c user.name=ci -c user.email=ci@example.com commit -qm base
+          bash "$GITHUB_WORKSPACE/.github/e2e-tests/docs-registro.sh" . "$RUNNER_TEMP/e2e/reportes/registro.json"
+
+  # Sitio público Astro: lint, astro check + build, test de SEO y de JSON-LD
+  # (con las páginas SSR en híbrido) y Lighthouse CI con presupuestos. Con
+  # coolify, además, la imagen sirve el sitio y da 404 real.
+  astro-site:
+    name: astro-site (${{ matrix.render }}, ${{ matrix.idiomas }}, ${{ matrix.deploy }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { render: estatico, idiomas: "[es]",     blog: true,  ent: false, analytics: plausible, ci: github, deploy: coolify }
+          - { render: estatico, idiomas: "[es, en]", blog: true,  ent: true,  analytics: ga4,       ci: gitlab, deploy: firebase-hosting }
+          - { render: hibrido,  idiomas: "[es, en]", blog: false, ent: true,  analytics: ninguna,   ci: github, deploy: cloud-run }
+    env:
+      PUBLIC_ENTORNO: prod
+      PUBLIC_API_FUENTE: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install copier
+      - name: Generar
+        run: |
+          copier copy --defaults --trust \
+            -d render=${{ matrix.render }} -d 'idiomas=${{ matrix.idiomas }}' \
+            -d blog=${{ matrix.blog }} -d entidades_api=${{ matrix.ent }} \
+            -d analytics=${{ matrix.analytics }} -d ci_provider=${{ matrix.ci }} \
+            -d deploy_target=${{ matrix.deploy }} \
+            templates/astro-site "$RUNNER_TEMP/sitio"
+      - uses: actions/setup-node@v4
+        with: { node-version: "24" }
+      - name: Install, lint, astro check + build
+        working-directory: ${{ runner.temp }}/sitio
+        run: |
+          npm install --no-audit --no-fund
+          npm run lint
+          npm run build
+      - name: Test de SEO y JSON-LD
+        working-directory: ${{ runner.temp }}/sitio
+        run: |
+          if [ -f servidor.mjs ]; then
+            (node servidor.mjs 4322 > "$RUNNER_TEMP/server.log" 2>&1 &)
+            for _ in $(seq 1 30); do curl -fsS -o /dev/null http://localhost:4322/ && break; sleep 1; done
+            export SEO_SERVIDOR=http://localhost:4322
+            curl -s -o /dev/null -w '%{http_code}' http://localhost:4322/catalogo/no-existe/ | grep -q 404
+          fi
+          npm run test:seo
+          npm run test:jsonld
+      - name: Lighthouse CI (SEO 100, a11y ≥ 95, best practices ≥ 95, perf ≥ 90 móvil)
+        working-directory: ${{ runner.temp }}/sitio
+        run: npx lhci autorun
+      - name: Imagen Docker (coolify)
+        if: matrix.deploy == 'coolify'
+        working-directory: ${{ runner.temp }}/sitio
+        run: |
+          docker build --build-arg PUBLIC_ENTORNO=prod -t sitio:ci .
+          docker run -d --name sitio -p 8080:80 sitio:ci
+          for _ in $(seq 1 20); do curl -fsS -o /dev/null http://localhost:8080/ && break; sleep 1; done
+          curl -fsS http://localhost:8080/ | grep -q '<link rel="canonical"'
+          curl -fsS http://localhost:8080/blog/primer-post/ | grep -q 'BlogPosting'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/no-existe/)" = 404
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/inicio/)" = 301
+
   # App Android: checks, tests (JVM + Robolectric) y build debug en la JVM, sin
   # emulador. ubuntu-latest trae el Android SDK (AGP baja la plataforma que falte).
   # grpc: publica antes un protos (kotlin) en mavenLocal, como haría el co-desarrollo.

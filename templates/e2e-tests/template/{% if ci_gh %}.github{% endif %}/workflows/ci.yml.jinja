@@ -1,0 +1,40 @@
+# =============================================================================
+# CI de {{ repo_name }} — verificación en cada PR (sin tocar ningún ambiente)
+# =============================================================================
+#   typecheck (tsc) + playwright test --list (la config carga y los tests
+#   compilan). Las suites contra un ambiente corren en e2e.yml (manual,
+#   nocturno o disparadas desde otro repo).
+# =============================================================================
+
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+{%- raw %}
+  group: ci-${{ github.ref }}
+{%- endraw %}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    env:
+      E2E_AMBIENTE: {{ ambientes[0] }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Dependencias
+        run: if [ -f package-lock.json ]; then npm ci; else npm install --no-audit --no-fund; fi
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Tests (listado, sin correr)
+        run: npx playwright test --list

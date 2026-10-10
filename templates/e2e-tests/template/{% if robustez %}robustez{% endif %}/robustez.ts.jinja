@@ -1,0 +1,63 @@
+/**
+ * Robustez del API con Schemathesis {{ v_schemathesis }}: genera entradas (válidas e
+ * inválidas) desde el OpenAPI del gateway y falla ante 5xx, respuestas que no
+ * cumplen el contrato o tiempos > max_response_time (robustez/schemathesis.toml).
+ *
+ *   npm run robustez                      todos los roles
+ *   ROBUSTEZ_ROLES=anonimo,lector npm run robustez
+ *   ROBUSTEZ_ARGS="--max-examples 200 --seed 42" npm run robustez
+ *
+ * Corre una vez por rol (cada uno ve rutas distintas: 401/403/200), en serie
+ * para no pisar el rate limit. Reportes JUnit en reportes/robustez/<rol>/.
+ * Por Docker (schemathesis/schemathesis:{{ v_schemathesis }}) o, con E2E_HERRAMIENTAS=local, con
+ * `uvx` (uv: https://docs.astral.sh/uv/). Nunca contra prod.
+ */
+import { relative, sep } from 'node:path';
+
+import { cargarAmbiente, RAIZ } from '../tests/fixtures/ambiente.ts';
+import { credencial, HAY_AUTH, type Quien, ROLES } from '../tests/fixtures/credenciales.ts';
+import { correr, type Herramienta, rutaParaHerramienta, urlParaHerramienta } from '../scripts/herramientas.ts';
+
+const SCHEMATHESIS: Herramienta = {
+  imagen: 'schemathesis/schemathesis:{{ v_schemathesis }}',
+  local: ['uvx', '--from', 'schemathesis=={{ v_schemathesis }}', 'schemathesis'],
+};
+
+const amb = cargarAmbiente();
+if (amb.esProd) {
+  console.error('robustez: nunca contra prod (genera escrituras y entradas basura)');
+  process.exit(2);
+}
+
+const roles = (process.env['ROBUSTEZ_ROLES'] || (HAY_AUTH ? ['anonimo', ...ROLES].join(',') : 'anonimo'))
+  .split(',')
+  .map((r) => r.trim())
+  .filter(Boolean) as Quien[];
+const extra = (process.env['ROBUSTEZ_ARGS'] || '').split(' ').filter(Boolean);
+
+const esquema = /^https?:\/\//.test(amb.openapi)
+  ? urlParaHerramienta(amb.openapi)
+  : rutaParaHerramienta(relative(RAIZ, amb.openapi).split(sep).join('/'));
+
+const resultados: Array<[Quien, number]> = [];
+for (const rol of roles) {
+  console.log(`\n=== robustez como ${rol} ===`);
+  const codigo = correr(
+    SCHEMATHESIS,
+    [
+      '--config-file', rutaParaHerramienta('robustez/schemathesis.toml'),
+      'run', esquema,
+      '--url', urlParaHerramienta(amb.apiBaseUrl),
+      '--report', 'junit',
+      '--report-dir', rutaParaHerramienta(`reportes/robustez/${rol}`),
+      '--coverage-report-html-path', rutaParaHerramienta(`reportes/robustez/${rol}/cobertura.html`),
+      ...extra,
+    ],
+    { E2E_CREDENCIAL: await credencial(rol) },
+  );
+  resultados.push([rol, codigo]);
+}
+
+console.log('\nrobustez:');
+for (const [rol, codigo] of resultados) console.log(`  ${codigo === 0 ? '✅' : '❌'} ${rol}`);
+process.exit(resultados.some(([, c]) => c !== 0) ? 1 : 0);

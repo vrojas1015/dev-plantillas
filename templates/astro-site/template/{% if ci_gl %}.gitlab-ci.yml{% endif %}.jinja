@@ -1,0 +1,367 @@
+# CI/CD de {{ repo_name }} (docs/seo.md «CI», docs/deploy.md).
+#
+#   MR / push a main → verificar: lint, astro check + build (prod, API mock), test de SEO,
+#                      JSON-LD y redirecciones vs sitemap de prod
+#                    → calidad: enlaces (lychee; externos sólo en main) y Lighthouse CI
+{%- if d_fb %}
+#   push a main      → deploy:prod (Firebase Hosting{% if hib %} + Cloud Run{% endif %}, {{ gcp_project_prod }})
+#   tag qa-vX.Y.Z    → deploy:qa   ({{ gcp_project_qa }}; noindex + robots.txt cerrado)
+{%- elif d_cy %}
+#   tag qa-vX.Y.Z    → imagen PUBLIC_ENTORNO=qa   + deploy en Coolify (QA)
+#   tag prod-vX.Y.Z  → imagen PUBLIC_ENTORNO=prod + deploy en Coolify (producción)
+{%- elif d_cr %}
+#   tag qa-vX.Y.Z    → Cloud Build + Cloud Run en {{ gcp_project_qa }} (noindex)
+#   tag prod-vX.Y.Z  → Cloud Build + Cloud Run en {{ gcp_project_prod }}
+{%- endif %}
+#
+# Variables CI/CD (Settings › CI/CD › Variables; NUNCA en este archivo):
+#   SITEMAP_PROD           (opcional) https://<dominio>/sitemap-index.xml: activa el chequeo de redirecciones
+{%- if d_fb or d_cr %}
+#   GCP_WIF_PROVIDER       projects/<NÚMERO>/locations/global/workloadIdentityPools/<POOL>/providers/<PROVIDER>
+#   GCP_SA_EMAIL           <service-account>@<proyecto>.iam.gserviceaccount.com
+#                          (las dos con scope por environment: `production` y `qa`)
+{%- elif d_cy %}
+#   COOLIFY_URL, COOLIFY_RESOURCE_UUID, COOLIFY_TOKEN (Masked + Protected), por environment
+{%- endif %}
+{%- if ga4 %}
+#   PUBLIC_GA4_ID          G-XXXXXXXXXX, scope `production` (en qa no se carga analítica)
+{%- endif %}
+{%- if has_cd %}
+# Protected tags: prod-v* (Maintainers), qa-v* (Developers + Maintainers).
+{%- endif %}
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Evita pipelines duplicados (rama + MR) cuando la rama tiene un MR abierto.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+{%- if d_fb %}
+    - if: $CI_COMMIT_TAG =~ /^qa-v\d+\.\d+\.\d+$/
+{%- elif d_cy or d_cr %}
+    - if: $CI_COMMIT_TAG =~ /^(qa|prod)-v\d+\.\d+\.\d+$/
+{%- endif %}
+
+stages:
+  - verificar
+  - calidad
+{%- if has_cd %}
+  - deploy
+{%- endif %}
+
+default:
+  image: node:24
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  before_script:
+    - npm ci --cache .npm --prefer-offline --no-audit --no-fund
+
+.mr-y-main:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+verificar:
+  extends: .mr-y-main
+  stage: verificar
+  variables:
+    PUBLIC_ENTORNO: prod
+{%- if ent %}
+    PUBLIC_API_FUENTE: mock
+{%- endif %}
+  script:
+    - npm run lint
+    - npm run build # astro check + astro build
+{%- if hib %}
+    # Las páginas SSR no están en dist/: los tests las piden a un server levantado.
+    - (node servidor.mjs 4322 > /tmp/server.log 2>&1 &)
+    - for _ in $(seq 1 30); do curl -fsS -o /dev/null http://localhost:4322/ && break; sleep 1; done
+    - export SEO_SERVIDOR=http://localhost:4322
+{%- endif %}
+    - npm run test:seo
+    - npm run test:jsonld
+    - npm run test:redirecciones # no hace nada sin SITEMAP_PROD
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 day
+
+# Internos en cada MR (sin red); en main también los externos.
+enlaces:
+  stage: calidad
+  needs: [verificar]
+  image:
+    name: lycheeverse/lychee:0.24.2-alpine
+    entrypoint: ['']
+  before_script: []
+  cache: []
+  script:
+    - lychee --config lychee.toml $LYCHEE_MODO --root-dir "$CI_PROJECT_DIR/{{ 'dist/client' if hib else 'dist' }}" '{{ 'dist/client' if hib else 'dist' }}/**/*.html'
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      variables:
+        LYCHEE_MODO: --offline
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      variables:
+        LYCHEE_MODO: ''
+
+# SEO 100, accesibilidad ≥ 95, buenas prácticas ≥ 95, rendimiento ≥ 90 (móvil).
+lighthouse:
+  extends: .mr-y-main
+  stage: calidad
+  needs: [verificar]
+  variables:
+    CHROME_PATH: /usr/bin/chromium
+  script:
+    - apt-get update -qq && apt-get install -y -qq chromium >/dev/null
+    - npx lhci autorun
+  artifacts:
+    when: always
+    paths:
+      - .lighthouseci/
+    expire_in: 1 week
+{%- if d_fb %}
+{%- if hib %}
+
+# --- Auth keyless a GCP (WIF / external_account), común a los jobs de deploy ---
+.gcp-auth:
+  id_tokens:
+    GCP_ID_TOKEN:
+      aud: https://iam.googleapis.com/$GCP_WIF_PROVIDER
+  before_script:
+    - test -n "$GCP_WIF_PROVIDER" || (echo "Falta GCP_WIF_PROVIDER para este environment" && exit 1)
+    - test -n "$GCP_SA_EMAIL" || (echo "Falta GCP_SA_EMAIL para este environment" && exit 1)
+    - echo "$GCP_ID_TOKEN" > /tmp/gitlab_oidc_token
+    - |
+      cat > /tmp/gcp_creds.json <<JSON
+      {
+        "type": "external_account",
+        "audience": "//iam.googleapis.com/${GCP_WIF_PROVIDER}",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+        "token_url": "https://sts.googleapis.com/v1/token",
+        "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${GCP_SA_EMAIL}:generateAccessToken",
+        "credential_source": { "file": "/tmp/gitlab_oidc_token", "format": { "type": "text" } }
+      }
+      JSON
+    - export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_creds.json
+
+# Rutas SSR en Cloud Run (misma imagen que cloud-run/coolify); Hosting reenvía
+# /catalogo/** al servicio (rewrites de firebase.json).
+.ssr:
+  extends: .gcp-auth
+  stage: deploy
+  image: google/cloud-sdk:slim
+  cache: []
+  script:
+    - gcloud auth login --cred-file=/tmp/gcp_creds.json --quiet
+    - export IMAGE_TAG="${CI_COMMIT_TAG:-main}-${CI_COMMIT_SHORT_SHA}"
+    - export IMAGE="{{ gcp_region }}-docker.pkg.dev/${GCP_PROJECT}/{{ repo_name }}/{{ repo_name }}:${IMAGE_TAG}"
+    - gcloud builds submit --config=cloudbuild.yaml --project="$GCP_PROJECT" --substitutions=_IMAGE="$IMAGE",_ENTORNO="$PUBLIC_ENTORNO"{% if ga4 %},_GA4_ID="$PUBLIC_GA4_ID"{% endif %} .
+    - |
+      sed -e "s|__PROJECT_ID__|${GCP_PROJECT}|g" -e "s|__REGION__|{{ gcp_region }}|g" \
+          -e "s|__IMAGE_TAG__|${IMAGE_TAG}|g" -e "s|__DEPLOY_TIME__|$(date -u +%Y%m%dT%H%M%SZ)|g" \
+          "cloudrun.${PUBLIC_ENTORNO}.yaml" > /tmp/cloudrun.yaml
+    - gcloud run services replace /tmp/cloudrun.yaml --region={{ gcp_region }} --project="$GCP_PROJECT"
+
+ssr:prod:
+  extends: .ssr
+  variables:
+    GCP_PROJECT: {{ gcp_project_prod }}
+    PUBLIC_ENTORNO: prod
+  resource_group: production
+  environment:
+    name: production
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+ssr:qa:
+  extends: .ssr
+  variables:
+    GCP_PROJECT: {{ gcp_project_qa }}
+    PUBLIC_ENTORNO: qa
+  resource_group: qa
+  environment:
+    name: qa
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^qa-v\d+\.\d+\.\d+$/
+{%- endif %}
+
+# Build del ambiente + deploy a Firebase Hosting. `resource_group` evita dos
+# deploys a la vez; `environment` scopea las variables por ambiente.
+.firebase-deploy:
+  stage: deploy
+  id_tokens:
+    GCP_ID_TOKEN:
+      aud: https://iam.googleapis.com/$GCP_WIF_PROVIDER
+  script:
+    - test -n "$GCP_WIF_PROVIDER" || (echo "Falta GCP_WIF_PROVIDER para este environment" && exit 1)
+    - test -n "$GCP_SA_EMAIL" || (echo "Falta GCP_SA_EMAIL para este environment" && exit 1)
+    - npm run build
+    - npm run test:seo # qa → noindex, prod → indexable
+    - npm run redirecciones:firebase
+    - echo "$GCP_ID_TOKEN" > /tmp/gitlab_oidc_token
+    - |
+      cat > /tmp/gcp_creds.json <<JSON
+      {
+        "type": "external_account",
+        "audience": "//iam.googleapis.com/${GCP_WIF_PROVIDER}",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+        "token_url": "https://sts.googleapis.com/v1/token",
+        "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${GCP_SA_EMAIL}:generateAccessToken",
+        "credential_source": { "file": "/tmp/gitlab_oidc_token", "format": { "type": "text" } }
+      }
+      JSON
+    - export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_creds.json
+    - npx --yes firebase-tools@15 deploy --only hosting --project "$FIREBASE_ALIAS" --non-interactive
+
+deploy:prod:
+  extends: .firebase-deploy
+  needs: [verificar{% if hib %}, ssr:prod{% endif %}]
+  variables:
+    FIREBASE_ALIAS: production
+    PUBLIC_ENTORNO: prod
+  resource_group: production
+  environment:
+    name: production
+    url: {{ site_url }}
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+deploy:qa:
+  extends: .firebase-deploy
+{%- if hib %}
+  needs: [ssr:qa]
+{%- else %}
+  needs: []
+{%- endif %}
+  variables:
+    FIREBASE_ALIAS: qa
+    PUBLIC_ENTORNO: qa
+  resource_group: qa
+  environment:
+    name: qa
+    url: https://{{ gcp_project_qa }}.web.app
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^qa-v\d+\.\d+\.\d+$/
+{%- elif d_cy %}
+
+# Build + push de la imagen. El build de Astro corre DENTRO del Dockerfile con
+# PUBLIC_ENTORNO, así que no depende de artifacts de otros jobs.
+.image:
+  stage: deploy
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: '/certs'
+  before_script: []
+  cache: []
+  script:
+    - echo "$CI_JOB_TOKEN" | docker login -u gitlab-ci-token --password-stdin "$CI_REGISTRY"
+    - docker pull "$CI_REGISTRY_IMAGE:$PUBLIC_ENTORNO" || true
+    - >-
+      docker build
+      --cache-from "$CI_REGISTRY_IMAGE:$PUBLIC_ENTORNO"
+      --build-arg BUILDKIT_INLINE_CACHE=1
+      --build-arg PUBLIC_ENTORNO="$PUBLIC_ENTORNO"
+{%- if ga4 %}
+      --build-arg PUBLIC_GA4_ID="$PUBLIC_GA4_ID"
+{%- endif %}
+      -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+      -t "$CI_REGISTRY_IMAGE:$PUBLIC_ENTORNO"
+      .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_TAG"
+    - docker push "$CI_REGISTRY_IMAGE:$PUBLIC_ENTORNO"
+    # Dispara el deploy del recurso en Coolify v4 (hace pull de :qa / :prod).
+    - test -n "$COOLIFY_URL" || (echo "Falta COOLIFY_URL para este environment" && exit 1)
+    - test -n "$COOLIFY_RESOURCE_UUID" || (echo "Falta COOLIFY_RESOURCE_UUID para este environment" && exit 1)
+    - test -n "$COOLIFY_TOKEN" || (echo "Falta COOLIFY_TOKEN para este environment" && exit 1)
+    - apk add --no-cache curl >/dev/null
+    - >-
+      curl -fsS "$COOLIFY_URL/api/v1/deploy?uuid=$COOLIFY_RESOURCE_UUID&force=false"
+      -H "Authorization: Bearer $COOLIFY_TOKEN"
+
+deploy:qa:
+  extends: .image
+  variables:
+    PUBLIC_ENTORNO: qa
+  resource_group: qa
+  environment:
+    name: qa
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^qa-v\d+\.\d+\.\d+$/
+
+deploy:prod:
+  extends: .image
+  variables:
+    PUBLIC_ENTORNO: prod
+  resource_group: production
+  environment:
+    name: production
+    url: {{ site_url }}
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^prod-v\d+\.\d+\.\d+$/
+{%- elif d_cr %}
+
+# Cloud Build (build + push a Artifact Registry) + Cloud Run, keyless con WIF.
+.release:
+  stage: deploy
+  image: google/cloud-sdk:slim
+  before_script: []
+  cache: []
+  id_tokens:
+    GCP_ID_TOKEN:
+      aud: https://iam.googleapis.com/$GCP_WIF_PROVIDER
+  script:
+    - test -n "$GCP_WIF_PROVIDER" || (echo "Falta GCP_WIF_PROVIDER para este environment" && exit 1)
+    - test -n "$GCP_SA_EMAIL" || (echo "Falta GCP_SA_EMAIL para este environment" && exit 1)
+    - echo "$GCP_ID_TOKEN" > /tmp/gitlab_oidc_token
+    - |
+      cat > /tmp/gcp_creds.json <<JSON
+      {
+        "type": "external_account",
+        "audience": "//iam.googleapis.com/${GCP_WIF_PROVIDER}",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+        "token_url": "https://sts.googleapis.com/v1/token",
+        "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${GCP_SA_EMAIL}:generateAccessToken",
+        "credential_source": { "file": "/tmp/gitlab_oidc_token", "format": { "type": "text" } }
+      }
+      JSON
+    - gcloud auth login --cred-file=/tmp/gcp_creds.json --quiet
+    - export IMAGE="{{ gcp_region }}-docker.pkg.dev/${GCP_PROJECT}/{{ repo_name }}/{{ repo_name }}:${CI_COMMIT_TAG}"
+    - gcloud builds submit --config=cloudbuild.yaml --project="$GCP_PROJECT" --substitutions=_IMAGE="$IMAGE",_ENTORNO="$PUBLIC_ENTORNO"{% if ga4 %},_GA4_ID="$PUBLIC_GA4_ID"{% endif %} .
+    - |
+      sed -e "s|__PROJECT_ID__|${GCP_PROJECT}|g" -e "s|__REGION__|{{ gcp_region }}|g" \
+          -e "s|__IMAGE_TAG__|${CI_COMMIT_TAG}|g" -e "s|__DEPLOY_TIME__|$(date -u +%Y%m%dT%H%M%SZ)|g" \
+          "cloudrun.${PUBLIC_ENTORNO}.yaml" > /tmp/cloudrun.yaml
+    - gcloud run services replace /tmp/cloudrun.yaml --region={{ gcp_region }} --project="$GCP_PROJECT"
+    - gcloud run services describe {{ repo_name }} --region={{ gcp_region }} --project="$GCP_PROJECT" --format='value(status.url)'
+
+release:qa:
+  extends: .release
+  variables:
+    GCP_PROJECT: {{ gcp_project_qa }}
+    PUBLIC_ENTORNO: qa
+  resource_group: qa
+  environment:
+    name: qa
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^qa-v\d+\.\d+\.\d+$/
+
+release:prod:
+  extends: .release
+  variables:
+    GCP_PROJECT: {{ gcp_project_prod }}
+    PUBLIC_ENTORNO: prod
+  resource_group: production
+  environment:
+    name: production
+    url: {{ site_url }}
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^prod-v\d+\.\d+\.\d+$/
+{%- endif %}

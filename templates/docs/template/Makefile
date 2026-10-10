@@ -23,6 +23,10 @@ MDLINT ?= $(shell \
   elif command -v docker >/dev/null 2>&1; then echo "MSYS_NO_PATHCONV=1 docker run --rm --mount type=bind,src=$(CURDIR),dst=/workdir davidanson/markdownlint-cli2:v$(MARKDOWNLINT_VERSION)"; \
   fi)
 
+# Registro de la suite e2e (opcional; ver README › Estado de escenarios e2e):
+# `make generar REGISTRO_E2E=../e2e-tests/reportes/registro.json`. Sin valor, no cambia nada.
+export REGISTRO_E2E REGISTRO_E2E_TOKEN
+
 # mkdocs queda fijo en 1.6.x (requirements.txt): el aviso de Material sobre MkDocs 2.0 no aplica.
 export NO_MKDOCS_2_WARNING := 1
 

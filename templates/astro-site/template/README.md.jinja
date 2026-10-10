@@ -1,0 +1,31 @@
+# {{ site_name }}
+
+Sitio público en [Astro](https://docs.astro.build) {{ '(SSG + rutas SSR)' if hib else '(estático)' }} con islas de React,
+SEO técnico verificado en el CI y Lighthouse CI. Producción: {{ site_url }}.
+
+## Desarrollo
+
+Requisitos: Node 24+, npm 11.
+
+```bash
+npm install
+cp .env.example .env      # PUBLIC_ENTORNO=dev{% if ent %}, PUBLIC_API_FUENTE=mock{% endif %}
+npm run dev               # http://localhost:4321
+```
+
+| Comando | Qué hace |
+|---|---|
+| `npm run verificar` | lint + `astro check` + build + test de SEO + JSON-LD (lo mismo que el CI) |
+| `npm run build` | `astro check` + `astro build` → `dist/` |
+| `npm run preview` | sirve el build |
+| `npm run test:seo` / `test:jsonld` / `test:redirecciones` | controles sobre `dist/` |
+| `npm run lighthouse` | Lighthouse CI con presupuestos (necesita Chrome) |
+
+## Documentación
+
+- `docs/seo.md`: metadatos, JSON-LD, sitemap, redirecciones, rendimiento, islas y cada control del CI.
+- `docs/deploy.md`: ambientes, setup del destino ({{ deploy_target }}) y variables del CI.
+- `docs/search-console.md`: verificar el dominio y enviar el sitemap.
+- `CLAUDE.md`: reglas del proyecto (para personas y agentes).
+
+Generado con la plantilla `astro-site` (Copier). Traer mejoras: `python -m copier update`.

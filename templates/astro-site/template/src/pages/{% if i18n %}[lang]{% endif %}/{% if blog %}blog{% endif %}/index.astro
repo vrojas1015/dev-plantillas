@@ -1,0 +1,17 @@
+---
+import type { GetStaticPaths } from 'astro'
+
+import { idiomasConPosts } from '@/lib/blog'
+import { idiomaDefault, type Idioma } from '@/lib/i18n'
+import BlogIndice from '@/vistas/BlogIndice.astro'
+
+// Sólo los idiomas que tienen posts: un índice vacío sería contenido escaso.
+export const getStaticPaths = (async () =>
+  (await idiomasConPosts())
+    .filter((lang) => lang !== idiomaDefault)
+    .map((lang) => ({ params: { lang } }))) satisfies GetStaticPaths
+
+const lang = Astro.params.lang as Idioma
+---
+
+<BlogIndice idioma={lang} />

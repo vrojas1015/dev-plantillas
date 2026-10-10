@@ -1,0 +1,54 @@
+---
+{%- if hib %}
+// Entidad en SSR para los idiomas con prefijo. Ver src/pages/catalogo/[slug].astro.
+import { catalogo } from '@/lib/api'
+import { esIdioma, idiomaDefault } from '@/lib/i18n'
+import Entidad from '@/vistas/Entidad.astro'
+import NoEncontrada from '@/vistas/NoEncontrada.astro'
+
+export const prerender = false
+
+const { lang: param, slug } = Astro.params
+const lang = esIdioma(param) && param !== idiomaDefault ? param : undefined
+const producto = lang ? await catalogo.obtener(slug ?? '', lang) : null
+if (producto) {
+  Astro.response.headers.set(
+    'Cache-Control',
+    'public, max-age=60, s-maxage=600, stale-while-revalidate=86400',
+  )
+} else {
+  Astro.response.status = 404
+}
+{%- else %}
+// Entidad en SSG para los idiomas con prefijo. Ver src/pages/catalogo/[slug].astro.
+import type { GetStaticPaths } from 'astro'
+
+import { catalogo, type Producto } from '@/lib/api'
+import { idiomasConPrefijo, type Idioma } from '@/lib/i18n'
+import Entidad from '@/vistas/Entidad.astro'
+
+export const getStaticPaths = (async () => {
+  const rutas = []
+  for (const lang of idiomasConPrefijo) {
+    for (const producto of await catalogo.listarTodos(lang)) {
+      rutas.push({ params: { lang, slug: producto.slug }, props: { producto } })
+    }
+  }
+  return rutas
+}) satisfies GetStaticPaths
+
+const lang = Astro.params.lang as Idioma
+const { producto } = Astro.props as { producto: Producto }
+{%- endif %}
+---
+{%- if hib %}
+
+{lang && producto ? (
+  <Entidad idioma={lang} producto={producto} />
+) : (
+  <NoEncontrada idioma={lang ?? idiomaDefault} />
+)}
+{%- else %}
+
+<Entidad idioma={lang} producto={producto} />
+{%- endif %}

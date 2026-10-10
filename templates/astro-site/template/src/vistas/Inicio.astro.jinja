@@ -1,0 +1,73 @@
+---
+// Home. Las páginas de src/pages son envoltorios finos que eligen el idioma;
+// el contenido vive en src/vistas para no duplicarlo por idioma.
+import { Picture } from 'astro:assets'
+
+import portada from '@/assets/portada.jpg'
+import { t } from '@/i18n/textos'
+import Base from '@/layouts/Base.astro'
+{%- if blog %}
+import { postsDe, urlDe } from '@/lib/blog'
+{%- endif %}
+import { idiomas, ruta, type Idioma } from '@/lib/i18n'
+import { organizacion, sitioWeb } from '@/lib/seo'
+
+interface Props {
+  idioma: Idioma
+}
+
+const { idioma } = Astro.props
+{%- if blog %}
+const ultimos = (await postsDe(idioma)).slice(0, 3)
+{%- endif %}
+---
+
+<Base
+  descripcion={t(idioma, 'sitio.descripcion')}
+  camino={ruta(idioma, '/')}
+  idioma={idioma}
+  alternativas={idiomas.map((i) => ({ idioma: i, camino: ruta(i, '/') }))}
+  jsonLd={[organizacion(), sitioWeb(idioma{% if ent %}, ruta(idioma, '/catalogo/'){% endif %})]}
+>
+  <section class="contenedor portada">
+    <div>
+      <h1>{t(idioma, 'inicio.titulo')}</h1>
+      <p class="portada__bajada">{t(idioma, 'inicio.bajada')}</p>
+{%- if ent %}
+      <p>
+        <a class="boton" href={ruta(idioma, '/catalogo/')}>
+          {t(idioma, 'nav.catalogo')}
+        </a>
+      </p>
+{%- endif %}
+    </div>
+    {/* Imagen LCP: astro:assets (AVIF/WebP, srcset), width/height (sin CLS), eager + prioridad alta. */}
+    <Picture
+      class="portada__imagen"
+      src={portada}
+      alt={t(idioma, 'inicio.imagen')}
+      widths={[480, 800, 1200]}
+      sizes="(min-width: 48rem) 50vw, 100vw"
+      formats={['avif', 'webp']}
+      loading="eager"
+      fetchpriority="high"
+    />
+  </section>
+{%- if blog %}
+  {ultimos.length > 0 && (
+    <section class="contenedor" aria-labelledby="ultimos">
+      <h2 id="ultimos">{t(idioma, 'inicio.ultimos')}</h2>
+      <ul class="tarjetas" role="list">
+        {ultimos.map((post) => (
+          <li class="tarjeta">
+            <h3>
+              <a href={urlDe(post)}>{post.data.title}</a>
+            </h3>
+            <p>{post.data.description}</p>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )}
+{%- endif %}
+</Base>
