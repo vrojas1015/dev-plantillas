@@ -16,7 +16,9 @@ renderizan y el resto se copia tal cual.
 <repo_name>/
 ├── proto/<first_package>/v1/item.proto   # ItemService de ejemplo (= el de go-grpc-service)
 ├── buf.yaml, buf.gen.yaml                # lint STANDARD, breaking FILE, managed mode, plugins fijados
+├── buf.lock                              # http_gateway: googleapis fijado
 ├── go.mod, go.sum, gen/go/               # go: módulo <module_path>, import <module_path>/gen/go/<pkg>/v1
+├── gen/go/**/*.pb.gw.go, gen/openapi/    # http_gateway: grpc-gateway (REST) + OpenAPI v2 embebido
 ├── gen/python/pyproject.toml             # python: paquete <python_package> (hatchling) + código generado
 ├── gen/ts/{package.json,tsconfig.json}   # typescript: <npm_package>, JS ESM + .d.ts en gen/ts/lib
 ├── gen/jvm/ (Gradle KTS + wrapper)       # java/kotlin: <maven_group>:<repo_name>, src/main/{java,kotlin}
@@ -66,13 +68,14 @@ git add . && git add --chmod=+x scripts/*.sh && git commit -m "Scaffold inicial"
 | `ci_provider` | `gitlab` | `.gitlab-ci.yml` (registries de GitLab) o `.github/workflows/ci.yml` (GitHub Packages/Releases) |
 | `languages` | `go, python, typescript` | Multiselect: `go`, `python`, `typescript`, `java`, `kotlin`, `swift`. `kotlin` implica `java` |
 | `module_path` | `<gitlab.com\|github.com>/<org>/<repo>` | Solo go. `module` de `go.mod` y `go_package_prefix` |
+| `http_gateway` | `true` si hay go | Solo go. Anotaciones `google.api.http` en el ejemplo, dep `buf.build/googleapis/googleapis` y plugins `grpc-ecosystem/gateway` + `openapiv2` (ver "REST para el api-gateway") |
 | `python_package` | `<org>_<repo>` | Solo python. Nombre de import y de distribución |
 | `npm_package` | `@<org>/<repo>` | Solo typescript. Scope = grupo/owner del registry |
 | `maven_group` | `com.<org>` | Solo java/kotlin. groupId y `java_package_prefix` |
 | `swift_module` | `<Org><Repo>` | Solo swift. Producto/módulo SPM |
 | `first_package` | `example` | `proto/<pkg>/v1/item.proto`, package `<pkg>.v1` |
 
-Derivados (no se guardan; se recalculan): `l_go`, `l_py`, `l_ts`, `l_jvm`,
+Derivados (no se guardan; se recalculan): `l_go`, `l_gw`, `l_py`, `l_ts`, `l_jvm`,
 `l_kt`, `l_sw`, `ci_gl`, `ci_gh` (flags cortos para nombres condicionales:
 rutas de Windows) y `repo_url`.
 
@@ -114,6 +117,19 @@ rutas de Windows) y `repo_url`.
   en el tag es lo publicado.
 - **Breaking** en CI: contra la rama destino en MR/PR, contra el último tag en
   la rama default. Regla FILE (la más estricta).
+- **REST para el api-gateway** (`http_gateway`, default con Go): el código del
+  gateway (`*.pb.gw.go`) y el OpenAPI se generan **acá**, junto al resto, con
+  plugins remotos fijados (`grpc-ecosystem/gateway:v2.30.0`,
+  `openapiv2:v2.30.0`; v2.30 porque v2.31 exige Go 1.26 y obligaría a subir
+  el `go` de todos los consumidores). Así el gateway solo importa paquetes
+  generados y la plantilla `api-gateway` no necesita buf. googleapis entra
+  como dep de la BSR (`buf.lock` fijado) **fuera del managed mode**. El
+  import de `google/api/annotations.proto` afecta a todos los lenguajes:
+  Python agrega `googleapis-common-protos`, TS genera `google/api/*` junto
+  (`include_imports`), JVM agrega `proto-google-common-protos`; Swift no lo
+  referencia. Agregar opciones `google.api.http` no es breaking (`buf
+  breaking` FILE pasa). Con `http_gateway=false` el repo queda idéntico al de
+  antes de esta opción.
 
 ## Verificar cambios en la plantilla
 
@@ -142,6 +158,7 @@ parseo de `.gitlab-ci.yml`.
   bajar la versión de los plugins (ver `docs/publicar.md`).
 - Swift: Connect-Swift con URLSession no habla gRPC "puro" con trailers HTTP/2:
   el backend tiene que exponer Connect o gRPC-Web (o usar ConnectNIO).
-- Dependencias de la BSR (googleapis): hay que excluirlas del managed mode
-  (`disable` comentado en `buf.gen.yaml`) y agregar sus runtimes a mano
-  (`googleapis-common-protos`, etc.).
+- Dependencias de la BSR distintas de googleapis: hay que excluirlas del
+  managed mode (`disable` en `buf.gen.yaml`) y agregar sus runtimes a mano.
+- `http_gateway` con java/kotlin/swift no se verificó en CI (sí go, python y
+  typescript): ver "Verificar cambios en la plantilla".

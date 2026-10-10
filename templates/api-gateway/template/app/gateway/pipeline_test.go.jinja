@@ -1,0 +1,378 @@
+package gateway_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"{{ module_path }}/app/apierror"
+	"{{ module_path }}/app/gateway"
+	"{{ module_path }}/app/ratelimit"
+	"{{ module_path }}/app/routes"
+)
+
+// Los tests del pipeline arman tablas propias con los métodos que existan en
+// los servicios registrados: no dependen de cómo esté hoy routes.yaml.
+
+func bindings(t *testing.T) []routes.Binding {
+	t.Helper()
+	return newEnv(t, nil).report.Bindings
+}
+
+// pick devuelve una ruta sin body (o la primera) y, si hay, una con body.
+func pick(t *testing.T) (plain routes.Binding, withBody routes.Binding, hasBody bool) {
+	t.Helper()
+	bs := bindings(t)
+	plain = bs[0]
+	for _, b := range bs {
+		if b.Body == "" && plain.Body != "" {
+			plain = b
+		}
+		if b.Body != "" && !hasBody {
+			withBody, hasBody = b, true
+		}
+	}
+	return plain, withBody, hasBody
+}
+
+func table(t *testing.T, routesYAML string) *routes.Table {
+	t.Helper()
+	tb, err := routes.Parse([]byte("version: 1\n" + routesYAML))
+	if err != nil {
+		t.Fatalf("tabla de prueba: %v", err)
+	}
+	return tb
+}
+
+func decodeErr(t *testing.T, body string) apierror.Detail {
+	t.Helper()
+	var b apierror.Body
+	if err := json.Unmarshal([]byte(body), &b); err != nil {
+		t.Fatalf("el error no tiene el formato único: %q (%v)", body, err)
+	}
+	return b.Error
+}
+
+func TestRutaSinDeclararEs404(t *testing.T) {
+	full := loadRoutes(t)
+	plain, _, _ := pick(t)
+	if full.Policy(plain.Method) == nil {
+		t.Skipf("%s ya está sin declarar", plain.Method)
+	}
+	e := newEnv(t, full.Without(plain.Method))
+	method, path, body := request(plain)
+	n, v := e.creds.header("u-admin", "items.admin")
+	w := e.do(method, path, body, n, v)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("ruta sin declarar: %d, esperaba 404", w.Code)
+	}
+	if d := decodeErr(t, w.Body.String()); d.Code != "NOT_FOUND" || d.RequestID == "" {
+		t.Fatalf("error inesperado: %+v", d)
+	}
+	if _, _, calls := e.up.last(); calls != 0 {
+		t.Fatal("una ruta sin declarar no puede llegar al servicio")
+	}
+	if !strings.Contains(strings.Join(e.report.Undeclared, ","), plain.Method) {
+		t.Fatalf("Report.Undeclared = %v, esperaba %s", e.report.Undeclared, plain.Method)
+	}
+}
+
+func TestRutaInexistenteYVerboEquivocadoSon404(t *testing.T) {
+	e := newEnv(t, nil)
+	if w := e.do("GET", "/v1/no-existe", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("ruta inexistente: %d", w.Code)
+	}
+	plain, _, _ := pick(t)
+	_, path, _ := request(plain)
+	if w := e.do("PUT", path, "{}"); w.Code != http.StatusNotFound {
+		t.Fatalf("verbo equivocado: %d, esperaba 404 (no 405: no revela rutas)", w.Code)
+	}
+}
+
+func TestEntradaDeMetodoInexistenteNoArranca(t *testing.T) {
+	tb := table(t, "routes:\n  example.v1.NoExiste/Nada:\n    public: true\n")
+	up := newFakeUpstream(t)
+	_, _, err := gateway.New(context.Background(), gateway.Options{
+		Logger: slog.Default(), Routes: tb, Auth: newCreds(t, tb).authn, Limiter: ratelimit.NewMemory(0),
+		Upstreams: upstreamsFor(up.conn(t)),
+	})
+	if err == nil || !strings.Contains(err.Error(), "example.v1.NoExiste/Nada") {
+		t.Fatalf("esperaba error por método inexistente, vino %v", err)
+	}
+}
+
+func TestRateLimit429(t *testing.T) {
+	plain, _, _ := pick(t)
+	e := newEnv(t, table(t, fmt.Sprintf(
+		"defaults:\n  rate_limit: {per_minute: 60, burst: 2}\nroutes:\n  %s:\n    public: true\n", plain.Method)))
+	method, path, body := request(plain)
+	for i := 0; i < 2; i++ {
+		if w := e.do(method, path, body); w.Code != http.StatusOK {
+			t.Fatalf("request %d: %d", i+1, w.Code)
+		}
+	}
+	w := e.do(method, path, body)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("3er request: %d, esperaba 429", w.Code)
+	}
+	for _, h := range []string{"Retry-After", "RateLimit-Limit", "RateLimit-Remaining", "RateLimit-Reset"} {
+		if w.Header().Get(h) == "" {
+			t.Errorf("falta la cabecera %s", h)
+		}
+	}
+	if w.Header().Get("RateLimit-Remaining") != "0" {
+		t.Errorf("RateLimit-Remaining = %q", w.Header().Get("RateLimit-Remaining"))
+	}
+	// Otra IP tiene su propio bucket.
+	r := httptest.NewRequest(method, path, nil)
+	r.RemoteAddr = "198.51.100.1:1000"
+	rec := httptest.NewRecorder()
+	e.h.ServeHTTP(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("otra IP: %d", rec.Code)
+	}
+}
+
+func TestBodyGrande413YContentType415(t *testing.T) {
+	_, b, ok := pick(t)
+	if !ok {
+		t.Skip("ninguna ruta con body")
+	}
+	e := newEnv(t, table(t, fmt.Sprintf("routes:\n  %s:\n    public: true\n    max_body_bytes: 100\n", b.Method)))
+	method, path, _ := request(b)
+	big := `{"name":"` + strings.Repeat("x", 200) + `"}`
+
+	if w := e.do(method, path, big); w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("Content-Length grande: %d, esperaba 413", w.Code)
+	}
+	// Sin Content-Length (chunked): se corta igual al leer.
+	r := httptest.NewRequest(method, path, strings.NewReader(big))
+	r.ContentLength = -1
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	e.h.ServeHTTP(w, r)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("chunked grande: %d, esperaba 413", w.Code)
+	}
+	if d := decodeErr(t, w.Body.String()); d.Code != apierror.CodePayloadTooLarge {
+		t.Fatalf("código %q", d.Code)
+	}
+	if _, _, calls := e.up.last(); calls != 0 {
+		t.Fatal("un body excedido no puede llegar al servicio")
+	}
+
+	if w := e.do(method, path, "{}", "Content-Type", "text/plain"); w.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("text/plain: %d, esperaba 415", w.Code)
+	}
+	if w := e.do(method, path, `{"campo_que_no_existe":1}`); w.Code != http.StatusBadRequest {
+		t.Fatalf("campo desconocido: %d, esperaba 400", w.Code)
+	}
+}
+
+func TestDeadline504(t *testing.T) {
+	plain, _, _ := pick(t)
+	e := newEnv(t, table(t, fmt.Sprintf("routes:\n  %s:\n    public: true\n    timeout: 50ms\n", plain.Method)))
+	e.up.set(nil, 2*time.Second)
+	method, path, body := request(plain)
+	start := time.Now()
+	w := e.do(method, path, body)
+	if w.Code != http.StatusGatewayTimeout {
+		t.Fatalf("upstream lento: %d, esperaba 504", w.Code)
+	}
+	if time.Since(start) > time.Second {
+		t.Fatalf("el deadline no cortó la llamada (%s)", time.Since(start))
+	}
+}
+
+func TestErrorInterno500Generico(t *testing.T) {
+	plain, _, _ := pick(t)
+	e := newEnv(t, table(t, fmt.Sprintf("routes:\n  %s:\n    public: true\n", plain.Method)))
+	const secreto = "pq: password authentication failed for user items_user at 10.0.0.5"
+	e.up.set(status.Error(codes.Internal, secreto), 0)
+	method, path, body := request(plain)
+	w := e.do(method, path, body)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("Internal del upstream: %d, esperaba 500", w.Code)
+	}
+	d := decodeErr(t, w.Body.String())
+	if d.Code != "INTERNAL" || d.Message != "error interno" || d.RequestID == "" {
+		t.Fatalf("500 no genérico: %+v", d)
+	}
+	if strings.Contains(w.Body.String(), "pq:") || strings.Contains(w.Body.String(), "10.0.0.5") {
+		t.Fatal("el body filtra el mensaje interno")
+	}
+	if d.RequestID != w.Header().Get("X-Request-Id") {
+		t.Fatal("el request_id del body no coincide con X-Request-Id")
+	}
+	if !strings.Contains(e.logs.String(), secreto) || !strings.Contains(e.logs.String(), d.RequestID) {
+		t.Fatal("el detalle real tiene que quedar en el log con el request_id")
+	}
+
+	// Error de dominio (4xx): el mensaje del servicio sí llega.
+	e.up.set(status.Error(codes.NotFound, "item no encontrado"), 0)
+	w = e.do(method, path, body)
+	if w.Code != http.StatusNotFound || decodeErr(t, w.Body.String()).Message != "item no encontrado" {
+		t.Fatalf("NotFound del upstream: %d %s", w.Code, w.Body.String())
+	}
+	// Upstream caído -> 503 genérico.
+	e.up.set(status.Error(codes.Unavailable, "dial tcp 10.0.0.5:5000: connection refused"), 0)
+	w = e.do(method, path, body)
+	if w.Code != http.StatusServiceUnavailable || strings.Contains(w.Body.String(), "10.0.0.5") {
+		t.Fatalf("Unavailable: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCORS(t *testing.T) {
+	plain, _, _ := pick(t)
+	e := newEnv(t, table(t, fmt.Sprintf("routes:\n  %s:\n    public: true\n", plain.Method)))
+	method, path, body := request(plain)
+
+	w := e.do(method, path, body, "Origin", "https://app.ejemplo.com")
+	if w.Header().Get("Access-Control-Allow-Origin") != "https://app.ejemplo.com" {
+		t.Fatalf("origen permitido sin ACAO: %v", w.Header())
+	}
+	w = e.do(method, path, body, "Origin", "https://malo.example")
+	for k := range w.Header() {
+		if strings.HasPrefix(k, "Access-Control-") {
+			t.Fatalf("origen NO permitido recibió %s", k)
+		}
+	}
+	w = e.do("OPTIONS", path, "", "Origin", "https://malo.example", "Access-Control-Request-Method", "GET")
+	if w.Code != http.StatusForbidden || w.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("preflight de origen no permitido: %d %v", w.Code, w.Header())
+	}
+	w = e.do("OPTIONS", path, "", "Origin", "https://app.ejemplo.com", "Access-Control-Request-Method", "POST")
+	if w.Code != http.StatusNoContent || w.Header().Get("Access-Control-Allow-Methods") == "" {
+		t.Fatalf("preflight permitido: %d %v", w.Code, w.Header())
+	}
+}
+
+func TestCabecerasDeSeguridad(t *testing.T) {
+	e := newEnv(t, nil)
+	for _, path := range []string{"/healthz", "/v1/no-existe"} {
+		w := e.do("GET", path, "")
+		for h, want := range map[string]string{
+			"Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+			"X-Content-Type-Options":    "nosniff",
+			"Referrer-Policy":           "no-referrer",
+			"Cache-Control":             "no-store",
+		} {
+			if got := w.Header().Get(h); got != want {
+				t.Errorf("%s: %s = %q, esperaba %q", path, h, got, want)
+			}
+		}
+	}
+}
+
+func TestRequestIDEIdentidadHaciaElServicio(t *testing.T) {
+	plain, _, _ := pick(t)
+	yaml := fmt.Sprintf("routes:\n  %s:\n    public: true\n", plain.Method)
+	if hasAuth {
+		yaml = fmt.Sprintf("routes:\n  %s:\n    roles: [test.rol]\n", plain.Method)
+	}
+	e := newEnv(t, table(t, yaml), func(o *gateway.Options) { o.TrustedProxyHops = 1 })
+	method, path, body := request(plain)
+	n, v := e.creds.header("usuario-real", "test.rol")
+	w := e.do(method, path, body, n, v,
+		"X-Request-Id", "req-0123456789",
+		"X-Forwarded-For", "1.2.3.4, 198.51.100.20",
+		// Intentos de suplantar identidad: el gateway los borra.
+		"X-User-Id", "admin",
+		"X-Roles", "items.admin",
+		"Grpc-Metadata-X-User-Id", "admin",
+		"Cookie", "session=abc",
+	)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("X-Request-Id") != "req-0123456789" {
+		t.Fatalf("X-Request-Id de respuesta = %q", w.Header().Get("X-Request-Id"))
+	}
+	_, md, _ := e.up.last()
+	if got := md.Get("x-request-id"); len(got) != 1 || got[0] != "req-0123456789" {
+		t.Fatalf("x-request-id hacia el servicio = %v", got)
+	}
+	if got := md.Get("x-client-ip"); len(got) != 1 || got[0] != "198.51.100.20" {
+		t.Fatalf("x-client-ip = %v (con 1 proxy de confianza es la IP de más a la derecha)", got)
+	}
+	users := md.Get("x-user-id")
+	if hasAuth {
+		if len(users) != 1 || users[0] == "admin" {
+			t.Fatalf("x-user-id = %v: tenía que ser SOLO la identidad verificada", users)
+		}
+		if roles := md.Get("x-roles"); len(roles) != 1 || strings.Contains(roles[0], "items.admin") {
+			t.Fatalf("x-roles = %v", roles)
+		}
+	} else if len(users) != 0 {
+		t.Fatalf("sin auth no puede llegar x-user-id: %v", users)
+	}
+	for _, k := range []string{"authorization", "x-api-key", "cookie", "grpcgateway-cookie"} {
+		if len(md.Get(k)) > 0 {
+			t.Fatalf("la cabecera %s del cliente llegó al servicio", k)
+		}
+	}
+
+	// Un request-id inválido (inyección en logs) se reemplaza.
+	w = e.do(method, path, body, n, v, "X-Request-Id", "malo\ninyectado")
+	if id := w.Header().Get("X-Request-Id"); id == "" || strings.Contains(id, "\n") {
+		t.Fatalf("request-id inválido aceptado: %q", id)
+	}
+}
+
+func TestLogsSinSecretos(t *testing.T) {
+	e := newEnv(t, nil)
+	n, v := e.creds.header("u-logs", "items.admin")
+	if n == "" { // auth = ninguno: igual se manda un token para ver que no se loguee
+		n, v = "Authorization", "Bearer token-que-no-puede-aparecer"
+	}
+	extra := []string{"Cookie", "session=cookie-secreta"}
+	secrets := []string{v, "cookie-secreta", "secreto-en-query"}
+	if strings.EqualFold(n, "X-API-Key") {
+		extra = append(extra, "Authorization", "Bearer token-secreto-extra")
+		secrets = append(secrets, "token-secreto-extra")
+	} else {
+		extra = append(extra, "X-Api-Key", "gwk_key-secreta")
+		secrets = append(secrets, "key-secreta")
+	}
+	if i := strings.LastIndex(v, " "); i >= 0 {
+		secrets = append(secrets, v[i+1:]) // el token sin "Bearer "
+	}
+	for _, b := range e.report.Bindings {
+		method, path, body := request(b)
+		e.do(method, path+"?access_token=secreto-en-query", body, append([]string{n, v}, extra...)...)
+	}
+	logs := e.logs.String()
+	for _, secret := range secrets {
+		if strings.Contains(logs, secret) {
+			t.Fatalf("el log contiene un secreto (%.12s...)", secret)
+		}
+	}
+	if !strings.Contains(logs, `"`+strings.ToLower(n)+`":"[REDACTED]"`) || !strings.Contains(logs, `"cookie":"[REDACTED]"`) {
+		t.Fatal("esperaba las cabeceras de credenciales tapadas en el log de debug")
+	}
+	if !strings.Contains(logs, `"msg":"http_request"`) {
+		t.Fatal("no hay access log")
+	}
+}
+
+func TestBuiltins(t *testing.T) {
+	e := newEnv(t, nil, func(o *gateway.Options) { o.OpenAPI = []byte(`{"swagger":"2.0"}`) })
+	if w := e.do("GET", "/healthz", ""); w.Code != http.StatusOK {
+		t.Fatalf("/healthz: %d", w.Code)
+	}
+	if w := e.do("GET", "/openapi.json", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "swagger") {
+		t.Fatalf("/openapi.json: %d", w.Code)
+	}
+	if w := newEnv(t, nil).do("GET", "/openapi.json", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("/openapi.json deshabilitado: %d, esperaba 404", w.Code)
+	}
+}

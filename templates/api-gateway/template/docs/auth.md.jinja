@@ -1,0 +1,137 @@
+# Autenticación — {{ repo_name }} (auth: `{{ auth }}`)
+
+El gateway **verifica** credenciales; no las emite ni las renueva (eso es del
+proveedor o de un servicio de auth propio). Con una credencial válida arma la
+identidad y se la pasa a los servicios como metadata gRPC:
+
+| Metadata | Valor |
+|---|---|
+| `x-user-id` | `sub` del token, o `apikey:<id>` |
+| `x-roles` | roles del token o scopes de la key, separados por coma |
+| `x-auth-type` | `jwt` \| `apikey` |
+| `x-request-id` | id del request (también en la respuesta, `X-Request-Id`) |
+| `x-client-ip` | IP del cliente según `TRUSTED_PROXY_HOPS` |
+
+Los servicios **solo** reciben eso: ninguna cabecera del cliente pasa tal cual
+(tampoco `Authorization`), y si el cliente manda `X-User-Id`, `X-Roles` o
+`Grpc-Metadata-*`, el gateway las borra antes de armar la metadata. Los
+servicios confían en esta metadata **porque solo el gateway puede llamarlos**
+({% if is_cr %}Cloud Run interno + `roles/run.invoker` para el SA del gateway{% elif is_cy %}red interna de Docker, sin puertos publicados{% else %}red interna{% endif %}).
+
+Respuestas: sin credencial o credencial inválida en una ruta protegida → `401`;
+credencial válida sin el rol → `403`; proveedor de claves caído → `503`. En
+rutas `public: true` una credencial válida se usa (identidad y rate limit por
+usuario) y una inválida se ignora.
+{% if a_fb %}
+## Firebase Auth
+
+| Qué | Valor |
+|---|---|
+| `iss` | `https://securetoken.google.com/<FIREBASE_PROJECT_ID>` |
+| `aud` | `<FIREBASE_PROJECT_ID>` |
+| Algoritmo | RS256 (lista cerrada: RS256/ES256; nunca `none` ni HS*) |
+| Claves | `https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com` (JWKS en caché según `Cache-Control`; refresco ante `kid` desconocido, máx. uno cada 30 s) |
+| Además | `exp`, `nbf`, `iat` con tolerancia `AUTH_CLOCK_SKEW` (≤ 60 s), `sub` no vacío, `auth_time` en el pasado |
+
+Variables: `FIREBASE_PROJECT_ID` (default `{{ firebase_project }}`; QA y prod
+suelen ser proyectos distintos: cada entorno pone el suyo) y
+`AUTH_ROLES_CLAIM` (default `roles`).
+
+**Roles** = custom claims. Se setean desde un backend con el Admin SDK (nunca
+desde el cliente), y el usuario los ve en el próximo ID token (≤ 1 h, o
+forzando `getIdToken(true)`):
+
+```js
+await admin.auth().setCustomUserClaims(uid, { roles: ['items.read', 'items.write'] });
+```
+
+El front manda el ID token (`await user.getIdToken()`) en
+`Authorization: Bearer <token>`.
+
+**Revocación**: el gateway no llama a `checkRevoked` en cada request (cuesta
+una llamada extra). Para operaciones sensibles, que el servicio de auth la
+haga o acortá la vida de las sesiones. (docs/05 §2.)
+{% elif a_oidc %}
+## OIDC genérico
+
+| Qué | Valor |
+|---|---|
+| Discovery | `<OIDC_ISSUER>/.well-known/openid-configuration` (la primera vez que hace falta; reintento cada 30 s si falla) |
+| `iss` | **idéntico** a `OIDC_ISSUER` (y al `issuer` del discovery; si difieren, no se confía) |
+| `aud` | `OIDC_AUDIENCE` (alcanza con que esté entre los `aud` del token) |
+| Algoritmo | RS256 o ES256 (lista cerrada) |
+| Claves | `jwks_uri` del discovery, en caché según `Cache-Control`; refresco ante `kid` desconocido (máx. uno cada 30 s) |
+| Además | `exp` obligatorio, `nbf`/`iat` con tolerancia `AUTH_CLOCK_SKEW` (≤ 60 s), `sub` no vacío |
+
+El issuer tiene que ser `https://` (con `APP_ENV` ≠ `production` se acepta
+`http://` para un emisor de pruebas local).
+
+Roles (`AUTH_ROLES_CLAIM`): array de strings o string separado por espacios o
+comas. Primero se busca el nombre completo y si no, como ruta con puntos.
+
+| Proveedor | `OIDC_ISSUER` | `OIDC_AUDIENCE` | `AUTH_ROLES_CLAIM` |
+|---|---|---|---|
+| Keycloak | `https://<host>/realms/<realm>` | client id (mapper "audience") | `realm_access.roles` |
+| Auth0 | `https://<tenant>.auth0.com/` (con `/` final) | identifier de la API | `https://<tu-dominio>/roles` (Action que agrega el claim) |
+| Microsoft Entra ID | `https://login.microsoftonline.com/<tenant>/v2.0` | `api://<app-id>` | `roles` (app roles) |
+| Google Identity Platform | `https://securetoken.google.com/<proyecto>` | `<proyecto>` | custom claim (mejor: `auth=firebase`) |
+| Scopes OAuth2 | — | — | `scope` (string separado por espacios) |
+{% elif a_key %}
+## API keys (máquina a máquina)
+
+- Header `X-API-Key: gwk_<43 caracteres>`. El prefijo `gwk_` permite
+  reconocerlas (secret scanning, logs) si se filtran.
+- En la configuración va **solo el SHA-256** de cada key, con `id` (aparece en
+  logs y en `x-user-id` como `apikey:<id>`), `scopes` (se comparan con
+  `roles:` de `routes.yaml`) y `expires_at` opcional. SHA-256 alcanza porque
+  las keys son aleatorias de 256 bits (no hay diccionario que probar).
+
+Generar una key:
+
+```bash
+make apikey ID=erp-prod SCOPES="items.read"
+# o: go run ./cli apikey erp-prod items.read
+```
+
+Imprime la key **una sola vez** (entregala al cliente por un canal seguro) y
+la entrada para la configuración:
+
+```yaml
+keys:
+  - id: erp-prod
+    sha256: 3f0a...            # 64 hex
+    scopes: [items.read]
+    expires_at: 2027-06-30     # opcional
+```
+
+Dónde va la configuración (nunca en el repo):
+
+| Destino | Cómo |
+|---|---|
+| Local | `API_KEYS_FILE=api-keys.local.yaml` (ignorado por git) o `API_KEYS="$(cat ...)"` |
+{%- if is_cr %}
+| Cloud Run | secreto `{{ repo_name }}-api-keys-<entorno>` en Secret Manager → `API_KEYS` (`cloudrun.<env>.yaml`). Nueva versión: `gcloud secrets versions add {{ repo_name }}-api-keys-qa --data-file=api-keys.qa.yaml` y redeploy |
+{%- elif is_cy %}
+| Coolify | variable `API_KEYS` del recurso (contenido YAML, marcada como secreta) y Redeploy |
+{%- endif %}
+
+**Rotación sin corte**: agregar la key nueva (otra entrada), desplegar,
+migrar al cliente, y recién entonces borrar la vieja y desplegar. Una key
+filtrada: borrar su entrada y desplegar (no hay caché que esperar).
+{% else %}
+## Sin auth (`ninguno`)
+
+No se verifica ninguna credencial: **todas** las rutas de `routes.yaml` tienen
+que ser `public: true` (el gateway no arranca si alguna pide roles). El resto
+del pipeline (CORS, límites, rate limit por IP, errores, logs) sigue igual.
+
+Para agregar auth: `copier update --data auth=firebase` (u `oidc` / `api-key`)
+en una rama, revisar el diff de `routes.yaml` y `cli/main.go`, y completar las
+variables nuevas de `.env.example`.
+{% endif %}
+## Cambiar de proveedor
+
+`copier update --data auth=<firebase|oidc|api-key|ninguno>` regenera el
+wiring (`cli/main.go`), los tests y la documentación. El código de todos los
+verificadores vive siempre en `app/auth` (y tiene tests), así que el cambio no
+toca la lógica.

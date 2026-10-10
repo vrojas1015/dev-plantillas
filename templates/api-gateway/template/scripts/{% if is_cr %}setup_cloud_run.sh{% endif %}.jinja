@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# =============================================================================
+# Setup de una sola vez por entorno — {{ repo_name }} en Cloud Run
+# =============================================================================
+# Idempotente. Crea/asegura:
+#   1. el service account de runtime del gateway ({{ repo_name }}-sa), SIN roles
+#      a nivel proyecto;
+#   2. el repo de Artifact Registry;
+#   3. roles/run.invoker del SA del gateway sobre CADA servicio de atrás
+#      (los servicios siguen siendo internos: solo el gateway los puede llamar);
+{%- if a_key %}
+#   4. el secreto {{ repo_name }}-api-keys-<entorno> (hashes de las API keys) y
+#      el permiso de lectura del SA sobre ESE secreto;
+{%- endif %}
+#   5. que el gateway sea público (allUsers invoker), si ya está desplegado.
+#
+# Uso:
+#   UPSTREAM_SERVICES="items-service-qa" ./scripts/setup_cloud_run.sh qa
+#   UPSTREAM_SERVICES="items-service otro-service" ./scripts/setup_cloud_run.sh prod
+#
+# Variables:
+#   PROJECT_ID         (default {{ gcp_project }})
+#   REGION             (default {{ gcp_region }})
+#   UPSTREAM_SERVICES  nombres de los servicios de Cloud Run que llama el gateway
+# =============================================================================
+set -euo pipefail
+
+PROJECT_ID="${PROJECT_ID:-{{ gcp_project }}}"
+REGION="${REGION:-{{ gcp_region }}}"
+ENVIRONMENT="${1:?Uso: $0 <qa|prod>}"
+
+case "$ENVIRONMENT" in
+  qa)   SERVICE_NAME="{{ repo_name }}-qa" ;;
+  prod) SERVICE_NAME="{{ repo_name }}" ;;
+  *)    echo "Entorno inválido: '$ENVIRONMENT' (esperado: qa | prod)" >&2; exit 1 ;;
+esac
+
+SA_NAME="{{ repo_name }}-sa"
+SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
+AR_REPO="{{ artifact_repo }}"
+
+echo "== Setup ${SERVICE_NAME} (${ENVIRONMENT}) en ${PROJECT_ID}"
+
+# 1. Service account de runtime ------------------------------------------------
+if gcloud iam service-accounts describe "${SA_EMAIL}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "SA ${SA_EMAIL}: ya existe"
+else
+  gcloud iam service-accounts create "${SA_NAME}" \
+    --display-name="{{ repo_name }} (Cloud Run runtime)" --project="${PROJECT_ID}"
+  echo "SA creado; esperando propagación de IAM..."
+  sleep 10
+fi
+
+# 2. Artifact Registry -----------------------------------------------------------
+if gcloud artifacts repositories describe "${AR_REPO}" --location="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "Artifact Registry ${AR_REPO}: ya existe"
+else
+  gcloud artifacts repositories create "${AR_REPO}" --repository-format=docker \
+    --location="${REGION}" --project="${PROJECT_ID}" --description="Imágenes de {{ repo_name }}"
+fi
+
+# 3. Invoker sobre cada upstream (por servicio, no a nivel proyecto) ------------
+for SVC in ${UPSTREAM_SERVICES:-}; do
+  echo "run.invoker de ${SA_EMAIL} sobre ${SVC}"
+  gcloud run services add-iam-policy-binding "${SVC}" --region="${REGION}" --project="${PROJECT_ID}" \
+    --member="serviceAccount:${SA_EMAIL}" --role="roles/run.invoker" --quiet >/dev/null
+done
+[ -n "${UPSTREAM_SERVICES:-}" ] || echo "AVISO: UPSTREAM_SERVICES vacío; el gateway no va a poder llamar a ningún servicio."
+{%- if a_key %}
+
+# 4. Secreto con los hashes de las API keys ----------------------------------------
+SECRET_NAME="{{ repo_name }}-api-keys-${ENVIRONMENT}"
+if ! gcloud secrets describe "${SECRET_NAME}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  gcloud secrets create "${SECRET_NAME}" --replication-policy=automatic --project="${PROJECT_ID}"
+  # Versión inicial vacía (sin keys = ningún cliente pasa). Cargá las reales con:
+  #   gcloud secrets versions add ${SECRET_NAME} --data-file=api-keys.${ENVIRONMENT}.yaml
+  printf 'keys: []\n' | gcloud secrets versions add "${SECRET_NAME}" --data-file=- --project="${PROJECT_ID}"
+fi
+gcloud secrets add-iam-policy-binding "${SECRET_NAME}" --project="${PROJECT_ID}" \
+  --member="serviceAccount:${SA_EMAIL}" --role="roles/secretmanager.secretAccessor" --quiet >/dev/null
+echo "Secreto ${SECRET_NAME}: listo (solo hashes; ver docs/auth.md)"
+{%- endif %}
+
+# 5. Gateway público ---------------------------------------------------------------
+if gcloud run services describe "${SERVICE_NAME}" --region="${REGION}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  gcloud run services add-iam-policy-binding "${SERVICE_NAME}" --region="${REGION}" --project="${PROJECT_ID}" \
+    --member="allUsers" --role="roles/run.invoker" --quiet >/dev/null
+  echo "${SERVICE_NAME}: público (allUsers invoker)"
+else
+  echo "${SERVICE_NAME} todavía no existe: después del primer deploy volvé a correr este script."
+fi
+
+echo "== Listo. Siguiente: docs/ci-cd-setup.md (deployer + WIF) y git tag ${ENVIRONMENT}-v0.1.0"

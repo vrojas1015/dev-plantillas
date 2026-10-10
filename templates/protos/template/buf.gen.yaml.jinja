@@ -22,10 +22,17 @@ managed:
     - file_option: java_package_prefix
       value: {{ maven_group }}
 {%- endif %}
+{%- if l_gw %}
+  # Las deps de la BSR (buf.yaml) quedan FUERA del managed mode: traen sus
+  # propios paquetes (googleapis -> google.golang.org/genproto/...).
+  disable:
+    - module: buf.build/googleapis/googleapis
+{%- else %}
   # Si se agregan deps de la BSR (buf.yaml), excluirlas del managed mode para
   # no reescribir sus paquetes, p. ej.:
   # disable:
   #   - module: buf.build/googleapis/googleapis
+{%- endif %}
 plugins:
 {%- if l_go %}
   # --- Go -------------------------------------------------------------------
@@ -35,6 +42,22 @@ plugins:
   - remote: buf.build/grpc/go:v1.6.2
     out: gen/go
     opt: paths=source_relative
+{%- endif %}
+{%- if l_gw %}
+  # --- REST para el api-gateway (grpc-gateway v2) ----------------------------
+  # *.pb.gw.go junto al código Go (RegisterXxxHandler) y un OpenAPI v2 de
+  # todas las rutas en gen/openapi/api.swagger.json (lo embebe gen/openapi).
+  # disable_default_errors: el gateway responde con su propio formato de error.
+  # Runtime: github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 (go.mod).
+  - remote: buf.build/grpc-ecosystem/gateway:v2.30.0
+    out: gen/go
+    opt: paths=source_relative
+  - remote: buf.build/grpc-ecosystem/openapiv2:v2.30.0
+    out: gen/openapi
+    opt:
+      - allow_merge=true
+      - merge_file_name=api
+      - disable_default_errors=true
 {%- endif %}
 {%- if l_py %}
   # --- Python (runtime: protobuf>=7.36.2,<8; ver gen/python/pyproject.toml) --
@@ -52,6 +75,10 @@ plugins:
   # (@connectrpc/connect), sin plugin extra.
   - remote: buf.build/bufbuild/es:v2.16.0
     out: gen/ts/lib
+{%- if l_gw %}
+    # El código importa google/api/annotations: se genera junto (gen/ts/lib/google/api).
+    include_imports: true
+{%- endif %}
     opt:
       - target=js+dts
       - import_extension=js

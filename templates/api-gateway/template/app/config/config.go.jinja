@@ -1,0 +1,209 @@
+// Package config lee la configuración del gateway de variables de entorno
+// (12-factor: los mismos nombres en local, {% if is_cr %}Cloud Run{% elif is_cy %}Coolify{% else %}cualquier destino{% endif %} y CI). En desarrollo carga
+// .env.dev si existe. Lista completa y defaults: .env.example.
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/joho/godotenv"
+)
+
+// Config del gateway.
+type Config struct {
+	AppEnv     string // development | production
+	ServiceEnv string // dev | qa | prod (solo informativo: logs)
+	LogLevel   string // debug | info | warn | error
+	LogFormat  string // json | text
+
+	HTTPPort   int
+	RoutesFile string
+
+	CORSAllowedOrigins   []string
+	CORSAllowCredentials bool
+	TrustedProxyHops     int
+	OpenAPIEnabled       bool
+
+	ReadHeaderTimeout time.Duration
+	ReadTimeout       time.Duration
+	WriteTimeout      time.Duration
+	IdleTimeout       time.Duration
+	ShutdownTimeout   time.Duration
+
+	UpstreamTLS  bool
+	UpstreamAuth string // none | google-idtoken
+
+	// Auth (se usa la parte que corresponde a la respuesta `auth` de la plantilla).
+	FirebaseProjectID string
+	OIDCIssuer        string
+	OIDCAudience      string
+	RolesClaim        string
+	ClockSkew         time.Duration
+	APIKeys           string // contenido (YAML/JSON), típicamente desde un secreto
+	APIKeysFile       string // o ruta a un archivo montado
+}
+
+// IsProduction informa si APP_ENV=production.
+func (c *Config) IsProduction() bool { return c.AppEnv == "production" }
+
+// Load lee y valida la configuración.
+func Load() (*Config, error) {
+	if envFile := os.Getenv("ENV_FILE"); envFile != "" {
+		_ = godotenv.Overload(envFile)
+	} else if os.Getenv("APP_ENV") == "" || os.Getenv("APP_ENV") == "development" {
+		if f := findEnvFile(".env.dev"); f != "" {
+			_ = godotenv.Overload(f)
+		}
+	}
+
+	var errs []error
+	appEnv := getEnv("APP_ENV", "development")
+	prod := appEnv == "production"
+	logFormat := "text"
+	if prod {
+		logFormat = "json"
+	}
+
+	c := &Config{
+		AppEnv:     appEnv,
+		ServiceEnv: getEnv("SERVICE_ENV", "dev"),
+		LogLevel:   getEnv("LOG_LEVEL", "info"),
+		LogFormat:  getEnv("LOG_FORMAT", logFormat),
+
+		HTTPPort:   getInt("HTTP_PORT", {{ http_port }}, &errs),
+		RoutesFile: getEnv("ROUTES_FILE", "routes.yaml"),
+
+		CORSAllowedOrigins:   splitList(os.Getenv("CORS_ALLOWED_ORIGINS")),
+		CORSAllowCredentials: getBool("CORS_ALLOW_CREDENTIALS", false, &errs),
+		TrustedProxyHops:     getInt("TRUSTED_PROXY_HOPS", 0, &errs),
+		OpenAPIEnabled:       getBool("OPENAPI_ENABLED", !prod, &errs),
+
+		ReadHeaderTimeout: getDuration("HTTP_READ_HEADER_TIMEOUT", 5*time.Second, &errs),
+		ReadTimeout:       getDuration("HTTP_READ_TIMEOUT", 15*time.Second, &errs),
+		WriteTimeout:      getDuration("HTTP_WRITE_TIMEOUT", 35*time.Second, &errs),
+		IdleTimeout:       getDuration("HTTP_IDLE_TIMEOUT", 60*time.Second, &errs),
+		ShutdownTimeout:   getDuration("SHUTDOWN_TIMEOUT", 15*time.Second, &errs),
+
+		UpstreamTLS:  getBool("UPSTREAM_TLS", false, &errs),
+		UpstreamAuth: getEnv("UPSTREAM_AUTH", "none"),
+
+		FirebaseProjectID: getEnv("FIREBASE_PROJECT_ID", "{{ firebase_project if a_fb else '' }}"),
+		OIDCIssuer:        getEnv("OIDC_ISSUER", "{{ oidc_issuer if a_oidc else '' }}"),
+		OIDCAudience:      getEnv("OIDC_AUDIENCE", "{{ oidc_audience if a_oidc else '' }}"),
+		RolesClaim:        getEnv("AUTH_ROLES_CLAIM", "roles"),
+		ClockSkew:         getDuration("AUTH_CLOCK_SKEW", 30*time.Second, &errs),
+		APIKeys:           os.Getenv("API_KEYS"),
+		APIKeysFile:       os.Getenv("API_KEYS_FILE"),
+	}
+
+	if c.HTTPPort < 1 || c.HTTPPort > 65535 {
+		errs = append(errs, fmt.Errorf("HTTP_PORT=%d fuera de rango", c.HTTPPort))
+	}
+	if c.TrustedProxyHops < 0 || c.TrustedProxyHops > 5 {
+		errs = append(errs, errors.New("TRUSTED_PROXY_HOPS tiene que estar entre 0 y 5"))
+	}
+	if c.ClockSkew < 0 || c.ClockSkew > 60*time.Second {
+		errs = append(errs, errors.New("AUTH_CLOCK_SKEW tiene que estar entre 0s y 60s"))
+	}
+	if c.LogFormat != "json" && c.LogFormat != "text" {
+		errs = append(errs, fmt.Errorf("LOG_FORMAT=%q (json | text)", c.LogFormat))
+	}
+	for _, o := range c.CORSAllowedOrigins {
+		if o == "*" {
+			errs = append(errs, errors.New("CORS_ALLOWED_ORIGINS no admite \"*\": listá los orígenes"))
+		}
+	}
+	for name, d := range map[string]time.Duration{
+		"HTTP_READ_HEADER_TIMEOUT": c.ReadHeaderTimeout, "HTTP_READ_TIMEOUT": c.ReadTimeout,
+		"HTTP_WRITE_TIMEOUT": c.WriteTimeout, "HTTP_IDLE_TIMEOUT": c.IdleTimeout,
+	} {
+		if d <= 0 {
+			errs = append(errs, fmt.Errorf("%s tiene que ser > 0 (sin timeouts el servidor queda expuesto a slowloris)", name))
+		}
+	}
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+	return c, nil
+}
+
+func getEnv(key, def string) string {
+	if v, ok := os.LookupEnv(key); ok && v != "" {
+		return v
+	}
+	return def
+}
+
+func getInt(key string, def int, errs *[]error) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		*errs = append(*errs, fmt.Errorf("%s=%q no es un entero", key, v))
+		return def
+	}
+	return n
+}
+
+func getBool(key string, def bool, errs *[]error) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		*errs = append(*errs, fmt.Errorf("%s=%q no es booleano", key, v))
+		return def
+	}
+	return b
+}
+
+func getDuration(key string, def time.Duration, errs *[]error) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		*errs = append(*errs, fmt.Errorf("%s=%q no es una duración (ej. 10s)", key, v))
+		return def
+	}
+	return d
+}
+
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// findEnvFile busca name subiendo directorios desde el CWD. "" si no existe.
+func findEnvFile(name string) string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	for {
+		p := filepath.Join(dir, name)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+}

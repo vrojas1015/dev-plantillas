@@ -1,0 +1,47 @@
+// Package apierror escribe los errores del gateway en un formato único:
+//
+//	{"error": {"code": "PERMISSION_DENIED", "message": "...", "request_id": "..."}}
+//
+// Nunca lleva stack traces, mensajes internos ni detalles de los upstreams:
+// los 5xx salen con un mensaje genérico y el request_id para buscarlos en los
+// logs (docs/errores.md).
+package apierror
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"{{ module_path }}/app/reqctx"
+)
+
+// Códigos propios de HTTP (el resto son los nombres de los códigos gRPC).
+const (
+	CodePayloadTooLarge      = "PAYLOAD_TOO_LARGE"
+	CodeUnsupportedMediaType = "UNSUPPORTED_MEDIA_TYPE"
+)
+
+// Body es el JSON de error.
+type Body struct {
+	Error Detail `json:"error"`
+}
+
+// Detail es el contenido de Body.
+type Detail struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	RequestID string `json:"request_id,omitempty"`
+}
+
+// Write responde status con el formato único.
+func Write(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	h := w.Header()
+	h.Set("Content-Type", "application/json; charset=utf-8")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Del("Content-Length")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(Body{Error: Detail{
+		Code:      code,
+		Message:   message,
+		RequestID: reqctx.RequestID(r.Context()),
+	}})
+}

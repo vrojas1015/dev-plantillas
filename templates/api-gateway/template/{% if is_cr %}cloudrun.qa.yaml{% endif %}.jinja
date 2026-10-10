@@ -1,0 +1,102 @@
+# Cloud Run (qa) — {{ repo_name }}-qa
+#
+# Los placeholders __X__ los reemplaza la CI (y scripts/rollback.sh) con sed
+# antes de `gcloud run services replace`:
+#   __PROJECT_ID__ __REGION__ __IMAGE_TAG__ __DEPLOY_TIME__
+#
+# El gateway es el ÚNICO servicio público: el acceso de allUsers (invoker) se
+# da una vez en el setup (docs/ci-cd-setup.md); `services replace` no toca la
+# policy. Los servicios de atrás son internos y le dan roles/run.invoker al SA
+# de este gateway, que los llama con TLS + ID token (UPSTREAM_AUTH).
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: {{ repo_name }}-qa
+  namespace: __PROJECT_ID__
+  labels:
+    app: {{ repo_name }}
+    env: qa
+  annotations:
+    run.googleapis.com/launch-stage: GA
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        # Rate limit en memoria = por instancia: el límite efectivo es
+        # límite x instancias. Acotá maxScale o pasá a Redis (fase 3).
+        autoscaling.knative.dev/maxScale: "3"
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      serviceAccountName: {{ repo_name }}-sa@__PROJECT_ID__.iam.gserviceaccount.com
+      containerConcurrency: 80
+      timeoutSeconds: 60
+      containers:
+        - image: __REGION__-docker.pkg.dev/__PROJECT_ID__/{{ artifact_repo }}/{{ repo_name }}:__IMAGE_TAG__
+          ports:
+            - name: http1
+              containerPort: {{ http_port }}
+          env:
+            - name: APP_ENV
+              value: "production"
+            - name: SERVICE_ENV
+              value: "qa"
+            - name: LOG_LEVEL
+              value: "info"
+            - name: HTTP_PORT
+              value: "{{ http_port }}"
+            # TODO: URL del servicio de Cloud Run (sin https://) + :443.
+            #   gcloud run services describe items-service-qa --region __REGION__ --format='value(status.url)'
+            - name: UPSTREAM_ITEMS_ADDR
+              value: "items-service-qa-REEMPLAZAR.a.run.app:443"
+            - name: UPSTREAM_TLS
+              value: "true"
+            - name: UPSTREAM_AUTH
+              value: "google-idtoken"
+            # Orígenes EXACTOS del front de este entorno (nunca *).
+            - name: CORS_ALLOWED_ORIGINS
+              value: "https://qa.app.ejemplo.com"
+            # El Google Front End agrega la IP del cliente a X-Forwarded-For.
+            # Con un Load Balancer externo delante (Cloud Armor): 2.
+            - name: TRUSTED_PROXY_HOPS
+              value: "1"
+            - name: OPENAPI_ENABLED
+              value: "true"
+{%- if a_fb %}
+            - name: FIREBASE_PROJECT_ID
+              value: "{{ firebase_project }}"
+{%- elif a_oidc %}
+            - name: OIDC_ISSUER
+              value: "{{ oidc_issuer }}"
+            - name: OIDC_AUDIENCE
+              value: "{{ oidc_audience }}"
+{%- elif a_key %}
+            # Hashes de las API keys (Secret Manager; scripts/setup_cloud_run.sh).
+            - name: API_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ repo_name }}-api-keys-qa
+                  key: latest
+{%- endif %}
+            - name: DEPLOY_TIME
+              value: "__DEPLOY_TIME__"
+          resources:
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: {{ http_port }}
+            periodSeconds: 2
+            failureThreshold: 15
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ http_port }}
+            periodSeconds: 30
+            failureThreshold: 3
+  traffic:
+    - percent: 100
+      latestRevision: true

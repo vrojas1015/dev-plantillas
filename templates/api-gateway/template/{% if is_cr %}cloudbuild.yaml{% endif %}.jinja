@@ -1,0 +1,27 @@
+# Config de Cloud Build para {{ repo_name }}.
+#
+# _IMAGE lo inyecta la pipeline de CI vía --substitutions.
+# DOCKER_BUILDKIT=1 es necesario porque el Dockerfile usa sintaxis BuildKit
+# (# syntax=... y --mount=type=cache).
+# logging: CLOUD_LOGGING_ONLY evita depender de un bucket GCS de logs cuando el
+# build corre bajo un SA impersonado (WIF).
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    env:
+      - DOCKER_BUILDKIT=1
+    args:
+      - build
+      - -f
+      - Dockerfile
+      - -t
+      - ${_IMAGE}
+      - .
+
+images:
+  - ${_IMAGE}
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s

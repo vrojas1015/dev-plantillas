@@ -1,0 +1,57 @@
+# =============================================================================
+# Coolify v4 (build pack "Docker Compose") — {{ repo_name }}
+# =============================================================================
+#
+# Un recurso de Coolify por entorno (QA y prod), los dos con este archivo.
+# Setup completo en docs/deploy.md.
+#
+# - La imagen la construye la CI (tests + govulncheck + Trivy) y la sube al
+#   registry ({% if ci_gl %}GitLab Container Registry{% else %}GHCR{% endif %}) con el tag inmutable (qa-v1.2.3) y uno móvil
+#   (qa / prod). El recurso usa IMAGE_TAG=qa|prod; la CI dispara el redeploy
+#   por la API de Coolify. pull_policy: always baja el digest nuevo del tag móvil.
+#   Rollback: IMAGE_TAG=<tag inmutable anterior> en el panel + Redeploy.
+# - El gateway es lo ÚNICO público: el dominio (https) se asigna a este
+#   servicio en el panel y Traefik termina TLS. Por eso TRUSTED_PROXY_HOPS=1.
+# - Los servicios gRPC NO publican puertos: el gateway los alcanza por la red
+#   de Docker. Para que se vean entre recursos, activá "Connect to Predefined
+#   Network" en este recurso y en cada servicio, y usá como UPSTREAM_*_ADDR el
+#   nombre de contenedor del servicio (docs/deploy.md).
+# - ${VAR:?} = obligatoria: el deploy falla si falta en el panel.
+# =============================================================================
+
+services:
+  gateway:
+    image: ${IMAGE_REPO:-{{ image_repo_default }}}:${IMAGE_TAG:?}
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      SERVICE_ENV: ${SERVICE_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      HTTP_PORT: "{{ http_port }}"
+      UPSTREAM_ITEMS_ADDR: ${UPSTREAM_ITEMS_ADDR:?}
+      UPSTREAM_TLS: "false"
+      UPSTREAM_AUTH: none
+      # Orígenes EXACTOS del front de este entorno, separados por coma.
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?}
+      TRUSTED_PROXY_HOPS: "1"
+      OPENAPI_ENABLED: ${OPENAPI_ENABLED:-false}
+{%- if a_fb %}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?}
+{%- elif a_oidc %}
+      OIDC_ISSUER: ${OIDC_ISSUER:?}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:?}
+{%- elif a_key %}
+      # Contenido YAML con los hashes SHA-256 (ver docs/auth.md). En Coolify,
+      # variable marcada como secreta ("Is Literal" + sin mostrar en logs).
+      API_KEYS: ${API_KEYS:?}
+{%- endif %}
+    expose:
+      - "{{ http_port }}"
+    healthcheck:
+      # Imagen distroless (sin shell ni curl): el binario consulta su /healthz.
+      test: ["CMD", "/app/{{ repo_name }}", "healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

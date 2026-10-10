@@ -1,0 +1,76 @@
+// Package middleware tiene el pipeline HTTP común del gateway (lo que corre
+// antes de resolver la ruta). El orden lo arma gateway.New:
+//
+//	request-id + IP -> access log -> recover -> cabeceras de seguridad ->
+//	CORS -> limpieza de cabeceras de identidad -> (mux: ruta, auth, ...)
+package middleware
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"net"
+	"net/http"
+	"regexp"
+	"strings"
+
+	"{{ module_path }}/app/reqctx"
+)
+
+// HeaderRequestID es el header de entrada/salida del request-id. Hacia los
+// servicios viaja como metadata gRPC x-request-id.
+const HeaderRequestID = "X-Request-Id"
+
+// requestIDRe: se acepta el request-id del cliente solo si es "seguro" para
+// logs (sin espacios, saltos de línea ni caracteres raros) y de largo razonable.
+var requestIDRe = regexp.MustCompile(`^[A-Za-z0-9._:-]{8,128}$`)
+
+// Context crea la reqctx.Info del request: request-id (el del cliente si es
+// válido; si no, uno nuevo) e IP del cliente. trustedHops es la cantidad de
+// proxies propios delante del gateway (Cloud Run / Traefik = 1; sin proxy = 0).
+func Context(trustedHops int) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			id := r.Header.Get(HeaderRequestID)
+			if !requestIDRe.MatchString(id) {
+				id = newRequestID()
+			}
+			w.Header().Set(HeaderRequestID, id)
+			info := &reqctx.Info{RequestID: id, ClientIP: ClientIP(r, trustedHops)}
+			next.ServeHTTP(w, r.WithContext(reqctx.With(r.Context(), info)))
+		})
+	}
+}
+
+func newRequestID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// ClientIP devuelve la IP del cliente. Con trustedHops = N toma la N-ésima
+// IP desde la DERECHA de X-Forwarded-For (cada proxy propio agrega una a la
+// derecha; lo de la izquierda lo puede inventar el cliente). Con 0 usa la
+// dirección de la conexión. Confiar en X-Forwarded-For sin contar proxies
+// permite esquivar el rate limit por IP.
+func ClientIP(r *http.Request, trustedHops int) string {
+	if trustedHops > 0 {
+		var parts []string
+		for _, v := range r.Header.Values("X-Forwarded-For") {
+			for _, p := range strings.Split(v, ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					parts = append(parts, p)
+				}
+			}
+		}
+		if len(parts) >= trustedHops {
+			if ip := net.ParseIP(parts[len(parts)-trustedHops]); ip != nil {
+				return ip.String()
+			}
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}

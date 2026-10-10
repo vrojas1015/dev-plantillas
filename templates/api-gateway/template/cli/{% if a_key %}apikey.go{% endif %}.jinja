@@ -1,0 +1,38 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"regexp"
+	"strings"
+
+	"{{ module_path }}/app/auth"
+)
+
+// apikeyCmd genera una API key nueva: `<binario> apikey <id> [scope...]`
+// (o `go run ./cli apikey erp-prod items.read`).
+//
+// Imprime la key UNA vez (entregala al cliente por un canal seguro) y la
+// entrada para API_KEYS con su sha256. La key en claro no se guarda en ningún
+// lado: si se pierde, se genera otra.
+const apikeyCmd = "apikey"
+
+var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
+func runAPIKey(args []string) int {
+	if len(args) < 1 || !idRe.MatchString(args[0]) {
+		fmt.Fprintln(os.Stderr, "uso: apikey <id> [scope...]   (id: minúsculas, dígitos, . _ -)")
+		return 2
+	}
+	key, hash, err := auth.GenerateAPIKey()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	fmt.Fprintln(os.Stderr, "API key (se muestra UNA sola vez; no la guardes en el repo):")
+	fmt.Fprintln(os.Stderr, "  "+key)
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Entrada para API_KEYS (solo el hash):")
+	fmt.Printf("  - id: %s\n    sha256: %s\n    scopes: [%s]\n", args[0], hash, strings.Join(args[1:], ", "))
+	return 0
+}

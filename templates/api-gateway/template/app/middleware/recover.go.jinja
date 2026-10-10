@@ -1,0 +1,33 @@
+package middleware
+
+import (
+	"log/slog"
+	"net/http"
+	"runtime/debug"
+
+	"{{ module_path }}/app/apierror"
+	"{{ module_path }}/app/reqctx"
+)
+
+// Recover convierte un panic en un 500 genérico (con request_id); el stack
+// va SOLO al log.
+func Recover(log *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if v := recover(); v != nil {
+					if v == http.ErrAbortHandler {
+						panic(v)
+					}
+					log.ErrorContext(r.Context(), "panic",
+						slog.String("request_id", reqctx.RequestID(r.Context())),
+						slog.Any("panic", v),
+						slog.String("stack", string(debug.Stack())),
+					)
+					apierror.Write(w, r, http.StatusInternalServerError, "INTERNAL", "error interno")
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	}
+}

@@ -1,0 +1,153 @@
+package gateway
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"mime"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+
+	"{{ module_path }}/app/apierror"
+	"{{ module_path }}/app/auth"
+	"{{ module_path }}/app/ratelimit"
+	"{{ module_path }}/app/reqctx"
+	"{{ module_path }}/app/routes"
+)
+
+// routeMiddleware corre dentro del mux de grpc-gateway, cuando ya se sabe qué
+// patrón matcheó (runtime.HTTPPattern) y por lo tanto qué método gRPC atiende
+// el request. Aplica la política de routes.yaml, en este orden:
+//
+//	ruta declarada -> body por Content-Length -> auth -> roles -> rate limit
+//	-> body real + Content-Type -> deadline de la llamada gRPC
+func (g *gw) routeMiddleware(next runtime.HandlerFunc) runtime.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request, pathParams map[string]string) {
+		ctx := r.Context()
+		info := reqctx.From(ctx)
+		if info == nil { // siempre viene de middleware.Context; por las dudas
+			info = &reqctx.Info{}
+			ctx = reqctx.With(ctx, info)
+		}
+
+		// 1. Ruta declarada. Sin entrada en routes.yaml (o deny: true) -> 404,
+		//    igual que una ruta que no existe: no se revela nada.
+		var binding routes.Binding
+		var pol *routes.Policy
+		if pat, ok := runtime.HTTPPattern(ctx); ok {
+			if b, ok := g.byKey[r.Method+" "+pat.String()]; ok {
+				binding, pol = b, g.routes.Policy(b.Method)
+			}
+		}
+		if pol == nil || pol.Deny {
+			notFound(w, r)
+			return
+		}
+		info.Method = pol.Method
+		if pol.Sunset != "" {
+			w.Header().Set("Deprecation", "true")
+			if t, err := time.Parse("2006-01-02", pol.Sunset); err == nil {
+				w.Header().Set("Sunset", t.UTC().Format(http.TimeFormat))
+			}
+		}
+
+		// 2. Body declarado demasiado grande: se corta antes de leer nada.
+		if r.ContentLength > pol.MaxBodyBytes {
+			apierror.Write(w, r, http.StatusRequestEntityTooLarge, apierror.CodePayloadTooLarge, "el cuerpo supera el máximo permitido")
+			return
+		}
+
+		// 3. Autenticación. En rutas públicas una credencial válida se usa
+		//    (identidad para logs/servicio) y una inválida se ignora.
+		id, err := g.auth.Authenticate(r)
+		switch {
+		case err == nil:
+			info.Identity = id
+		case pol.Public:
+		case errors.Is(err, auth.ErrUnavailable):
+			g.log.WarnContext(ctx, "auth no disponible", slog.String("request_id", info.RequestID), slog.String("error", err.Error()))
+			apierror.Write(w, r, http.StatusServiceUnavailable, "UNAVAILABLE", "no se pudo verificar la credencial; reintentá en unos segundos")
+			return
+		default:
+			// El motivo va al log en debug (nunca el token); al cliente, genérico.
+			g.log.DebugContext(ctx, "credencial rechazada", slog.String("request_id", info.RequestID), slog.String("motivo", err.Error()))
+			if g.challenge != "" {
+				w.Header().Set("WWW-Authenticate", g.challenge)
+			}
+			apierror.Write(w, r, http.StatusUnauthorized, "UNAUTHENTICATED", "credencial ausente o inválida")
+			return
+		}
+
+		// 4. Autorización por ruta.
+		if !pol.Public && !info.Identity.HasAnyRole(pol.Roles) {
+			apierror.Write(w, r, http.StatusForbidden, "PERMISSION_DENIED", "no tenés permiso para esta operación")
+			return
+		}
+
+		// 5. Rate limit: por usuario si hay identidad; si no, por IP. Las rutas
+		//    con rate_limit propio tienen su bucket; el resto comparte uno.
+		key := "ip:" + info.ClientIP
+		if info.Identity != nil {
+			key = "sub:" + info.Identity.Subject
+		}
+		bucket := "*"
+		if pol.OwnRateLimit {
+			bucket = pol.Method
+		}
+		d := g.limiter.Allow(bucket+"|"+key, ratelimit.Rate(pol.RateLimit))
+		if d.Limit > 0 {
+			h := w.Header()
+			h.Set("RateLimit-Limit", strconv.Itoa(d.Limit))
+			h.Set("RateLimit-Remaining", strconv.Itoa(d.Remaining))
+			h.Set("RateLimit-Reset", strconv.Itoa(ceilSeconds(d.Reset)))
+		}
+		if !d.Allowed {
+			w.Header().Set("Retry-After", strconv.Itoa(max(1, ceilSeconds(d.RetryAfter))))
+			apierror.Write(w, r, http.StatusTooManyRequests, "RESOURCE_EXHAUSTED", "demasiados requests; reintentá más tarde")
+			return
+		}
+
+		// 6. Body real (chunked o con Content-Length mentiroso) con el mismo
+		//    límite, y Content-Type estricto si la ruta lleva body.
+		if r.Body != nil && r.Body != http.NoBody {
+			data, err := io.ReadAll(io.LimitReader(r.Body, pol.MaxBodyBytes+1))
+			if err != nil {
+				apierror.Write(w, r, http.StatusBadRequest, "INVALID_ARGUMENT", "no se pudo leer el cuerpo")
+				return
+			}
+			if int64(len(data)) > pol.MaxBodyBytes {
+				apierror.Write(w, r, http.StatusRequestEntityTooLarge, apierror.CodePayloadTooLarge, "el cuerpo supera el máximo permitido")
+				return
+			}
+			if len(data) > 0 && binding.Body != "" && !isJSON(r.Header.Get("Content-Type")) {
+				apierror.Write(w, r, http.StatusUnsupportedMediaType, apierror.CodeUnsupportedMediaType, "Content-Type tiene que ser application/json")
+				return
+			}
+			r.Body = io.NopCloser(bytes.NewReader(data))
+			r.ContentLength = int64(len(data))
+		}
+
+		// 7. Deadline de la llamada gRPC (se propaga al servicio).
+		ctx, cancel := context.WithTimeout(ctx, pol.Timeout)
+		defer cancel()
+		next(w, r.WithContext(ctx), pathParams)
+	}
+}
+
+func isJSON(ct string) bool {
+	mt, _, err := mime.ParseMediaType(ct)
+	return err == nil && mt == "application/json"
+}
+
+func ceilSeconds(d time.Duration) int {
+	return int((d + time.Second - 1) / time.Second)
+}
+
+func notFound(w http.ResponseWriter, r *http.Request) {
+	apierror.Write(w, r, http.StatusNotFound, "NOT_FOUND", "ruta no encontrada")
+}

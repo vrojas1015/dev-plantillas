@@ -1,0 +1,235 @@
+# =============================================================================
+# Plantilla Copier: API gateway (REST -> gRPC con grpc-gateway)
+# =============================================================================
+# Ver README.md (al lado de este archivo) para generar/actualizar proyectos.
+# Todo lo que vive en template/ es el contenido del proyecto generado; lo que
+# está acá afuera (este archivo, README.md) no se copia.
+# Diseño y criterios de seguridad: docs/05-api-gateway.md del repo de plantillas.
+# =============================================================================
+
+_min_copier_version: "9.0.0"
+_subdirectory: template
+_answers_file: .copier-answers.yml
+_templates_suffix: .jinja
+
+_message_after_copy: |
+  Gateway {{ repo_name }} generado (auth: {{ auth }}).
+
+  Siguientes pasos:
+    1. cd {{ _copier_conf.dst_path }}
+    2. go mod tidy && go build ./... && go vet ./... && go test ./...
+    3. git init && git add .{% if deploy_target == 'cloud-run' %} && git add --chmod=+x scripts/*.sh{% endif %}
+       git commit -m "Scaffold inicial desde api-gateway"
+    4. cp .env.example .env.dev; make run  (o make up con docker compose)
+    5. Rutas: routes.yaml (denegar por defecto). Auth: docs/auth.md.
+  {%- if deploy_target == 'cloud-run' %}
+    6. Infra de GCP y CI/CD (una sola vez): docs/ci-cd-setup.md
+  {%- elif deploy_target == 'coolify' %}
+    6. Recurso en Coolify y CI/CD (una sola vez): docs/deploy.md
+  {%- else %}
+    6. Sin destino de deploy: la CI corre tests, govulncheck y Trivy. Para
+       elegir uno: copier update --data deploy_target=<cloud-run|coolify>
+  {%- endif %}
+
+# -----------------------------------------------------------------------------
+# Preguntas
+# -----------------------------------------------------------------------------
+
+repo_name:
+  type: str
+  help: "Nombre del repo y del servicio del gateway"
+  default: api-gateway
+  validator: >-
+    {% if not (repo_name | regex_search('^[a-z][a-z0-9-]*[a-z0-9]$')) %}
+    Solo minúsculas, dígitos y guiones; debe empezar con letra y no terminar en guion.
+    {% elif repo_name | length > 27 %}
+    Máximo 27 caracteres: el service account "<nombre>-sa" no puede pasar de 30.
+    {% endif %}
+
+service_description:
+  type: str
+  help: "Descripción de una línea (va a CLAUDE.md; se puede completar después)"
+  default: "Puerta pública REST de la plataforma: traduce a gRPC y concentra auth, autorización por ruta y límites."
+
+ci_provider:
+  type: str
+  help: "Proveedor de CI/CD"
+  choices:
+    GitLab CI: gitlab
+    GitHub Actions: github
+  default: gitlab
+
+module_path:
+  type: str
+  help: "Module path de Go (ej. gitlab.com/mi-org/api-gateway)"
+  default: >-
+    {% if ci_provider == 'github' %}github.com{% else %}gitlab.com{% endif %}/mi-org/{{ repo_name }}
+  validator: >-
+    {% if not (module_path | regex_search('^[a-z0-9.-]+\.[a-z]+(/[A-Za-z0-9._~-]+)+$')) %}
+    Module path inválido (esperado host/ruta, ej. gitlab.com/mi-org/{{ repo_name }}).
+    {% endif %}
+
+http_port:
+  type: int
+  help: "Puerto HTTP del gateway (HTTP_PORT del contenedor)"
+  default: 8080
+  validator: >-
+    {% if http_port < 1024 or http_port > 65535 %}El puerto debe estar entre 1024 y 65535.{% endif %}
+
+go_version:
+  type: str
+  help: "Versión de Go (go.mod, imagen de build y CI). grpc-gateway v2.31 exige >= 1.26"
+  default: "1.26.9"
+  validator: >-
+    {% if not (go_version | regex_search('^1\.[0-9]+\.[0-9]+$')) %}Formato esperado: 1.X.Y
+    {% elif (go_version.split('.')[1] | int) < 26 %}grpc-gateway v2.31 exige Go 1.26 o más nuevo.{% endif %}
+
+protos_module:
+  type: str
+  help: >-
+    Módulo Go del repo de protos (plantilla `protos` con http_gateway=true; ej.
+    gitlab.com/mi-org/protos). Vacío = el gateway usa solo el proto de ejemplo local.
+  default: ""
+
+protos_version:
+  type: str
+  help: "Versión del módulo de protos (ej. v0.1.0); se usa en la doc y en el comando go get"
+  default: "latest"
+  when: "{{ protos_module != '' }}"
+
+auth:
+  type: str
+  help: "Autenticación de los clientes (se puede cambiar con copier update --data auth=...)"
+  choices:
+    "Firebase Auth (ID tokens de securetoken.google.com)": firebase
+    "OIDC genérico (discovery + JWKS: Auth0, Keycloak, Google, Entra...)": oidc
+    "API keys (máquina a máquina; guardadas como hash SHA-256)": api-key
+    "Ninguna (todas las rutas públicas; solo demos o APIs abiertas)": ninguno
+  default: firebase
+
+firebase_project:
+  type: str
+  help: "ID del proyecto de Firebase (default de FIREBASE_PROJECT_ID; cada entorno lo puede pisar)"
+  default: "mi-proyecto-firebase"
+  when: "{{ auth == 'firebase' }}"
+  validator: >-
+    {% if not (firebase_project | regex_search('^[a-z][a-z0-9-]{4,28}[a-z0-9]$')) %}
+    ID de proyecto inválido.
+    {% endif %}
+
+oidc_issuer:
+  type: str
+  help: "Issuer OIDC (https; el gateway lee <issuer>/.well-known/openid-configuration)"
+  default: "https://auth.ejemplo.com/"
+  when: "{{ auth == 'oidc' }}"
+  validator: >-
+    {% if not (oidc_issuer | regex_search('^https://[^\s/]+')) %}El issuer tiene que ser una URL https.{% endif %}
+
+oidc_audience:
+  type: str
+  help: "Audience (aud) que deben traer los tokens (el client_id o el identificador de la API)"
+  default: "{{ repo_name }}"
+  when: "{{ auth == 'oidc' }}"
+
+deploy_target:
+  type: str
+  help: >-
+    Dónde se despliega. Mismas variables de entorno en todos los destinos:
+    pasar de coolify a cloud-run es `copier update --data deploy_target=cloud-run`
+  choices:
+    "Google Cloud Run (Cloud Build + WIF; upstreams con ID token)": cloud-run
+    "Coolify v4 en un VPS (imagen en el registry del CI + API de Coolify)": coolify
+    "Ninguno (CI con tests, govulncheck y Trivy)": ninguno
+  default: cloud-run
+
+gcp_project:
+  type: str
+  help: "ID del proyecto GCP (no el número). Default de scripts/CI; CI puede sobreescribirlo con la variable GCP_PROJECT"
+  default: "mi-proyecto-gcp"
+  when: "{{ deploy_target == 'cloud-run' }}"
+  validator: >-
+    {% if not (gcp_project | regex_search('^[a-z][a-z0-9-]{4,28}[a-z0-9]$')) %}
+    ID de proyecto GCP inválido.
+    {% endif %}
+
+gcp_region:
+  type: str
+  help: "Región de GCP (Cloud Run + Artifact Registry)"
+  default: us-central1
+  when: "{{ deploy_target == 'cloud-run' }}"
+
+artifact_repo:
+  type: str
+  help: "Repositorio de Artifact Registry para las imágenes"
+  default: "{{ repo_name }}"
+  when: "{{ deploy_target == 'cloud-run' }}"
+
+# rate_limit_store NO se pregunta en la fase 1: el único store es `memory`
+# (token bucket por instancia). La fase 3 agrega la pregunta con `redis`
+# (default memory, así `copier update` no cambia nada a quien no la elija).
+# Ver README.md, "Rate limit".
+
+# -----------------------------------------------------------------------------
+# Valores derivados (no se preguntan ni se guardan; se recalculan en cada
+# copy/update). Flags cortos para nombres de archivo condicionales: Windows
+# corta las rutas en 260 caracteres.
+# -----------------------------------------------------------------------------
+
+image_repo_default:
+  type: str
+  default: >-
+    {%- set host, path = module_path.split('/', 1) -%}
+    {%- if ci_provider == 'github' -%}ghcr.io/{{ path | lower }}
+    {%- else -%}registry.{{ host }}/{{ path | lower }}{%- endif -%}
+  when: false
+
+is_cr:
+  type: bool
+  default: "{{ deploy_target == 'cloud-run' }}"
+  when: false
+
+is_cy:
+  type: bool
+  default: "{{ deploy_target == 'coolify' }}"
+  when: false
+
+has_cd:
+  type: bool
+  default: "{{ deploy_target != 'ninguno' }}"
+  when: false
+
+ci_gl:
+  type: bool
+  default: "{{ ci_provider == 'gitlab' }}"
+  when: false
+
+ci_gh:
+  type: bool
+  default: "{{ ci_provider == 'github' }}"
+  when: false
+
+# auth: JWT (firebase u oidc), API key, ninguna.
+a_fb:
+  type: bool
+  default: "{{ auth == 'firebase' }}"
+  when: false
+
+a_oidc:
+  type: bool
+  default: "{{ auth == 'oidc' }}"
+  when: false
+
+a_jwt:
+  type: bool
+  default: "{{ auth in ['firebase', 'oidc'] }}"
+  when: false
+
+a_key:
+  type: bool
+  default: "{{ auth == 'api-key' }}"
+  when: false
+
+a_none:
+  type: bool
+  default: "{{ auth == 'ninguno' }}"
+  when: false

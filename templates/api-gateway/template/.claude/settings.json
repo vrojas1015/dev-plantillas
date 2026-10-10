@@ -1,0 +1,53 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "Bash(go run ./cli healthcheck:*)",
+      "Bash(go mod tidy:*)",
+      "Bash(go mod vendor:*)",
+      "Bash(go mod download:*)",
+      "Bash(go mod verify:*)",
+      "Bash(go list:*)",
+      "Bash(go doc:*)",
+      "Bash(go env:*)",
+      "Bash(go version:*)",
+      "Bash(gofmt:*)",
+      "Bash(golangci-lint run:*)",
+      "Bash(buf lint:*)",
+      "Bash(buf generate:*)",
+      "Bash(make run:*)",
+      "Bash(make build:*)",
+      "Bash(make test:*)",
+      "Bash(make test-race:*)",
+      "Bash(make vet:*)",
+      "Bash(make fmt:*)",
+      "Bash(make lint:*)",
+      "Bash(make vuln:*)",
+      "Bash(make tidy:*)",
+      "Bash(make proto:*)",
+      "Bash(make help:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git tag --list:*)",
+      "Bash(git describe:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git ls-files:*)",
+      "Bash(git blame:*)",
+      "Bash(ls:*)",
+      "Bash(curl -s localhost:*)",
+      "Bash(curl -si localhost:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.dev)",
+      "Read(./api-keys*.yaml)",
+      "Bash(go run ./cli apikey:*)",
+      "Bash(make apikey:*)"
+    ]
+  }
+}

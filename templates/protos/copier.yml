@@ -79,6 +79,15 @@ module_path:
     Module path inválido (esperado host/ruta, ej. gitlab.com/mi-org/protos).
     {% endif %}
 
+http_gateway:
+  type: bool
+  help: >-
+    Rutas REST para el api-gateway: anotaciones google.api.http en el ejemplo,
+    dependencia buf.build/googleapis/googleapis y generación Go de grpc-gateway
+    (*.pb.gw.go) + OpenAPI (gen/openapi). Solo con Go.
+  default: "{{ 'go' in languages }}"
+  when: "{{ 'go' in languages }}"
+
 python_package:
   type: str
   help: "Nombre del paquete Python (import y distribución; ej. mi_org_protos)"
@@ -140,6 +149,12 @@ first_package:
 l_go:
   type: bool
   default: "{{ 'go' in languages }}"
+  when: false
+
+# http_gateway efectivo (solo tiene sentido con Go: el gateway es Go).
+l_gw:
+  type: bool
+  default: "{{ http_gateway and 'go' in languages }}"
   when: false
 
 l_py:

@@ -1,0 +1,59 @@
+# =============================================================================
+# Desarrollo local — {{ repo_name }}
+# =============================================================================
+#
+#   make up      # go mod vendor + docker compose up -d --build --wait
+#   make down
+#
+# El Dockerfile compila con -mod=vendor (offline): sin `go mod vendor` previo
+# el build falla. `make up` lo hace solo.
+#
+# Upstreams: por default el gateway busca los servicios en la máquina host
+# (host.docker.internal), p. ej. un go-grpc-service levantado con su propio
+# `make up` en el puerto 5000. Para otra dirección: UPSTREAM_ITEMS_ADDR=... make up
+#
+# Mismas variables de entorno que en {% if is_cr %}Cloud Run{% elif is_cy %}Coolify{% else %}cualquier destino{% endif %}; solo cambian los valores
+# (lista completa: .env.example).
+# =============================================================================
+
+name: {{ repo_name }}
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: {{ repo_name }}:local
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      APP_ENV: development
+      SERVICE_ENV: dev
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+      LOG_FORMAT: json
+      HTTP_PORT: "{{ http_port }}"
+      UPSTREAM_ITEMS_ADDR: ${UPSTREAM_ITEMS_ADDR:-host.docker.internal:5000}
+      UPSTREAM_TLS: "false"
+      UPSTREAM_AUTH: none
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:4200}
+      TRUSTED_PROXY_HOPS: "0"
+      OPENAPI_ENABLED: "true"
+{%- if a_fb %}
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-{{ firebase_project }}}
+{%- elif a_oidc %}
+      OIDC_ISSUER: ${OIDC_ISSUER:-{{ oidc_issuer }}}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-{{ oidc_audience }}}
+{%- elif a_key %}
+      # Contenido YAML con los hashes (ver .env.example). Desde el shell:
+      #   API_KEYS="$(cat api-keys.local.yaml)" make up
+      API_KEYS: ${API_KEYS:?Definí API_KEYS (ver .env.example)}
+{%- endif %}
+    ports:
+      - "${GATEWAY_PORT:-{{ http_port }}}:{{ http_port }}"
+    healthcheck:
+      # Imagen distroless: el binario trae su propio chequeo de /healthz.
+      test: ["CMD", "/app/{{ repo_name }}", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s

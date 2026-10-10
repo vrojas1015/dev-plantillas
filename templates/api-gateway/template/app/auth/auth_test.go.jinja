@@ -1,0 +1,271 @@
+package auth_test
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"encoding/base64"
+	"errors"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/go-jose/go-jose/v4"
+
+	"{{ module_path }}/app/auth"
+	"{{ module_path }}/app/auth/authtest"
+)
+
+const aud = "api-test"
+
+func newOIDC(t *testing.T, is *authtest.Issuer, now func() time.Time) *auth.JWTVerifier {
+	t.Helper()
+	v, err := auth.NewOIDC(is.Issuer(), aud, auth.OIDCOptions{
+		JWTOptions:          auth.JWTOptions{Leeway: 30 * time.Second, Now: now},
+		AllowInsecureIssuer: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func verify(v *auth.JWTVerifier, tok string) (*auth.Identity, error) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Header.Set("Authorization", "Bearer "+tok)
+	return v.Authenticate(r)
+}
+
+func TestOIDCTokensValidos(t *testing.T) {
+	is := authtest.NewIssuer(t)
+	v := newOIDC(t, is, nil)
+	for _, es := range []bool{false, true} {
+		id, err := verify(v, is.Sign(is.Claims("user-1", aud, "items.read", "admin"), es))
+		if err != nil {
+			t.Fatalf("es=%v: %v", es, err)
+		}
+		if id.Subject != "user-1" || !id.HasAnyRole([]string{"admin"}) || id.HasAnyRole([]string{"otro"}) {
+			t.Fatalf("identidad inesperada: %+v", id)
+		}
+	}
+}
+
+func TestOIDCTokensInvalidos(t *testing.T) {
+	is := authtest.NewIssuer(t)
+	v := newOIDC(t, is, nil)
+	now := time.Now()
+
+	mod := func(f func(c map[string]any)) string {
+		c := is.Claims("user-1", aud)
+		f(c)
+		return is.Sign(c, false)
+	}
+	hsKey := []byte("clave-simetrica-de-32-bytes-....")
+	otherRSA, _ := rsa.GenerateKey(rand.Reader, 2048)
+
+	cases := map[string]string{
+		"alg none": unsignedToken(is.Claims("user-1", aud)),
+		"HS256": authtest.SignWith(jose.SigningKey{Algorithm: jose.HS256, Key: hsKey},
+			is.Claims("user-1", aud)),
+		"firma de otra clave con kid conocido": authtest.SignWith(jose.SigningKey{Algorithm: jose.RS256,
+			Key: jose.JSONWebKey{Key: otherRSA, KeyID: is.JWKS().Keys[0].KeyID}}, is.Claims("user-1", aud)),
+		"vencido fuera de tolerancia": mod(func(c map[string]any) { c["exp"] = now.Add(-2 * time.Minute).Unix() }),
+		"nbf futuro":                  mod(func(c map[string]any) { c["nbf"] = now.Add(2 * time.Minute).Unix() }),
+		"iat futuro":                  mod(func(c map[string]any) { c["iat"] = now.Add(2 * time.Minute).Unix() }),
+		"sin exp":                     mod(func(c map[string]any) { delete(c, "exp") }),
+		"iss distinto":                mod(func(c map[string]any) { c["iss"] = "https://otro" }),
+		"aud distinto":                mod(func(c map[string]any) { c["aud"] = "otra-api" }),
+		"sin sub":                     mod(func(c map[string]any) { delete(c, "sub") }),
+		"basura":                      "no.es.un.jwt",
+	}
+	for name, tok := range cases {
+		t.Run(name, func(t *testing.T) {
+			if _, err := verify(v, tok); !errors.Is(err, auth.ErrInvalidCredentials) {
+				t.Fatalf("esperaba ErrInvalidCredentials, vino %v", err)
+			}
+		})
+	}
+
+	t.Run("vencido dentro de la tolerancia", func(t *testing.T) {
+		tok := mod(func(c map[string]any) { c["exp"] = now.Add(-10 * time.Second).Unix() })
+		if _, err := verify(v, tok); err != nil {
+			t.Fatalf("10 s de desfasaje tenía que aceptarse: %v", err)
+		}
+	})
+	t.Run("sin header", func(t *testing.T) {
+		if _, err := v.Authenticate(httptest.NewRequest("GET", "/", nil)); !errors.Is(err, auth.ErrNoCredentials) {
+			t.Fatalf("esperaba ErrNoCredentials, vino %v", err)
+		}
+	})
+	t.Run("esquema distinto de Bearer", func(t *testing.T) {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.Header.Set("Authorization", "Basic dXNlcjpwYXNz")
+		if _, err := v.Authenticate(r); !errors.Is(err, auth.ErrInvalidCredentials) {
+			t.Fatalf("esperaba ErrInvalidCredentials, vino %v", err)
+		}
+	})
+}
+
+func unsignedToken(claims map[string]any) string {
+	enc := base64.RawURLEncoding
+	body := `{"sub":"user-1","aud":"` + aud + `","iss":"` + claims["iss"].(string) + `","exp":9999999999}`
+	return enc.EncodeToString([]byte(`{"alg":"none","typ":"JWT"}`)) + "." + enc.EncodeToString([]byte(body)) + "."
+}
+
+func TestJWKSRotacionYRefrescoAcotado(t *testing.T) {
+	is := authtest.NewIssuer(t)
+	clock := time.Now()
+	v := newOIDC(t, is, func() time.Time { return clock })
+
+	if _, err := verify(v, is.Token("u", aud)); err != nil {
+		t.Fatal(err)
+	}
+	hits := is.JWKSHits.Load()
+
+	// Un kid inventado dentro de los 30 s no vuelve a bajar el JWKS.
+	fake := strings.Split(is.Token("u", aud), ".")
+	fake[0] = base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","kid":"inventado","typ":"JWT"}`))
+	for i := 0; i < 5; i++ {
+		if _, err := verify(v, strings.Join(fake, ".")); !errors.Is(err, auth.ErrInvalidCredentials) {
+			t.Fatalf("kid inventado: esperaba ErrInvalidCredentials, vino %v", err)
+		}
+	}
+	if got := is.JWKSHits.Load(); got != hits {
+		t.Fatalf("el JWKS se bajó %d veces más por kids inventados", got-hits)
+	}
+
+	// Rotación del IdP: kid nuevo -> pasados 30 s se refresca y valida.
+	is.Rotate()
+	clock = clock.Add(31 * time.Second)
+	if _, err := verify(v, is.Token("u", aud)); err != nil {
+		t.Fatalf("token con kid nuevo después de rotar: %v", err)
+	}
+	if is.JWKSHits.Load() != hits+1 {
+		t.Fatal("esperaba exactamente un refresco del JWKS")
+	}
+}
+
+func TestJWKSCaido(t *testing.T) {
+	is := authtest.NewIssuer(t)
+	is.JWKSFailed.Store(true)
+	v := newOIDC(t, is, nil)
+	if _, err := verify(v, is.Token("u", aud)); !errors.Is(err, auth.ErrUnavailable) {
+		t.Fatalf("esperaba ErrUnavailable, vino %v", err)
+	}
+}
+
+func TestOIDCConfig(t *testing.T) {
+	if _, err := auth.NewOIDC("http://idp.local", aud, auth.OIDCOptions{}); err == nil {
+		t.Fatal("un issuer http sin AllowInsecureIssuer tenía que rechazarse")
+	}
+	if _, err := auth.NewOIDC("https://idp.local", aud, auth.OIDCOptions{JWTOptions: auth.JWTOptions{Leeway: 2 * time.Minute}}); err == nil {
+		t.Fatal("leeway > 60 s tenía que rechazarse")
+	}
+
+	// Discovery con un issuer distinto al configurado: no se confía en él.
+	is := authtest.NewIssuer(t)
+	is.IssuerOverride = "https://impostor.example"
+	v, err := auth.NewOIDC(is.Server.URL, aud, auth.OIDCOptions{AllowInsecureIssuer: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := is.Claims("u", aud)
+	c["iss"] = is.Server.URL
+	if _, err := verify(v, is.Sign(c, false)); !errors.Is(err, auth.ErrUnavailable) {
+		t.Fatalf("esperaba ErrUnavailable por issuer del discovery distinto, vino %v", err)
+	}
+}
+
+func TestRolesClaim(t *testing.T) {
+	is := authtest.NewIssuer(t)
+	v, err := auth.NewOIDC(is.Issuer(), aud, auth.OIDCOptions{
+		JWTOptions:          auth.JWTOptions{RolesClaim: "realm_access.roles"},
+		AllowInsecureIssuer: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := is.Claims("u", aud)
+	c["realm_access"] = map[string]any{"roles": []string{"a", "b"}}
+	id, err := verify(v, is.Sign(c, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !id.HasAnyRole([]string{"b"}) {
+		t.Fatalf("roles = %v", id.Roles)
+	}
+}
+
+func TestFirebase(t *testing.T) {
+	const project = "proyecto-test"
+	is := authtest.NewIssuer(t)
+	is.IssuerOverride = "https://securetoken.google.com/" + project
+	v, err := auth.NewFirebase(project, auth.FirebaseOptions{JWKSURL: is.JWKSURL()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := verify(v, is.Token("uid-1", project, "admin")); err != nil {
+		t.Fatalf("token de Firebase válido: %v", err)
+	}
+	if _, err := verify(v, is.Token("uid-1", "otro-proyecto")); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("aud de otro proyecto: esperaba ErrInvalidCredentials, vino %v", err)
+	}
+	c := is.Claims("uid-1", project)
+	c["auth_time"] = time.Now().Add(time.Hour).Unix()
+	if _, err := verify(v, is.Sign(c, false)); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("auth_time futuro: esperaba ErrInvalidCredentials, vino %v", err)
+	}
+	if _, err := auth.NewFirebase("", auth.FirebaseOptions{}); err == nil {
+		t.Fatal("sin proyecto tenía que fallar")
+	}
+}
+
+func TestAPIKeys(t *testing.T) {
+	key, hash, err := auth.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(key, auth.APIKeyPrefix) || len(hash) != 64 {
+		t.Fatalf("key/hash con formato inesperado: %q %q", key, hash)
+	}
+	old, oldHash, _ := auth.GenerateAPIKey()
+	cfg := "keys:\n" +
+		"  - id: erp\n    sha256: " + hash + "\n    scopes: [items.read]\n" +
+		"  - id: erp-vieja\n    sha256: " + oldHash + "\n    scopes: [items.read]\n    expires_at: 2020-01-01\n"
+	store, err := auth.ParseAPIKeys([]byte(cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := func(k string) (*auth.Identity, error) {
+		r := httptest.NewRequest("GET", "/", nil)
+		if k != "" {
+			r.Header.Set(auth.APIKeyHeader, k)
+		}
+		return store.Authenticate(r)
+	}
+	id, err := req(key)
+	if err != nil || id.Subject != "apikey:erp" || !id.HasAnyRole([]string{"items.read"}) {
+		t.Fatalf("key válida: %+v %v", id, err)
+	}
+	if _, err := req(key + "x"); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("key alterada: %v", err)
+	}
+	if _, err := req(old); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("key vencida: %v", err)
+	}
+	if _, err := req(""); !errors.Is(err, auth.ErrNoCredentials) {
+		t.Fatalf("sin key: %v", err)
+	}
+
+	for name, bad := range map[string]string{
+		"campo desconocido": "keys:\n  - id: a\n    sha256: " + hash + "\n    scope: [x]\n",
+		"hash corto":        "keys:\n  - id: a\n    sha256: abc\n",
+		"hash repetido":     "keys:\n  - id: a\n    sha256: " + hash + "\n  - id: b\n    sha256: " + hash + "\n",
+		"id inválido":       "keys:\n  - id: 'A B'\n    sha256: " + hash + "\n",
+	} {
+		if _, err := auth.ParseAPIKeys([]byte(bad)); err == nil {
+			t.Errorf("%s: tenía que fallar", name)
+		}
+	}
+}

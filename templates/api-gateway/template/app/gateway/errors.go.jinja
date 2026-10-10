@@ -1,0 +1,121 @@
+package gateway
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strings"
+	"unicode"
+
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"{{ module_path }}/app/apierror"
+	"{{ module_path }}/app/reqctx"
+)
+
+// clientCodes: códigos cuyo mensaje es para el cliente (errores de dominio
+// de los servicios: validación, no encontrado, conflicto...). El resto sale
+// con un mensaje genérico: nunca se reenvía el texto de un error interno.
+var clientCodes = map[codes.Code]bool{
+	codes.InvalidArgument:    true,
+	codes.NotFound:           true,
+	codes.AlreadyExists:      true,
+	codes.PermissionDenied:   true,
+	codes.Unauthenticated:    true,
+	codes.FailedPrecondition: true,
+	codes.OutOfRange:         true,
+	codes.ResourceExhausted:  true,
+	codes.Aborted:            true,
+}
+
+var genericMessages = map[codes.Code]string{
+	codes.Canceled:         "request cancelado",
+	codes.DeadlineExceeded: "el servicio tardó demasiado en responder",
+	codes.Unimplemented:    "operación no disponible",
+	codes.Unavailable:      "servicio no disponible; reintentá en unos segundos",
+}
+
+const maxClientMessage = 300
+
+// errorHandler: errores de la llamada gRPC (o de grpc-gateway al armar el
+// request) -> formato único. Los 5xx van al log con el detalle real y el
+// request_id; al cliente, mensaje genérico + request_id.
+func (g *gw) errorHandler(ctx context.Context, _ *runtime.ServeMux, _ runtime.Marshaler, w http.ResponseWriter, r *http.Request, err error) {
+	httpStatus := 0
+	var hse *runtime.HTTPStatusError
+	if errors.As(err, &hse) {
+		httpStatus, err = hse.HTTPStatus, hse.Err
+	}
+	st := status.Convert(err)
+	code := st.Code()
+	if httpStatus == 0 {
+		httpStatus = runtime.HTTPStatusFromCode(code)
+	}
+
+	msg := genericMessages[code]
+	if clientCodes[code] && httpStatus < 500 {
+		msg = st.Message()
+		if len(msg) > maxClientMessage {
+			msg = msg[:maxClientMessage]
+		}
+	}
+	if msg == "" {
+		msg = "error interno"
+	}
+
+	if httpStatus >= 500 {
+		g.log.ErrorContext(ctx, "error de upstream",
+			slog.String("request_id", reqctx.RequestID(r.Context())),
+			slog.String("route", routeOf(r)),
+			slog.String("grpc_code", code.String()),
+			slog.String("grpc_message", st.Message()),
+		)
+	}
+	apierror.Write(w, r, httpStatus, codeName(code), msg)
+}
+
+// streamErrorHandler: errores a mitad de un server streaming.
+func (g *gw) streamErrorHandler(ctx context.Context, err error) *status.Status {
+	st := status.Convert(err)
+	if clientCodes[st.Code()] {
+		return st
+	}
+	g.log.ErrorContext(ctx, "error en stream", slog.String("request_id", reqctx.RequestID(ctx)),
+		slog.String("grpc_code", st.Code().String()), slog.String("grpc_message", st.Message()))
+	return status.New(st.Code(), "error interno")
+}
+
+// routingErrorHandler: sin patrón que matchee. 405 sale como 404 para no
+// revelar qué rutas existen con otro verbo.
+func (g *gw) routingErrorHandler(_ context.Context, _ *runtime.ServeMux, _ runtime.Marshaler, w http.ResponseWriter, r *http.Request, httpStatus int) {
+	if httpStatus == http.StatusBadRequest {
+		apierror.Write(w, r, http.StatusBadRequest, "INVALID_ARGUMENT", "request inválido")
+		return
+	}
+	notFound(w, r)
+}
+
+func routeOf(r *http.Request) string {
+	if info := reqctx.From(r.Context()); info != nil {
+		return info.Method
+	}
+	return ""
+}
+
+// codeName: codes.PermissionDenied -> "PERMISSION_DENIED".
+func codeName(c codes.Code) string {
+	if c == codes.OK {
+		return "OK"
+	}
+	var sb strings.Builder
+	for i, ch := range c.String() {
+		if i > 0 && unicode.IsUpper(ch) {
+			sb.WriteByte('_')
+		}
+		sb.WriteRune(unicode.ToUpper(ch))
+	}
+	return sb.String()
+}

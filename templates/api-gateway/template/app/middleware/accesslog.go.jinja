@@ -1,0 +1,145 @@
+package middleware
+
+import (
+	"bufio"
+	"errors"
+	"log/slog"
+	"net"
+	"net/http"
+	"strings"
+	"time"
+
+	"{{ module_path }}/app/reqctx"
+)
+
+// AccessLog escribe una línea estructurada por request. Lo que NO se loguea
+// nunca: query string (puede traer tokens), cuerpos, ni cabeceras salvo las de
+// RedactHeaders (en nivel debug y con los valores sensibles tapados).
+func AccessLog(log *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			rec := &recorder{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(rec, r)
+
+			info := reqctx.From(r.Context())
+			attrs := []slog.Attr{
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.Int("status", rec.status),
+				slog.Int64("bytes", rec.bytes),
+				slog.Int64("duration_ms", time.Since(start).Milliseconds()),
+				slog.String("user_agent", truncate(r.UserAgent(), 200)),
+			}
+			if info != nil {
+				attrs = append(attrs,
+					slog.String("request_id", info.RequestID),
+					slog.String("client_ip", info.ClientIP),
+				)
+				if info.Method != "" {
+					attrs = append(attrs, slog.String("route", info.Method))
+				}
+				if info.Identity != nil {
+					attrs = append(attrs, slog.String("user_id", info.Identity.Subject))
+				}
+			}
+			if log.Enabled(r.Context(), slog.LevelDebug) {
+				attrs = append(attrs, slog.Any("headers", RedactHeaders(r.Header)))
+			}
+			level := slog.LevelInfo
+			if rec.status >= 500 {
+				level = slog.LevelError
+			}
+			log.LogAttrs(r.Context(), level, "http_request", attrs...)
+		})
+	}
+}
+
+// sensitiveHeaders se tapan siempre; además, cualquier cabecera cuyo nombre
+// contenga alguna de sensitiveWords.
+var sensitiveHeaders = map[string]bool{
+	"authorization":              true,
+	"proxy-authorization":        true,
+	"cookie":                     true,
+	"set-cookie":                 true,
+	"x-api-key":                  true,
+	"x-goog-iap-jwt-assertion":   true,
+	"x-serverless-authorization": true,
+}
+
+var sensitiveWords = []string{"token", "secret", "password", "session", "key", "auth", "credential", "signature"}
+
+// Redacted reemplaza a un dato sensible en los logs.
+const Redacted = "[REDACTED]"
+
+// RedactHeaders copia las cabeceras para loguearlas, tapando las sensibles.
+func RedactHeaders(h http.Header) map[string]string {
+	out := make(map[string]string, len(h))
+	for k, v := range h {
+		lk := strings.ToLower(k)
+		if isSensitive(lk) {
+			out[lk] = Redacted
+			continue
+		}
+		out[lk] = truncate(strings.Join(v, ", "), 200)
+	}
+	return out
+}
+
+func isSensitive(lk string) bool {
+	if sensitiveHeaders[lk] {
+		return true
+	}
+	for _, w := range sensitiveWords {
+		if strings.Contains(lk, w) {
+			return true
+		}
+	}
+	return false
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n] + "..."
+	}
+	return s
+}
+
+// recorder captura status y bytes sin romper Flush/Hijack (streaming).
+type recorder struct {
+	http.ResponseWriter
+	status      int
+	bytes       int64
+	wroteHeader bool
+}
+
+func (r *recorder) WriteHeader(code int) {
+	if !r.wroteHeader {
+		r.status = code
+		r.wroteHeader = true
+	}
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *recorder) Write(b []byte) (int, error) {
+	r.wroteHeader = true
+	n, err := r.ResponseWriter.Write(b)
+	r.bytes += int64(n)
+	return n, err
+}
+
+func (r *recorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (r *recorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if h, ok := r.ResponseWriter.(http.Hijacker); ok {
+		return h.Hijack()
+	}
+	return nil, nil, errors.New("hijack no soportado")
+}
+
+// Unwrap permite http.ResponseController.
+func (r *recorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }

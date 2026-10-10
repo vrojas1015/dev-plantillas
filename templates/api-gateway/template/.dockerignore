@@ -1,0 +1,40 @@
+# Control de versiones
+.git/
+.gitignore
+.github/
+.gitlab/
+.gitlab-ci.yml
+
+# Archivos de entorno y secretos (nunca dentro de la imagen)
+.env
+.env.*
+*.pem
+*.key
+api-keys*.yaml
+
+# IDEs / herramientas
+.idea/
+.vscode/
+.claude/
+
+# Documentación y miscelánea
+docs/
+*.md
+Makefile
+.copier-answers.yml
+
+# Tests (no hacen falta para construir la imagen)
+**/*_test.go
+
+# go.work es local del dev (ver `make workspace`) y rompe `-mod=vendor`.
+go.work
+go.work.sum
+
+# Artefactos locales
+bin/
+tmp/
+image.tar
+
+# OS
+.DS_Store
+Thumbs.db

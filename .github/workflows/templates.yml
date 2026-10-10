@@ -47,6 +47,38 @@ jobs:
       - name: verify.sh del plugin sobre el proyecto generado
         run: bash plugins/dev-agentes/skills/verificar/scripts/verify.sh "$RUNNER_TEMP/demo-service"
 
+  api-gateway:
+    name: api-gateway (${{ matrix.auth }}, ${{ matrix.ci }}, ${{ matrix.deploy }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { auth: firebase, ci: gitlab, deploy: cloud-run }
+          - { auth: oidc,     ci: github, deploy: coolify }
+          - { auth: api-key,  ci: gitlab, deploy: ninguno }
+          - { auth: ninguno,  ci: github, deploy: cloud-run }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install copier
+      - name: Generar
+        run: |
+          copier copy --defaults --trust             -d auth=${{ matrix.auth }} -d ci_provider=${{ matrix.ci }}             -d deploy_target=${{ matrix.deploy }}             templates/api-gateway "$RUNNER_TEMP/gw"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ runner.temp }}/gw/go.mod
+      - name: Build, vet, tests (incluye autorización por ruta) y govulncheck
+        working-directory: ${{ runner.temp }}/gw
+        run: |
+          go mod tidy -diff
+          go build ./...
+          go vet ./...
+          go test -count=1 ./...
+          test -z "$(gofmt -l .)"
+          go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
   angular-app:
     runs-on: ubuntu-latest
     strategy:

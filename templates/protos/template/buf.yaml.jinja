@@ -3,11 +3,18 @@
 version: v2
 modules:
   - path: proto
+{%- if l_gw %}
+# Dependencias de la BSR, fijadas en buf.lock (commitearlo; `buf dep update`
+# para subirlas). googleapis trae google/api/annotations.proto (google.api.http).
+deps:
+  - buf.build/googleapis/googleapis
+{%- else %}
 # Dependencias de la BSR (ej. googleapis para google/api/annotations.proto).
 # Al agregar una: `buf dep update` (genera buf.lock, commitealo) y ver el
 # comentario de `disable` en buf.gen.yaml.
 # deps:
 #   - buf.build/googleapis/googleapis
+{%- endif %}
 lint:
   use:
     - STANDARD

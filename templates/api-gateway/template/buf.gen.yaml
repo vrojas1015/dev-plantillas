@@ -1,0 +1,35 @@
+# `make proto` -> buf generate. Los plugins corren con `go run` (versiones
+# fijadas), así que solo hace falta tener buf instalado (+ internet la primera
+# vez, para bajar googleapis de la BSR según buf.lock).
+#
+# El código generado NO depende del module path (no lleva go_package): se
+# genera con un mapeo M que deja el paquete Go en gen/go/example/v1.
+version: v2
+managed:
+  enabled: true
+  disable:
+    # googleapis trae su propio go_package (google.golang.org/genproto/...).
+    - module: buf.build/googleapis/googleapis
+  override:
+    - file_option: go_package
+      path: example/v1/item.proto
+      value: example/v1;examplev1
+plugins:
+  - local: ["go", "run", "google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11"]
+    out: gen/go
+    opt: paths=source_relative
+  - local: ["go", "run", "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1"]
+    out: gen/go
+    opt: paths=source_relative
+  - local: ["go", "run", "github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@v2.31.0"]
+    out: gen/go
+    opt: paths=source_relative
+  # OpenAPI v2 de todas las rutas en un solo archivo (gen/openapi/api.swagger.json).
+  # disable_default_errors: el gateway responde con su propio formato de error
+  # (ver docs/errores.md), no con google.rpc.Status.
+  - local: ["go", "run", "github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@v2.31.0"]
+    out: gen/openapi
+    opt:
+      - allow_merge=true
+      - merge_file_name=api
+      - disable_default_errors=true
