@@ -99,6 +99,12 @@
 # =============================================================================
 {%- endif %}
 
+# >>> base común (se actualiza con copier update; lo propio va fuera del bloque)
+# Base común de dev-plantillas (gitleaks y título del MR): .gitlab/base.gitlab-ci.yml
+include:
+  - local: .gitlab/base.gitlab-ci.yml
+# <<< base común
+
 stages:
   - test
 {%- if has_cd %}
@@ -339,7 +345,7 @@ guard:prod:
         echo "y después corré release:prod:override a mano."
         exit 1
       fi
-    - echo "Sin cambios en migrations/: el deploy automático es seguro."
+    - 'echo "Sin cambios en migrations/: el deploy automático es seguro."'
 
 release:prod:
   extends: .release

@@ -1,4 +1,21 @@
 {#- Se llama .gitignore.jinja para que git no lo aplique dentro del repo de la plantilla. -#}
+# >>> base común (se actualiza con copier update; lo propio va fuera del bloque)
+# Secretos: nunca al repo. Si uno se commiteó, se rota primero (SECURITY.md).
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*-adminsdk-*.json
+service-account*.json
+google-services.json
+GoogleService-Info.plist
+# <<< base común
+
 # Dependencias
 node_modules/
 

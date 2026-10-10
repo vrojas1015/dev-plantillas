@@ -66,6 +66,7 @@ test('aplicar descuento dentro del tope', { tag: ['@CU-042-1', '@regresion'] }, 
   `LIMPIADORES` (`tests/fixtures/datos.ts`).
 - Ojo con el rate limit del gateway (escrituras: ráfaga chica por usuario):
   no crear datos de más.
+- **Secretos**: nunca al repo (`.env*`, claves, cuentas de servicio); gitleaks los busca en cada commit (`pre-commit install`) y en el CI, y uno filtrado se rota primero (`SECURITY.md`). Título del MR/PR: `feat(issue-<n>): …` (salvo `chore(deps)`).
 
 ## Roles
 

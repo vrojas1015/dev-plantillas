@@ -1,0 +1,41 @@
+# Seguridad
+
+## Reportar una vulnerabilidad
+
+**No abras un issue público ni un MR/PR** con los detalles. Escribile en privado
+al dueño del repo ({{ dueño }}, ver `CODEOWNERS`) o, si la organización tiene
+un canal de seguridad, usá ese. Incluí:
+
+- qué componente y qué versión (commit o tag),
+- cómo reproducirlo (pasos, request de ejemplo),
+- qué impacto creés que tiene.
+
+Qué esperar: acuse de recibo en 2 días hábiles, una primera evaluación en 5, y
+aviso cuando el arreglo esté desplegado. Pedimos no divulgarlo hasta entonces.
+
+## Secretos
+
+- Los secretos (claves, tokens, cuentas de servicio, `.env`) **nunca** van al
+  repo: viven en el gestor de secretos del ambiente o en variables del CI.
+  `.gitignore` ya ignora los archivos típicos (`.env*`, `*.pem`, `*.p12`,
+  `*.jks`, `*-adminsdk-*.json`, `google-services.json`…).
+- **gitleaks** los busca en cada commit (hook de `pre-commit`) y en el CI, sobre
+  todo el diff del {{ 'MR' if ci_provider == 'gitlab' else 'PR' }}. Para activar el hook en tu clon:
+
+  ```sh
+  pip install pre-commit   # una vez por máquina
+  pre-commit install       # una vez por clon
+  ```
+
+## Si se filtró un secreto
+
+Un secreto que llegó a un commit (aunque sea en una rama, aunque se haya borrado
+en el commit siguiente) se considera **comprometido**:
+
+1. **Rotarlo primero**: generar uno nuevo, desplegarlo y revocar el viejo.
+   Borrarlo del historial sin rotarlo no sirve: ya pudo copiarse.
+2. Avisar al dueño del repo y registrar el incidente (runbook en el repo de
+   documentación{% if docs_repo %}: <{{ docs_repo }}>{% endif %}).
+3. Después, si hace falta, limpiar el historial. Si el hallazgo es un falso
+   positivo (o un secreto ya rotado que queda en el historial), agregar su
+   *fingerprint* a `.gitleaksignore`, explicando por qué en el {{ 'MR' if ci_provider == 'gitlab' else 'PR' }}.

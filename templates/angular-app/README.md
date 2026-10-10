@@ -47,6 +47,8 @@ Está extraída del patrón de la app de admin existente, sin nombres ni IDs rea
 | `deploy_target` | `firebase-hosting` | `firebase-hosting`, `coolify` o `ninguno` (CI sólo verifica). Ver "Destinos de deploy" |
 | `firebase_project_qa` / `_prod` | `<app_name>-qa` / `-prod` | IDs de proyecto GCP/Firebase (sólo si auth o deploy a Firebase) |
 | `ci_provider` | `gitlab` | `gitlab` o `github` |
+| `dueño` | `@mi-org/frontend` | `CODEOWNERS` y `SECURITY.md` (`@usuario` o `@org/equipo`; base común, `docs/10` de dev-plantillas) |
+| `docs_repo` | vacío | URL del repo de docs: la plantilla de MR/PR enlaza la carpeta del issue ahí |
 | `i18n` | `true` | textos vía @ngx-translate |
 | `default_lang` | `es` | `<html lang>`, idioma de i18n y locale de Playwright |
 

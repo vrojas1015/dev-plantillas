@@ -48,6 +48,8 @@ Cloud Run. Especificación: `docs/07-frontend-y-seo.md`.
 | `deploy_target` | `firebase-hosting` | `coolify` · `cloud-run` (sólo con `hibrido`, validado) · `ninguno` |
 | `gcp_project_qa` / `_prod`, `gcp_region` | derivados | sólo Firebase / Cloud Run |
 | `ci_provider` | `gitlab` | `gitlab` · `github` |
+| `dueño` | `@mi-org/frontend` | `CODEOWNERS` y `SECURITY.md` (`@usuario` o `@org/equipo`; base común, `docs/10` de dev-plantillas) |
+| `docs_repo` | vacío | URL del repo de docs: la plantilla de MR/PR enlaza la carpeta del issue ahí |
 
 No se pregunta ningún secreto ni ID de medición: `PUBLIC_GA4_ID`, WIF, tokens de Coolify
 y `SITEMAP_PROD` son variables del CI (ver `docs/deploy.md` del proyecto generado).

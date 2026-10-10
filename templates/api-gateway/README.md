@@ -55,6 +55,8 @@ cd api-gateway && go build ./... && go test ./...
 | `repo_name` | `api-gateway` | Repo, binario, servicio (máx. 27: SA `<nombre>-sa`) |
 | `service_description` | texto | `CLAUDE.md` |
 | `ci_provider` | `gitlab` | `.gitlab-ci.yml` o `.github/workflows/` |
+| `dueño` | `@<org del module_path>/backend` | `CODEOWNERS` y `SECURITY.md` (`@usuario` o `@org/equipo`; base común, `docs/10` de dev-plantillas) |
+| `docs_repo` | vacío | URL del repo de docs: la plantilla de MR/PR enlaza la carpeta del issue ahí |
 | `module_path` | `<host>/mi-org/<repo_name>` | `go.mod` |
 | `http_port` | `8080` | `HTTP_PORT`, Dockerfile, probes |
 | `go_version` | `1.26.9` | ≥ 1.26 (grpc-gateway v2.31) |

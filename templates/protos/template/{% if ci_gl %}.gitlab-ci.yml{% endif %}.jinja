@@ -22,6 +22,12 @@
 # los plugins remotos en `buf generate`.
 # =============================================================================
 
+# >>> base común (se actualiza con copier update; lo propio va fuera del bloque)
+# Base común de dev-plantillas (gitleaks y título del MR): .gitlab/base.gitlab-ci.yml
+include:
+  - local: .gitlab/base.gitlab-ci.yml
+# <<< base común
+
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"

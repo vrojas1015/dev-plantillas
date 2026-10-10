@@ -1,0 +1,59 @@
+# Base común de dev-plantillas: secretos (gitleaks) y título del PR. No editar
+# acá: se actualiza con `copier update`. Los checks propios del repo están en
+# los otros workflows.
+name: base
+
+on:
+  pull_request:
+    # edited: el título se vuelve a validar al corregirlo.
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: base-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Todo el diff del PR (todos sus commits, no sólo el último): un secreto
+  # agregado y borrado en commits distintos también cuenta. En main, lo pusheado.
+  gitleaks:
+    if: github.event.action != 'edited'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          rango=""
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            rango="--log-opts=$BASE..$HEAD"
+          fi
+          echo "Rango: ${rango:-historial completo}"
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --redact --verbose --no-banner ${rango:+"$rango"} .
+
+  # El título es lo que queda en main al hacer squash: Conventional Commits con
+  # el issue (feat(issue-42): …), salvo chore(deps).
+  titulo:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/verificar-titulo.sh
+          sparse-checkout-cone-mode: false
+      - name: Título del PR
+        env:
+          TITULO: ${{ github.event.pull_request.title }}
+        run: sh scripts/verificar-titulo.sh "$TITULO"

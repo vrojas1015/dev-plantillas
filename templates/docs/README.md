@@ -68,6 +68,8 @@ git add . && git commit -m "docs: scaffold inicial"
 | `deploy_target` | `ninguno` | `firebase-hosting` \| `coolify` \| `ninguno` |
 | `firebase_project` | `<org>-docs` | Sólo firebase-hosting |
 | `ci_provider` | `gitlab` | `gitlab` \| `github` |
+| `dueño` | `@<org_name>/plataforma` | `CODEOWNERS` y `SECURITY.md` (`@usuario` o `@org/equipo`; base común, `docs/10` de dev-plantillas) |
+| `docs_repo` | vacío | URL del repo de docs: la plantilla de MR/PR enlaza la carpeta del issue ahí |
 | `fecha_inicio` | hoy | Fecha del ADR 0001 y del issue 001. Se guarda en las respuestas: `copier update` no cambia las fechas |
 
 Derivados (no se guardan): `deploy_fb`, `deploy_cy`, `ci_gl`, `ci_gh` (flags

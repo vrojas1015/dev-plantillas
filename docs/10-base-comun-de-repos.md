@@ -2,7 +2,8 @@
 
 Lo que **todos** los repos generados con `dev-plantillas` comparten,
 independientemente del lenguaje: seguridad, mantenimiento, releases y la
-conexión con el repo de documentación. Especificación (pendiente de construir).
+conexión con el repo de documentación. **Fase 1 construida** (§11); las fases
+2–5 siguen siendo especificación.
 
 Hoy cada plantilla resuelve estas cosas por su cuenta, o no las resuelve. La
 base común las define una vez y las plantillas la incluyen.
@@ -18,7 +19,8 @@ Así un repo generado recibe la base como parte de su plantilla, y **`copier
 update` propaga los cambios** de la base a los repos existentes, igual que
 cualquier otro cambio de la plantilla.
 
-Preguntas nuevas, comunes a todas las plantillas:
+Preguntas nuevas, comunes a todas las plantillas (la fase 1 agrega `dueño` y
+`docs_repo`; `licencia` queda para más adelante):
 
 ```
 dueño:          backend                 # equipo o persona responsable (CODEOWNERS)
@@ -191,7 +193,7 @@ Cada plantilla agrega su sección propia (p. ej. `api-gateway`: rutas nuevas en
 
 | Fase | Contenido |
 |---|---|
-| 1 | `_base` + sincronización a cada plantilla; gitleaks (pre-commit + CI); `.gitignore` de secretos; `SECURITY.md`; `CODEOWNERS`; plantilla de MR/PR común; chequeo del título |
+| 1 ✅ | `_base` + sincronización a cada plantilla; gitleaks (pre-commit + CI); `.gitignore` de secretos; `SECURITY.md`; `CODEOWNERS`; plantilla de MR/PR común; chequeo del título |
 | 2 | `.dp/repo.yaml` en cada plantilla + job `sincronizar` en la plantilla `docs` |
 | 3 | Renovate con preset compartido; escaneo de dependencias por lenguaje |
 | 4 | release-please; pre-commit unificado |
@@ -199,13 +201,13 @@ Cada plantilla agrega su sección propia (p. ej. `api-gateway`: rutas nuevas en
 
 ## 10. Criterios de terminado
 
-- [ ] Todas las plantillas incluyen `_base`; el CI de `dev-plantillas` falla si
+- [x] Todas las plantillas incluyen `_base`; el CI de `dev-plantillas` falla si
       una quedó desactualizada.
-- [ ] En un repo generado, commitear un archivo con una clave falsa con forma
+- [x] En un repo generado, commitear un archivo con una clave falsa con forma
       real → pre-commit lo bloquea; con el hook salteado, el CI falla.
-- [ ] Un MR/PR con título sin tipo o sin issue → el CI falla con el formato
+- [x] Un MR/PR con título sin tipo o sin issue → el CI falla con el formato
       esperado (salvo `chore(deps)`).
-- [ ] `copier update` de un repo existente trae la base sin conflictos.
+- [x] `copier update` de un repo existente trae la base sin conflictos.
 - [ ] `.dp/repo.yaml` validado en el CI del repo; nombre distinto al del repo → falla.
 - [ ] `sincronizar` en `docs`, contra dos repos de prueba: crea la ficha que
       falta, actualiza el frontmatter de la otra **sin tocar su cuerpo**,
@@ -215,3 +217,67 @@ Cada plantilla agrega su sección propia (p. ej. `api-gateway`: rutas nuevas en
       Conventional Commits.
 - [ ] `dp repo proteger` aplica la protección y `dp repo revisar` reporta cero
       diferencias después.
+
+## 11. Fase 1: cómo está construida
+
+### `templates/_base/` y la sincronización
+
+`templates/_base/` no es una plantilla (no tiene `copier.yml`): son las piezas
+comunes. `scripts/sincronizar-base.py` las lleva a cada
+`templates/<plantilla>/template/` y se commitea el resultado, así cada
+plantilla publicada (`scripts/publish-template.sh`) la lleva adentro y
+`copier update` la propaga. `--comprobar` no escribe y falla nombrando la
+plantilla y el archivo desactualizados; lo corren el job `base-comun` del CI
+de `dev-plantillas` y `publish-template.sh` antes de publicar.
+
+| Pieza de `_base` | Cómo llega a la plantilla |
+|---|---|
+| `SECURITY.md.jinja`, `CODEOWNERS.jinja`, `.gitleaks.toml`, `.pre-commit-config.yaml`, `scripts/verificar-titulo.sh` | Copia tal cual |
+| `github/workflows/base.yml`, `gitlab/base.gitlab-ci.yml` | Copia en la carpeta condicional `.github` / `.gitlab` de cada plantilla (se detecta: cada una usa su flag, `ci_gh` o `ci_github`) |
+| `pr.md.jinja` + `templates/<x>/pr-propio.md` | Arma la plantilla de MR/PR: el texto común con la sección propia de la plantilla en el hueco de «Cómo se probó» (sus comandos y sus secciones, como «Rutas y seguridad» del gateway o «SEO» del sitio) |
+| `gitignore` | Bloque `# >>> base común` … `# <<< base común` **al principio** del `.gitignore` |
+| `gitlab/include.yml` | Mismo bloque en `.gitlab-ci.yml`, antes de la primera clave (`include: local: .gitlab/base.gitlab-ci.yml`) |
+| `copier-preguntas.yml` | Mismo bloque al final de `copier.yml`; el default de `dueño` es por plantilla (`DUEÑO_DEFAULT` en el script) |
+| `claude-settings.json` | Agrega a `.claude/settings.json` los permisos que falten (`pre-commit run`, `gitleaks git`, …; deny de lectura de `*.pem`, `*.key`, keystores) |
+
+Los bloques van al principio (y no al final) de `.gitignore` y `.gitlab-ci.yml`
+porque al final es donde cada repo agrega lo suyo: así `copier update` no da
+conflicto. Lo de afuera del bloque no se toca.
+
+**Cambiar la base:** editar `templates/_base/` (o el `pr-propio.md` de una
+plantilla), correr `python scripts/sincronizar-base.py`, commitear todo junto
+y publicar una versión nueva de cada plantilla.
+
+### CI de la base en los repos generados
+
+Archivo aparte por proveedor, sin tocar los jobs existentes de cada plantilla:
+
+| | GitHub | GitLab |
+|---|---|---|
+| Archivo | `.github/workflows/base.yml` (workflow propio) | `.gitlab/base.gitlab-ci.yml`, incluido desde `.gitlab-ci.yml` |
+| gitleaks | Imagen oficial `ghcr.io/gitleaks/gitleaks` fijada por versión y digest; en un PR, `base.sha..head.sha` (todos sus commits); en `main`, lo pusheado | Igual, con `CI_MERGE_REQUEST_DIFF_BASE_SHA..CI_COMMIT_SHA` (`GIT_DEPTH: 0`); stage `.pre`, sin heredar `before_script` ni caché de `default:` |
+| Título | Job `titulo` en `pull_request` (también al editar el título) con `github.event.pull_request.title` | Job `titulo-mr` con `CI_MERGE_REQUEST_TITLE` (editar el título no dispara un pipeline: se reintenta el job) |
+
+No se usa `gitleaks-action` porque en organizaciones de GitHub pide licencia.
+El título se valida con `scripts/verificar-titulo.sh`: `<tipo>(issue-<n>): …`
+con los tipos de Conventional Commits; `!` para cambios incompatibles; ignora
+`Draft:`/`WIP:`; sin issue sólo `chore(deps)` y `chore(deps-dev)` (Renovate).
+
+### pre-commit
+
+gitleaks (hook oficial: pre-commit compila gitleaks con Go la primera vez) y los
+hooks livianos de `pre-commit-hooks`: conflictos, archivos de más de 1 MB,
+YAML y JSON válidos (sin `tsconfig`/VS Code, que admiten comentarios), fin de
+archivo y espacios finales (fuera del código generado: `gen/`, `_generado/`,
+esquemas de Room). Los formateadores por lenguaje y correr los hooks en el CI
+son de la fase 4.
+
+### Preguntas
+
+| Pregunta | Default | Para qué |
+|---|---|---|
+| `dueño` | `@<org>/backend` (Go, gateway, protos), `@<org>/plataforma` (docs), `@mi-org/frontend`, `@mi-org/movil`, `@mi-org/qa` | `CODEOWNERS` y `SECURITY.md`. Formato `@usuario` o `@org/equipo` |
+| `docs_repo` | vacío | URL del repo de docs: la plantilla de MR/PR enlaza la carpeta de issues ahí |
+
+Con los defaults, `copier update --defaults` de un repo existente trae la base
+sin preguntar.

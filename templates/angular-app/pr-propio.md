@@ -1,0 +1,4 @@
+- [ ] `npm run lint`
+- [ ] `npm run test:unit`
+- [ ] `npm run build:prod`
+- [ ] Probado a mano con `npm start` (pantallas tocadas)

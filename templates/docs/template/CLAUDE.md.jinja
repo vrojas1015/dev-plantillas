@@ -40,7 +40,8 @@ releases. No hay código de producto acá. Lo que cambia junto con el código
 6. Enlaces Markdown estándar y relativos (`[texto](../adr/0001-x.md)`), nunca
    `[[wikilinks]]`.
 7. Un ADR `aceptado` no se edita: se escribe otro que lo reemplaza.
-8. Nada de secretos ni datos personales.
+8. Nada de secretos ni datos personales (gitleaks los busca en cada commit,
+   `pre-commit install`, y en el CI). Título del MR/PR: `docs(issue-<n>): …`.
 9. Antes de terminar: `make validar`, `make generar` y `make construir` en
    verde, y se commitea lo que cambie `make generar` (el CI falla si
    `_generado/` no coincide). Conflicto en `_generado/` al rebasar: se corre

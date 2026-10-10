@@ -19,7 +19,11 @@
       "Bash(git show:*)",
       "Bash(git blame:*)",
       "Bash(git branch --list:*)",
-      "Bash(git branch --show-current)"
+      "Bash(git branch --show-current)",
+      "Bash(pre-commit run:*)",
+      "Bash(gitleaks git:*)",
+      "Bash(gitleaks dir:*)",
+      "Bash(sh scripts/verificar-titulo.sh:*)"
     ],
     "deny": [
       "Read(./**/google-services.json)",
@@ -29,7 +33,11 @@
       "Bash(./gradlew publish:*)",
       "Bash(./gradlew promote:*)",
       "Bash(./gradlew bootstrap:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/*.p12)",
+      "Read(./**/*-adminsdk-*.json)"
     ]
   }
 }

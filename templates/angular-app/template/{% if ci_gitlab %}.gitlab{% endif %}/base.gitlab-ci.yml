@@ -1,0 +1,51 @@
+# Base común de dev-plantillas: secretos (gitleaks) y título del MR. No editar
+# acá: se actualiza con `copier update`. Lo incluye .gitlab-ci.yml (include:
+# local). Los jobs van en el stage .pre (existe siempre) y no heredan el
+# before_script ni la caché de `default:`.
+
+.base-comun:
+  stage: .pre
+  # prettier-ignore
+  image:
+    name: ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+    entrypoint: [""]
+  before_script: []
+  after_script: []
+  cache: []
+  needs: []
+  interruptible: true
+
+# Todo el diff del MR (todos sus commits, no sólo el último): un secreto
+# agregado y borrado en commits distintos también cuenta. En main, lo pusheado.
+gitleaks:
+  extends: .base-comun
+  variables:
+    GIT_DEPTH: 0
+  script:
+    - |
+      rango=""
+      if [ -n "${CI_MERGE_REQUEST_DIFF_BASE_SHA:-}" ]; then
+        base=$CI_MERGE_REQUEST_DIFF_BASE_SHA
+      else
+        base=${CI_COMMIT_BEFORE_SHA:-}
+      fi
+      if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+        rango="--log-opts=$base..$CI_COMMIT_SHA"
+      fi
+      echo "Rango: ${rango:-historial completo}"
+      gitleaks git --redact --verbose --no-banner ${rango:+"$rango"} .
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && $CI_PIPELINE_SOURCE == "push"
+
+# El título es lo que queda en main al hacer squash: Conventional Commits con
+# el issue (feat(issue-42): …), salvo chore(deps). Si se corrige el título,
+# volver a correr este job (editar el título no dispara un pipeline nuevo).
+titulo-mr:
+  extends: .base-comun
+  variables:
+    GIT_DEPTH: 1
+  script:
+    - sh scripts/verificar-titulo.sh "$CI_MERGE_REQUEST_TITLE"
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"

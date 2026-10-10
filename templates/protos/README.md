@@ -66,6 +66,8 @@ git add . && git add --chmod=+x scripts/*.sh && git commit -m "Scaffold inicial"
 | `repo_name` | `protos` | Nombre del repo; artifactId Maven |
 | `org_name` | `mi-org` | Grupo/owner; base de los defaults |
 | `ci_provider` | `gitlab` | `.gitlab-ci.yml` (registries de GitLab) o `.github/workflows/ci.yml` (GitHub Packages/Releases) |
+| `dueño` | `@<org_name>/backend` | `CODEOWNERS` y `SECURITY.md` (`@usuario` o `@org/equipo`; base común, `docs/10` de dev-plantillas) |
+| `docs_repo` | vacío | URL del repo de docs: la plantilla de MR/PR enlaza la carpeta del issue ahí |
 | `languages` | `go, python, typescript` | Multiselect: `go`, `python`, `typescript`, `java`, `kotlin`, `swift`. `kotlin` implica `java` |
 | `module_path` | `<gitlab.com\|github.com>/<org>/<repo>` | Solo go. `module` de `go.mod` y `go_package_prefix` |
 | `http_gateway` | `true` si hay go | Solo go. Anotaciones `google.api.http` en el ejemplo, dep `buf.build/googleapis/googleapis` y plugins `grpc-ecosystem/gateway` + `openapiv2` (ver "REST para el api-gateway") |

@@ -40,14 +40,24 @@
       "Bash(git blame:*)",
       "Bash(ls:*)",
       "Bash(curl -s localhost:*)",
-      "Bash(curl -si localhost:*)"
+      "Bash(curl -si localhost:*)",
+      "Bash(pre-commit run:*)",
+      "Bash(gitleaks git:*)",
+      "Bash(gitleaks dir:*)",
+      "Bash(sh scripts/verificar-titulo.sh:*)"
     ],
     "deny": [
       "Read(./.env)",
       "Read(./.env.dev)",
       "Read(./api-keys*.yaml)",
       "Bash(go run ./cli apikey:*)",
-      "Bash(make apikey:*)"
+      "Bash(make apikey:*)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Read(./**/*.p12)",
+      "Read(./**/*.jks)",
+      "Read(./**/*.keystore)",
+      "Read(./**/*-adminsdk-*.json)"
     ]
   }
 }

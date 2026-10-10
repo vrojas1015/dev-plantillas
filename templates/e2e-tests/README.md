@@ -46,6 +46,8 @@ npm run typecheck && npm run listar
 |---|---|---|
 | `repo_name`, `descripcion` | `e2e-tests` | package.json, README, CLAUDE.md |
 | `ci_provider` | `gitlab` | `.gitlab-ci.yml` o `.github/workflows/` |
+| `dueño` | `@mi-org/qa` | `CODEOWNERS` y `SECURITY.md` (`@usuario` o `@org/equipo`; base común, `docs/10` de dev-plantillas) |
+| `docs_repo` | vacío | URL del repo de docs: la plantilla de MR/PR enlaza la carpeta del issue ahí |
 | `ambientes` | `[local, qa]` | multiselect `local`/`qa`/`prod`: un `ambientes/<amb>.env.example` por cada uno; el CI ofrece los remotos. `prod` corre sólo `@smoke` y nunca robustez ni carga |
 | `web` (+ `navegadores`) | `true` (`[chromium]`) | Proyectos web por navegador (`chromium`, `firefox`, `webkit`) y Page Objects |
 | `api_base_url_<amb>`, `web_base_url_<amb>` | localhost / example.com | URL del gateway y del front por ambiente (sólo de los ambientes elegidos) |

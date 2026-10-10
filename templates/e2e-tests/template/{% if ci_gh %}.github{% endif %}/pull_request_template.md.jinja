@@ -1,0 +1,42 @@
+{#- Base común: se edita en templates/_base (y la sección propia en pr-propio.md) y se copia con scripts/sincronizar-base.py. -#}
+## Qué cambia
+
+<!-- Una o dos líneas. El título va con el issue: feat(issue-<n>): … (chore(deps) sin issue). -->
+
+{% if docs_repo -%}
+Issue: [issue-N]({{ docs_repo }}/{{ 'tree' if 'github.com' in docs_repo else '-/tree' }}/main/contenido/issues/)  <!-- N y la carpeta del issue (N-…/); obligatorio salvo chore(deps) -->
+{%- else -%}
+Issue: issue-N  <!-- carpeta contenido/issues/N-…/ del repo de docs; obligatorio salvo chore(deps) -->
+{%- endif %}
+
+## Cómo se probó
+
+- [ ] `npm run typecheck` y `npm run listar`
+- [ ] `E2E_AMBIENTE=<local|qa> npm run e2e` en verde (o el subconjunto: `npm run e2e -- --grep @CU-…`)
+- [ ] Si toca robustez o carga: `npm run robustez` / `npm run carga`
+
+## Escenarios cubiertos
+
+<!-- Un test por escenario de aceptación del issue, con su etiqueta. -->
+
+- [ ] `@CU-<issue>-<n>`: …
+
+## Checklist de pruebas
+
+- [ ] Cada test nuevo lleva `@CU-…` (si cubre un escenario) y `@smoke` o `@regresion`
+- [ ] Los datos son sintéticos y llevan el prefijo de la corrida (`datos.nombre(...)`); nada de datos reales ni personales
+- [ ] Cada test crea lo que necesita y no depende del orden ni de otros tests
+- [ ] La UI se toca sólo a través de Page Objects (`tests/web/paginas/`)
+- [ ] Un test nuevo en `@inestable` tiene issue y fecha límite (2 semanas)
+- [ ] Sin credenciales ni tokens en el código, los reportes ni los logs
+
+## Checklist
+
+- [ ] Sin secretos ni datos personales en el diff (gitleaks corre en el CI igual)
+- [ ] Migraciones: tienen `down` / no aplica
+- [ ] Docs del repo actualizadas (README, `docs/`, CLAUDE.md) / no aplica
+- [ ] Ficha o ADR en el repo de docs actualizados / no aplica
+
+## Notas para el review
+
+<!-- Decisiones, deuda que queda, {{ 'MR' if ci_provider == 'gitlab' else 'PR' }} relacionados en otros repos. -->

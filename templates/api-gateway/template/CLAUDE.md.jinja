@@ -71,7 +71,9 @@ dos veces `example/v1/item.proto`). Sin tag: `go mod edit -replace` o `make work
 5. Logs: nunca query strings, cuerpos ni cabeceras sin `RedactHeaders`.
 6. CORS con lista exacta por entorno; nunca `*`.
 7. Secretos (API keys, tokens): solo en Secret Manager / panel de Coolify /
-   `.env.dev`. Las API keys se guardan como SHA-256.
+   `.env.dev`. Las API keys se guardan como SHA-256. gitleaks los busca en
+   cada commit (`pre-commit install`) y en el CI; uno filtrado se rota
+   primero (`SECURITY.md`). Título del MR: `feat(issue-<n>): …`.
 8. Autorización **por objeto** (dueño/organización) es de los servicios: el
    gateway no conoce los datos.
 9. Cambios en auth, CORS, cabeceras, límites o en `routes.yaml` con

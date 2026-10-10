@@ -5,6 +5,12 @@
 #                     10 % -> 50 % -> 100 % con jobs manuales (aprobación)
 # Imagen con solo JDK: scripts/android-sdk.sh instala el SDK (cacheado).
 
+# >>> base común (se actualiza con copier update; lo propio va fuera del bloque)
+# Base común de dev-plantillas (gitleaks y título del MR): .gitlab/base.gitlab-ci.yml
+include:
+  - local: .gitlab/base.gitlab-ci.yml
+# <<< base común
+
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
